@@ -96,4 +96,16 @@ describe("canonical gate scopes", () => {
     expect(commit_scope.resolved.head).toBe(head);
     expect(commit_scope.files.map((file) => file.path)).toEqual(["src/a.txt"]);
   });
+
+  test("commit scope includes files from a root commit", () => {
+    const { cwd, git } = repo();
+    const root = git("rev-parse", "\u0048\u0045\u0041\u0044");
+    const scope = resolvescope({ kind: "commit", cwd, commit_ref: root });
+
+    expect(scope.resolved.base).toBeNull();
+    expect(scope.files.map((file) => file.path)).toEqual([
+      "src/a.txt",
+      "src/old.txt",
+    ]);
+  });
 });

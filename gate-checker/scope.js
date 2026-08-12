@@ -7,10 +7,11 @@ import { contentToAdded, parseDiffAdditions } from "./predicates.js";
 const max_buffer = 64 * 1024 * 1024;
 const scope_kinds = new Set(["request", "uncommitted", "base", "commit"]);
 
-function git(cwd, args) {
+function git(cwd, args, input = undefined) {
   return execFileSync("git", args, {
     cwd,
     encoding: "utf8",
+    input,
     timeout: 10_000,
     maxBuffer: max_buffer,
     stdio: ["ignore", "pipe", "pipe"],
@@ -57,7 +58,8 @@ function diff_specs(options, repo_root) {
     const parent = git_or_empty(repo_root, ["rev-parse", "--verify", `${commit}^`]).trim();
     resolved.base = parent || null;
     resolved.head = commit;
-    specs.push({ args: parent ? [parent, commit] : ["--root", commit], staged: false });
+    const base = parent || git(repo_root, ["hash-object", "-t", "tree", "--stdin"], "").trim();
+    specs.push({ args: [base, commit], staged: false });
   }
 
   return { specs, resolved };
