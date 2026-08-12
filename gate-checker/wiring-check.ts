@@ -343,6 +343,31 @@ for (const [label, report, shouldBlock] of [
   rmSync(loose, { recursive: true, force: true });
 }
 
+console.log("14. cooperative mutation lease");
+process.env.OMP_GATE_MUTATION_LEASE = "1";
+const leaseOwner = mkHandlers();
+const leaseWaiter = mkHandlers();
+await leaseOwner.agent_start!({}, ctx);
+await leaseWaiter.agent_start!({}, ctx);
+const blockedLease = (await leaseWaiter.tool_call!(
+  { toolName: "write", input: { path: "src/leased.txt" } },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(blockedLease?.block === true, "a second session cannot use native mutation tools");
+const isolatedTask = (await leaseWaiter.tool_call!(
+  {
+    toolName: "task",
+    input: {
+      tasks: [{ task: "inspect", isolated: true }],
+      context: "read only",
+    },
+  },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(isolatedTask?.block !== true, "isolated task work does not need the shared lease");
+await leaseOwner.session_shutdown!({}, ctx);
+delete process.env.OMP_GATE_MUTATION_LEASE;
+
 rmSync(repo, { recursive: true, force: true });
 rmSync(home, { recursive: true, force: true });
 console.log(n === 0 ? "\nprobe: all wiring checks passed" : `\nprobe: ${n} FAILED`);

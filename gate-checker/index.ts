@@ -80,6 +80,7 @@ import {
 } from "./provenance.js";
 import { journal_type, journalfrombranch, journal_version } from "./journal.js";
 import { auditscope } from "./risks.js";
+import { acquirelease, releaselease } from "./lease.js";
 
 type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -157,7 +158,7 @@ interface ToolResultEventResult {
 }
 
 interface GateFailure {
-  gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk";
+  gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk" | "lease";
   rule: string;
   detail: string;
   // "block" forces a continuation. "warn" is surfaced and recorded but never
@@ -861,6 +862,27 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // blocking-failure fingerprint of the previous continuation (see fix 1)
   let lastBlockingKey: string | null = null;
   let requestId: string | null = null;
+  const leaseOwnerId = randomUUID();
+  const leaseEnabled = !["", "0", "false", "off"].includes(
+    String(process.env.OMP_GATE_MUTATION_LEASE ?? "").trim().toLowerCase(),
+  );
+  let activeLease: Record<string, unknown> | null = null;
+  let leaseConflict: Record<string, unknown> | null = null;
+
+  const ensurelease = (cwd: string): void => {
+    if (!leaseEnabled || !policy.enabled || !requestId || activeLease) return;
+    const result = acquirelease({
+      cwd,
+      owner_id: leaseOwnerId,
+      request_id: requestId,
+    }) as Record<string, unknown>;
+    if (result.acquired) {
+      activeLease = result;
+      leaseConflict = null;
+    } else {
+      leaseConflict = result;
+    }
+  };
 
   const policyfingerprint = (): string =>
     hashContent(`${config.level}\n${config.verifyCmd ?? ""}`);
@@ -912,12 +934,16 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineSha = state.baseline_sha;
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
+    ensurelease(String(ctx.cwd ?? "."));
   };
   const terminaljournal = (
     outcome: string,
     fields: Record<string, unknown> = {},
   ): void => {
     appendjournal("terminal", { outcome, ...fields });
+    if (activeLease) releaselease(activeLease);
+    activeLease = null;
+    leaseConflict = null;
     requestId = null;
   };
 
@@ -964,6 +990,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   pi.on("session_tree", (_event: unknown, ctx: ExtensionContext) => {
     restorejournal(ctx);
+  });
+  pi.on("session_shutdown", () => {
+    if (activeLease) releaselease(activeLease);
+    activeLease = null;
   });
 
   // --- commands -------------------------------------------------------------
@@ -1045,10 +1075,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // otherwise the retry would measure only the retry's own edits and the cap
   // would never advance.
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
-    if (requestId || continuationCount > 0) return;
+    const cwd = String(ctx?.cwd ?? ".");
+    if (requestId || continuationCount > 0) {
+      ensurelease(cwd);
+      return;
+    }
 
     evidence = freshEvidence();
-    const cwd = String(ctx?.cwd ?? ".");
     const baseline = capturebaseline(cwd);
     evidence.baselineSha = baseline.sha;
     evidence.baselineDirty = baseline.dirty;
@@ -1060,6 +1093,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       baseline_dirty: [...baseline.dirty].sort(),
       policy_fingerprint: policyfingerprint(),
     });
+    ensurelease(cwd);
 
     // no git — fall back to first-touch content hashing (see tool_call below)
     if (baseline.sha === null) {
@@ -1082,6 +1116,35 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, ctx: ExtensionContext): Promise<ToolCallResult | void> => {
     evidence.hadToolCalls = true;
     const { toolName, input } = event;
+
+    if (leaseConflict) {
+      let isolated = input?.isolated === true;
+      if (toolName === "task" && Array.isArray(input?.tasks)) {
+        isolated = input.tasks.length > 0 && input.tasks.every(
+          (item) =>
+            Boolean(item) &&
+            typeof item === "object" &&
+            "isolated" in item &&
+            item.isolated === true,
+        );
+      }
+      const mutating = toolName === "write" || toolName === "edit" ||
+        (toolName === "task" && !isolated);
+      if (mutating) {
+        let owner = "another gate-aware session";
+        const conflict = leaseConflict.conflict;
+        if (
+          conflict &&
+          typeof conflict === "object" &&
+          "owner_id" in conflict &&
+          typeof conflict.owner_id === "string"
+        ) owner = conflict.owner_id;
+        return {
+          block: true,
+          reason: `mutation lease held by ${owner}; retry after that session releases it`,
+        };
+      }
+    }
 
     if (toolName === "ask") evidence.askedUser = true;
 
@@ -1248,6 +1311,15 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     const failures: GateFailure[] = [];
     const gitCwd = evidence.repoRoot ?? cwd;
+    if (leaseConflict) {
+      failures.push({
+        gate: "lease",
+        rule: "mutation_lease_conflict",
+        detail:
+          "another gate-aware session holds the repository mutation lease. " +
+          "wait for it to finish, then retry without bypassing the native tools.",
+      });
+    }
 
     // --- derive what this request changed ------------------------------------
     // Hoisted out of the gates so the delivery gates can run FIRST. Ordering
