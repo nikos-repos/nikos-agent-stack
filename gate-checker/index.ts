@@ -71,6 +71,12 @@ import {
   CONFIG_PATH,
 } from "./config.js";
 import { capturebaseline, resolvescope } from "./scope.js";
+import {
+  mergeprovenance,
+  provenancefromdetails,
+  provenancefromevent,
+  provenancefromlifecycle,
+} from "./provenance.js";
 
 type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -162,13 +168,32 @@ interface GateFailure {
   severity?: "block" | "warn";
 }
 
+interface SubagentEvidence {
+  task_call_id: string | null;
+  id: string;
+  agent: string | null;
+  status: string;
+  exit_code: number | null;
+  error: string | null;
+  duration_ms: number | null;
+  model: string | null;
+  session_file: string | null;
+  output_path: string | null;
+  patch_path: string | null;
+  branch_name: string | null;
+  branch_base_sha: string | null;
+  report: string;
+  manifest: string[] | null;
+  manifest_source: string | null;
+}
+
 interface TurnEvidence {
   hadToolCalls: boolean;
   askedUser: boolean;
   filesTouched: Set<string>;
   snapshotTags: Set<string>;
   bashCommands: Array<{ cmd: string; isError: boolean }>;
-  subagentTexts: string[];
+  subagents: SubagentEvidence[];
   baselineSha: string | null;
   baselineDirty: Set<string>;
   // git reports paths relative to the repo root, which is not always ctx.cwd.
@@ -195,7 +220,7 @@ function freshEvidence(): TurnEvidence {
     filesTouched: new Set(),
     snapshotTags: new Set(),
     bashCommands: [],
-    subagentTexts: [],
+    subagents: [],
     baselineSha: null,
     baselineDirty: new Set(),
     repoRoot: null,
@@ -284,7 +309,7 @@ function reliesOnSubagents(assistantText: string): boolean {
 
 function checkCitations(
   assistantText: string,
-  subagentTexts: string[],
+  subagents: Array<SubagentEvidence | string>,
   changedFiles: Set<string>,
   ev: TurnEvidence,
   hasGit: boolean,
@@ -339,18 +364,20 @@ function checkCitations(
   //     subagent AND any newly spawned one. The failure count grew 1 → 2 → 3 as
   //     the agent tried to comply. A gate that punishes the fix inverts itself.
   const relies = reliesOnSubagents(assistantText);
-  for (let i = 0; i < subagentTexts.length; i++) {
-    const text = subagentTexts[i];
-    if (!relies) continue;
-    const seen = hashContent(text);
+  for (let i = 0; i < subagents.length; i++) {
+    const raw = subagents[i];
+    const subagent = typeof raw === "string"
+      ? { id: `legacy:${i}`, report: raw, manifest: extractManifest(raw) }
+      : raw;
+    const text = subagent.report;
+    if (!relies || !text) continue;
+    const seen = hashContent(`${subagent.id}\n${text}`);
     if (ev.judgedSubagents.has(seen)) continue;
     ev.judgedSubagents.add(seen);
 
-    // 3a. the manifest is mandatory. the old prose-only check fired solely on
-    // "verb + backticked path", so a subagent could satisfy the contract by
-    // saying nothing specific — the detector rewarded vagueness. requiring an
-    // explicit manifest removes that escape hatch: absence is the failure.
-    const manifest = extractManifest(text);
+    // native structured output is authoritative when present. the literal or
+    // json report parser remains as a compatibility fallback.
+    const manifest = subagent.manifest ?? extractManifest(text);
     if (manifest === null) {
       // Severity depends on whether the diff contradicts the subagent. A
       // read-only reviewer that changed nothing and claimed nothing is a
@@ -831,6 +858,23 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // blocking-failure fingerprint of the previous continuation (see fix 1)
   let lastBlockingKey: string | null = null;
 
+  const recordprovenance = (record: SubagentEvidence | null): void => {
+    if (!record) return;
+    evidence.subagents = mergeprovenance(
+      evidence.subagents,
+      record,
+    ) as SubagentEvidence[];
+  };
+  const events = pi.events as unknown as {
+    on?: (channel: string, handler: (payload: unknown) => void) => unknown;
+  };
+  events?.on?.("task:subagent:event", (payload: unknown) => {
+    recordprovenance(provenancefromevent(payload) as SubagentEvidence | null);
+  });
+  events?.on?.("task:subagent:lifecycle", (payload: unknown) => {
+    recordprovenance(provenancefromlifecycle(payload) as SubagentEvidence | null);
+  });
+
   const armingStatus = (): string => {
     if (!policy.enabled) return "gate: off";
     const bits = [`gate: ${config.level}`];
@@ -1058,10 +1102,40 @@ export default function gateChecker(pi: ExtensionAPI): void {
       });
     }
 
-    // capture subagent returned text for citation checking
+    // native task details and lifecycle events are the primary provenance.
+    // text-only reports remain compatible with older task implementations.
     if (toolName === "task" && !isError) {
-      const text = extractText(content);
-      if (text) evidence.subagentTexts.push(text);
+      const records = provenancefromdetails(event.toolCallId, details) as SubagentEvidence[];
+      for (const record of records) recordprovenance(record);
+      const background = Boolean(
+        details &&
+        typeof details === "object" &&
+        "async" in details &&
+        details.async,
+      );
+      if (records.length === 0 && !background) {
+        const report = extractText(content);
+        if (report) {
+          recordprovenance({
+            task_call_id: event.toolCallId,
+            id: `legacy:${event.toolCallId}`,
+            agent: null,
+            status: "completed",
+            exit_code: 0,
+            error: null,
+            duration_ms: null,
+            model: null,
+            session_file: null,
+            output_path: null,
+            patch_path: null,
+            branch_name: null,
+            branch_base_sha: null,
+            report,
+            manifest: extractManifest(report),
+            manifest_source: "report",
+          });
+        }
+      }
     }
   });
 
@@ -1148,7 +1222,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
           evidence.verifyPassed = !failure;
           ledger.append("gate_eval", {
             rules: [failure ? "verify_failed" : "verify_passed"],
-            gate: "verify",
             cmd: config.verifyCmd,
             cwd: gitCwd,
           });
@@ -1171,7 +1244,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       failures.push(
         ...checkCitations(
           assistantText,
-          evidence.subagentTexts,
+          evidence.subagents,
           changedFiles,
           evidence,
           hasGit,
@@ -1196,7 +1269,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         ...shape,
         outcome,
         hasGit,
-        subagents: evidence.subagentTexts.length,
+        subagents: evidence.subagents.length,
         continuations: continuationCount,
         cwd,
       });
@@ -1284,7 +1357,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         );
       } catch {}
       // Only worth a chain_end record if a chain was actually open — a clean
-      // first pass is the common case and would drown the ledger.
       if (continuationCount > 0) {
         ledger.append("chain_end", {
           outcome: "resolved",
@@ -1307,7 +1379,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       forced: continuationCount <= MAX_CONTINUATIONS,
       hasGit,
       cwd,
-      subagents: evidence.subagentTexts.length,
+      subagents: evidence.subagents.length,
     });
 
     if (continuationCount > MAX_CONTINUATIONS) {
