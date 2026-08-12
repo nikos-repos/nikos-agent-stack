@@ -70,6 +70,7 @@ import {
   RULE_FAMILY,
   CONFIG_PATH,
 } from "./config.js";
+import { capturebaseline, resolvescope } from "./scope.js";
 
 type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -264,130 +265,6 @@ function ranTestRunner(ev: TurnEvidence): boolean {
   );
 }
 
-// --- git helpers (agent-agnostic truth source) ------------------------------
-
-const NO_BASELINE = {
-  sha: null,
-  dirty: new Set<string>(),
-  repoRoot: null,
-};
-
-function captureBaseline(
-  cwd: string,
-): { sha: string | null; dirty: Set<string>; repoRoot: string | null } {
-  try {
-    const sha = execSync("git rev-parse HEAD 2>/dev/null", {
-      cwd,
-      encoding: "utf-8",
-      timeout: 5000,
-    }).trim();
-    if (!sha) return { ...NO_BASELINE, dirty: new Set() };
-
-    // git prints diff paths relative to the repo root, not to cwd. every
-    // path comparison below is anchored here so running omp from a
-    // subdirectory does not silently break both gates.
-    const repoRoot = execSync(
-      "git rev-parse --show-toplevel 2>/dev/null",
-      { cwd, encoding: "utf-8", timeout: 5000 },
-    ).trim();
-    if (!repoRoot) return { ...NO_BASELINE, dirty: new Set() };
-
-    const dirtyOut = execSync("git diff --name-only 2>/dev/null", {
-      cwd,
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-    const dirty = new Set(
-      dirtyOut
-        .split("\n")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    );
-
-    return { sha, dirty, repoRoot };
-  } catch {
-    return { ...NO_BASELINE, dirty: new Set() };
-  }
-}
-
-// returns null when git is unavailable. uses baseline snapshot to capture
-// both committed and uncommitted changes, minus pre-existing dirty files.
-function getChangedFiles(
-  cwd: string,
-  baselineSha: string | null,
-  baselineDirty: Set<string>,
-): Set<string> | null {
-  try {
-    const files = new Set<string>();
-
-    if (baselineSha) {
-      const committed = execSync(
-        `git diff --name-only --diff-filter=ACMR ${baselineSha}..HEAD 2>/dev/null`,
-        { cwd, encoding: "utf-8", timeout: 5000 },
-      );
-      committed
-        .split("\n")
-        .filter(Boolean)
-        .forEach((f) => files.add(f));
-    }
-
-    const uncommitted = execSync(
-      "git diff --name-only --diff-filter=ACMR 2>/dev/null; git diff --cached --name-only --diff-filter=ACMR 2>/dev/null",
-      { cwd, encoding: "utf-8", timeout: 5000 },
-    );
-    uncommitted
-      .split("\n")
-      .filter(Boolean)
-      .forEach((f) => files.add(f));
-
-    for (const dirty of baselineDirty) {
-      files.delete(dirty);
-    }
-
-    return files;
-  } catch {
-    return null;
-  }
-}
-
-// returns only the lines this session ADDED. the completion gate must not
-// judge pre-existing code: a file can carry an old TODO on a line the agent
-// never touched, and blocking on that traps the agent in a continuation loop
-// it cannot escape without editing unrelated code.
-//
-// parseDiffAdditions lives in predicates.js — Layer 2 parses the same shape.
-function getAddedLines(
-  cwd: string,
-  baselineSha: string | null,
-  baselineDirty: Set<string>,
-): AddedMap | null {
-  try {
-    const added: AddedMap = new Map();
-
-    if (baselineSha) {
-      parseDiffAdditions(
-        execSync(
-          `git diff -U0 --diff-filter=ACMR ${baselineSha}..HEAD 2>/dev/null`,
-          { cwd, encoding: "utf-8", timeout: 5000, maxBuffer: 32 * 1024 * 1024 },
-        ),
-        added,
-      );
-    }
-
-    parseDiffAdditions(
-      execSync(
-        "git diff -U0 --diff-filter=ACMR 2>/dev/null; git diff -U0 --cached --diff-filter=ACMR 2>/dev/null",
-        { cwd, encoding: "utf-8", timeout: 5000, maxBuffer: 32 * 1024 * 1024 },
-      ),
-      added,
-    );
-
-    for (const dirty of baselineDirty) added.delete(dirty);
-    return added;
-  } catch {
-    return null;
-  }
-}
 
 // --- citation gate ----------------------------------------------------------
 
@@ -1055,10 +932,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     evidence = freshEvidence();
     const cwd = String(ctx?.cwd ?? ".");
-    const baseline = captureBaseline(cwd);
+    const baseline = capturebaseline(cwd);
     evidence.baselineSha = baseline.sha;
     evidence.baselineDirty = baseline.dirty;
-    evidence.repoRoot = baseline.repoRoot;
+    evidence.repoRoot = baseline.repo_root;
 
     // no git — fall back to first-touch content hashing (see tool_call below)
     if (baseline.sha === null) {
@@ -1220,11 +1097,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
     let canAdjudicate = true;
 
     if (hasGit) {
-      const cf = getChangedFiles(gitCwd, evidence.baselineSha, evidence.baselineDirty);
-      if (cf === null) canAdjudicate = false;
-      else {
-        changedFiles = cf;
-        added = getAddedLines(gitCwd, evidence.baselineSha, evidence.baselineDirty) ?? new Map();
+      try {
+        const scope = resolvescope({
+          kind: "request",
+          cwd: gitCwd,
+          baseline_sha: evidence.baselineSha,
+          baseline_dirty: evidence.baselineDirty,
+        });
+        changedFiles = new Set(scope.files.map((file) => file.path));
+        added = new Map(Object.entries(scope.added)) as AddedMap;
+      } catch {
+        canAdjudicate = false;
       }
     } else {
       const d = degradedDiff(evidence.preTouch, cwd);

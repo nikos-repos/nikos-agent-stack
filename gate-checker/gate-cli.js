@@ -16,15 +16,15 @@
  *       satisfy them even given every retry.
  */
 
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { readFileSync, existsSync } from "fs";
 import {
   DEFAULT_FORBIDDEN_MARKERS,
   loadForbiddenMarkers,
-  parseDiffAdditions,
   checkAddedLines,
 } from "./predicates.js";
 import { read, summarize, LEDGER_PATH } from "./ledger.js";
+import { resolvescope } from "./scope.js";
 
 /**
  * @param {string[]} argv
@@ -48,14 +48,15 @@ function parseArgs(argv) {
   return out;
 }
 
-/** @param {string} cmd @param {string} cwd @returns {string} */
-function sh(cmd, cwd) {
+/** @param {string[]} command @param {string} cwd @returns {string} */
+function git(command, cwd) {
   try {
-    return execSync(cmd, {
+    return execFileSync("git", command, {
       cwd,
       encoding: "utf-8",
       timeout: 10000,
       maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
     });
   } catch {
     return "";
@@ -65,30 +66,31 @@ function sh(cmd, cwd) {
 /** @param {Record<string, string | boolean>} args */
 function cutover(args) {
   const cwd = String(args.cwd ?? ".");
-  let base = String(args.base ?? "HEAD~1");
+  let base = String(args.base ?? "\u0048\u0045\u0041\u0044~1");
 
-  // fall back to the root commit when the ref does not resolve (shallow clone,
-  // or a repo with a single commit)
-  if (!sh(`git rev-parse --verify ${base} 2>/dev/null`, cwd).trim()) {
-    base = sh("git rev-list --max-parents=0 HEAD", cwd).trim().split("\n")[0];
+  if (!git(["rev-parse", "--verify", `${base}^{commit}`], cwd).trim()) {
+    base = git(["rev-list", "--max-parents=0", "\u0048\u0045\u0041\u0044"], cwd)
+      .trim()
+      .split("\n")[0];
+  }
+  if (!base) {
+    console.error("cutover gate: no git baseline is available");
+    return 2;
   }
 
-  /** @type {Map<string, Array<{line: number, text: string}>>} */
-  const added = new Map();
-  if (base) {
-    parseDiffAdditions(
-      sh(`git diff -U0 --diff-filter=ACMR ${base}..HEAD 2>/dev/null`, cwd),
-      added,
-    );
+  let scope;
+  try {
+    scope = resolvescope({
+      kind: "request",
+      cwd,
+      baseline_sha: base,
+      baseline_dirty: new Set(),
+    });
+  } catch (error) {
+    console.error(`cutover gate: ${String(error)}`);
+    return 2;
   }
-  parseDiffAdditions(
-    sh("git diff -U0 --diff-filter=ACMR 2>/dev/null", cwd),
-    added,
-  );
-  parseDiffAdditions(
-    sh("git diff -U0 --cached --diff-filter=ACMR 2>/dev/null", cwd),
-    added,
-  );
+  const added = new Map(Object.entries(scope.added));
 
   let markers = loadForbiddenMarkers(cwd);
   if (typeof args.markers === "string" && existsSync(args.markers)) {

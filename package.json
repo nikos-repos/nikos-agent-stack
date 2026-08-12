@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "bun run gate-checker/index.ts && bun run gate-checker/wiring-check.ts"
+    "test": "bun test gate-checker/*.test.ts && bun run gate-checker/index.ts && bun run gate-checker/wiring-check.ts"
   }
 }
