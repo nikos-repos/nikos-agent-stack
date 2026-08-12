@@ -703,7 +703,7 @@ these findings remain advisory. no finding means that no deterministic rule matc
 
 set <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#77;&#85;&#84;&#65;&#84;&#73;&#79;&#78;&#95;&#76;&#69;&#65;&#83;&#69;=1</code> to coordinate gate-aware sessions that share one git worktree.
 
-the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. stale recovery requires both the configured age and a dead owner process. native `write`, `edit`, and non-isolated `task` calls are blocked for a conflicting gate-aware session.
+the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. stale recovery requires both the configured age and a dead owner process. native `write`, `edit`, `bash`, and non-isolated `task` calls are blocked for a conflicting gate-aware session.
 
 the lease cannot exclude external editors or arbitrary processes. it is disabled by default.
 

@@ -902,6 +902,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const branch = ctx.sessionManager?.getBranch?.() ?? [];
     const state = journalfrombranch(branch);
     if (state.status !== "active") {
+      if (activeLease) releaselease(activeLease);
+      activeLease = null;
+      leaseConflict = null;
       requestId = null;
       continuationCount = 0;
       lastBlockingKey = null;
@@ -919,6 +922,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
     ) {
       requestId = state.request_id;
       appendjournal("terminal", { outcome: "recovery_required" });
+      if (activeLease) releaselease(activeLease);
+      activeLease = null;
+      leaseConflict = null;
       requestId = null;
       continuationCount = 0;
       lastBlockingKey = null;
@@ -1129,7 +1135,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         );
       }
       const mutating = toolName === "write" || toolName === "edit" ||
-        (toolName === "task" && !isolated);
+        toolName === "bash" || (toolName === "task" && !isolated);
       if (mutating) {
         let owner = "another gate-aware session";
         const conflict = leaseConflict.conflict;

@@ -354,6 +354,11 @@ const blockedLease = (await leaseWaiter.tool_call!(
   ctx,
 )) as { block?: boolean } | undefined;
 expect(blockedLease?.block === true, "a second session cannot use native mutation tools");
+const blockedBash = (await leaseWaiter.tool_call!(
+  { toolName: "bash", input: { command: "git status --short" } },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(blockedBash?.block === true, "a conflicting session cannot bypass the lease through bash");
 const isolatedTask = (await leaseWaiter.tool_call!(
   {
     toolName: "task",
@@ -365,7 +370,14 @@ const isolatedTask = (await leaseWaiter.tool_call!(
   ctx,
 )) as { block?: boolean } | undefined;
 expect(isolatedTask?.block !== true, "isolated task work does not need the shared lease");
-await leaseOwner.session_shutdown!({}, ctx);
+await leaseOwner.session_tree!({}, ctx);
+await leaseWaiter.agent_start!({}, ctx);
+const retriedLease = (await leaseWaiter.tool_call!(
+  { toolName: "write", input: { path: "src/leased.txt" } },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(retriedLease?.block !== true, "branch navigation releases the prior worktree lease");
+await leaseWaiter.session_shutdown!({}, ctx);
 delete process.env.OMP_GATE_MUTATION_LEASE;
 
 rmSync(repo, { recursive: true, force: true });
