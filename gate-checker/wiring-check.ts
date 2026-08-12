@@ -30,12 +30,15 @@ git("git add -A && git commit -q -m init");
 type H = (e: unknown, c: unknown) => unknown;
 type Cmd = (args: string, c: unknown) => Promise<void>;
 const commands: Record<string, Cmd> = {};
+const sessionEntries: Array<{ customType: string; data: Record<string, unknown> }> = [];
 const mkHandlers = () => {
   const h: Record<string, H> = {};
   gateChecker({
     on: (n: string, f: H) => { h[n] = f; },
     registerCommand: (n: string, o: { handler: Cmd }) => { commands[n] = o.handler; },
-    appendEntry: () => {},
+    appendEntry: (customType: string, data: Record<string, unknown>) => {
+      sessionEntries.push({ customType, data });
+    },
   } as never);
   return h;
 };
@@ -85,6 +88,12 @@ expect(c2?.additionalContext?.includes("uncommitted_changes") ?? false, "commit 
 const c3 = await run(handlers, "3. committed + passing verify", () =>
   git("git add src && git commit -q -m work"));
 expect(c3 === undefined, "agent released: " + JSON.stringify(c3));
+const journalKinds = sessionEntries
+  .filter((entry) => entry.customType === "omp.gate-checker.journal")
+  .map((entry) => entry.data.kind);
+expect(journalKinds.includes("request_start"), "journal captured the request baseline");
+expect(journalKinds.includes("verify"), "journal captured verification");
+expect(journalKinds.includes("terminal"), "journal captured the terminal outcome");
 
 // case 4: read-only session -> never asked to test or commit
 const h4 = mkHandlers();

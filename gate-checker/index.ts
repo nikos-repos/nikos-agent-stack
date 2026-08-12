@@ -43,6 +43,7 @@ import { existsSync, mkdtempSync, writeFileSync, rmSync } from "fs";
 import { execSync } from "child_process";
 import { resolve as resolvePath, isAbsolute } from "path";
 import { homedir, tmpdir } from "os";
+import { randomUUID } from "crypto";
 import {
   DEFAULT_FORBIDDEN_MARKERS,
   loadForbiddenMarkers,
@@ -77,6 +78,7 @@ import {
   provenancefromevent,
   provenancefromlifecycle,
 } from "./provenance.js";
+import { journal_type, journalfrombranch, journal_version } from "./journal.js";
 
 type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -154,7 +156,7 @@ interface ToolResultEventResult {
 }
 
 interface GateFailure {
-  gate: "citation" | "completion" | "verify" | "commit";
+  gate: "citation" | "completion" | "verify" | "commit" | "journal";
   rule: string;
   detail: string;
   // "block" forces a continuation. "warn" is surfaced and recorded but never
@@ -857,6 +859,63 @@ export default function gateChecker(pi: ExtensionAPI): void {
   let verifyCache: VerifyCache | null = null;
   // blocking-failure fingerprint of the previous continuation (see fix 1)
   let lastBlockingKey: string | null = null;
+  let requestId: string | null = null;
+
+  const policyfingerprint = (): string =>
+    hashContent(`${config.level}\n${config.verifyCmd ?? ""}`);
+  const appendjournal = (kind: string, fields: Record<string, unknown> = {}): void => {
+    if (!requestId) return;
+    try {
+      pi.appendEntry(journal_type, {
+        version: journal_version,
+        kind,
+        request_id: requestId,
+        ...fields,
+        ts: Date.now(),
+      });
+    } catch {}
+  };
+  const restorejournal = (ctx: ExtensionContext): void => {
+    const branch = ctx.sessionManager?.getBranch?.() ?? [];
+    const state = journalfrombranch(branch);
+    if (state.status !== "active") {
+      requestId = null;
+      continuationCount = 0;
+      lastBlockingKey = null;
+      if (state.status === "recovery_required") {
+        try {
+          ctx.ui?.setStatus?.("gate", "⚠ gate journal recovery required");
+        } catch {}
+      }
+      return;
+    }
+    const current = capturebaseline(String(ctx.cwd ?? "."));
+    if (
+      state.policy_fingerprint !== policyfingerprint() ||
+      (current.repo_root && current.repo_root !== state.repo_root)
+    ) {
+      requestId = state.request_id;
+      appendjournal("terminal", { outcome: "recovery_required" });
+      requestId = null;
+      continuationCount = 0;
+      lastBlockingKey = null;
+      try {
+        ctx.ui?.setStatus?.("gate", "⚠ stale gate journal closed");
+      } catch {}
+      return;
+    }
+    requestId = state.request_id;
+    continuationCount = state.continuation;
+    lastBlockingKey = state.failure_hash;
+    evidence = freshEvidence();
+    evidence.baselineSha = state.baseline_sha;
+    evidence.baselineDirty = new Set(state.baseline_dirty);
+    evidence.repoRoot = state.repo_root;
+  };
+  const terminaljournal = (outcome: string): void => {
+    appendjournal("terminal", { outcome });
+    requestId = null;
+  };
 
   const recordprovenance = (record: SubagentEvidence | null): void => {
     if (!record) return;
@@ -888,9 +947,19 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // the status bar stayed empty at startup and there was no way to tell an
   // unarmed session from an armed one except by spending a turn.
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
+    restorejournal(ctx);
     try {
-      ctx?.ui?.setStatus?.("gate", armingStatus());
+      ctx?.ui?.setStatus?.(
+        "gate",
+        requestId ? `${armingStatus()} · resumed` : armingStatus(),
+      );
     } catch {}
+  });
+  pi.on("session_branch", (_event: unknown, ctx: ExtensionContext) => {
+    restorejournal(ctx);
+  });
+  pi.on("session_tree", (_event: unknown, ctx: ExtensionContext) => {
+    restorejournal(ctx);
   });
 
   // --- commands -------------------------------------------------------------
@@ -972,7 +1041,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // otherwise the retry would measure only the retry's own edits and the cap
   // would never advance.
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
-    if (continuationCount > 0) return;
+    if (requestId || continuationCount > 0) return;
 
     evidence = freshEvidence();
     const cwd = String(ctx?.cwd ?? ".");
@@ -980,6 +1049,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineSha = baseline.sha;
     evidence.baselineDirty = baseline.dirty;
     evidence.repoRoot = baseline.repo_root;
+    requestId = randomUUID();
+    appendjournal("request_start", {
+      repo_root: baseline.repo_root ?? cwd,
+      baseline_sha: baseline.sha,
+      baseline_dirty: [...baseline.dirty].sort(),
+      policy_fingerprint: policyfingerprint(),
+    });
 
     // no git — fall back to first-touch content hashing (see tool_call below)
     if (baseline.sha === null) {
@@ -1143,13 +1219,25 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("session_stop", async (_event: unknown, ctx: ExtensionContext): Promise<SessionStopResult | void> => {
     // Any path that does not return `{ continue: true }` ends the continuation
     // chain, so it must clear the counter that latches the baseline.
-    if (!policy.enabled) return void (continuationCount = 0);
-    if (!evidence.hadToolCalls) return void (continuationCount = 0);
-    if (evidence.askedUser) return void (continuationCount = 0);
+    if (!policy.enabled) {
+      terminaljournal("skipped_disabled");
+      return void (continuationCount = 0);
+    }
+    if (!evidence.hadToolCalls) {
+      terminaljournal("skipped_no_tools");
+      return void (continuationCount = 0);
+    }
+    if (evidence.askedUser) {
+      terminaljournal("skipped_user_question");
+      return void (continuationCount = 0);
+    }
 
     const cwd = String(ctx?.cwd ?? ".");
     const assistantText = getLastAssistantText(ctx);
-    if (!assistantText) return void (continuationCount = 0);
+    if (!assistantText) {
+      terminaljournal("skipped_no_assistant_text");
+      return void (continuationCount = 0);
+    }
 
     const hasGit = evidence.baselineSha !== null;
     const markers = loadForbiddenMarkers(evidence.repoRoot ?? cwd);
@@ -1220,6 +1308,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
           // design, so a pass in retry 1 would otherwise keep grounding a test
           // claim in retry 2 after the agent broke the suite again.
           evidence.verifyPassed = !failure;
+          appendjournal("verify", {
+            verify_id: randomUUID(),
+            outcome: failure ? "failed" : "passed",
+            tree_fingerprint: key,
+          });
           ledger.append("gate_eval", {
             rules: [failure ? "verify_failed" : "verify_passed"],
             cmd: config.verifyCmd,
@@ -1341,6 +1434,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         hasGit,
         cwd,
       });
+      terminaljournal("stalemate");
       continuationCount = 0;
       lastBlockingKey = null;
       return;
@@ -1365,6 +1459,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           cwd,
         });
       }
+      terminaljournal(warnings.length > 0 ? "passed_with_warnings" : "passed");
       continuationCount = 0;
       lastBlockingKey = null;
       return;
@@ -1380,6 +1475,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
       hasGit,
       cwd,
       subagents: evidence.subagents.length,
+    });
+    appendjournal("continuation", {
+      continuation: continuationCount,
+      failure_hash: blockingKey,
     });
 
     if (continuationCount > MAX_CONTINUATIONS) {
@@ -1413,6 +1512,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         hasGit,
         cwd,
       });
+      terminaljournal("cap_reached");
       // The chain ends here: the agent yields to the user despite the failures.
       // Reset so the next request re-baselines at `agent_start` — otherwise the
       // latch would hold a stale baseline for the rest of the session and every
