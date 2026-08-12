@@ -10,6 +10,7 @@ function recovery(reason) {
     failure_hash: null,
     verify_ids: [],
     outcome: null,
+    release_reason: null,
   };
 }
 
@@ -36,6 +37,7 @@ export function reducejournal(events) {
     failure_hash: null,
     verify_ids: [],
     outcome: null,
+    release_reason: null,
   };
 
   for (const event of events) {
@@ -58,6 +60,7 @@ export function reducejournal(events) {
         failure_hash: null,
         verify_ids: [],
         outcome: null,
+        release_reason: null,
       };
       continue;
     }
@@ -78,7 +81,14 @@ export function reducejournal(events) {
       state = { ...state, verify_ids: [...state.verify_ids, event.verify_id] };
     } else if (event.kind === "terminal") {
       if (typeof event.outcome !== "string") return recovery("invalid terminal event");
-      state = { ...state, status: "terminal", outcome: event.outcome };
+      state = {
+        ...state,
+        status: "terminal",
+        outcome: event.outcome,
+        release_reason: typeof event.release_reason === "string"
+          ? event.release_reason
+          : null,
+      };
     } else {
       return recovery(`unknown journal event: ${event.kind}`);
     }

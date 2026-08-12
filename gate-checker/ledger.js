@@ -83,6 +83,9 @@ export function summarize(records) {
   let chains = 0;
   let capHits = 0;
   let resolved = 0;
+  let releasedWithFailures = 0;
+  /** @type {Record<string, number>} */
+  const releasedByReason = {};
   let continuations = 0;
   let inlineFlags = 0;
   let degraded = 0;
@@ -108,8 +111,21 @@ export function summarize(records) {
       inlineByRule[rule] = (inlineByRule[rule] ?? 0) + 1;
     } else if (r.event === "chain_end") {
       chains++;
-      if (r.outcome === "cap_reached") capHits++;
-      else if (r.outcome === "resolved") resolved++;
+      if (r.outcome === "resolved") {
+        resolved++;
+      } else if (
+        r.outcome === "released_with_failures" ||
+        r.outcome === "cap_reached" ||
+        r.outcome === "stalemate"
+      ) {
+        releasedWithFailures++;
+        const reason = String(
+          r.release_reason ??
+          (r.outcome === "cap_reached" ? "continuation_cap" : r.outcome),
+        );
+        releasedByReason[reason] = (releasedByReason[reason] ?? 0) + 1;
+        if (reason === "continuation_cap") capHits++;
+      }
     } else if (r.event === "degraded") {
       degraded++;
     } else if (r.event === "process_shape") {
@@ -128,6 +144,8 @@ export function summarize(records) {
     capHits,
     capHitRate: chains > 0 ? capHits / chains : 0,
     continuations,
+    releasedWithFailures,
+    releasedByReason,
     inlineFlags,
     degraded,
     byRule,

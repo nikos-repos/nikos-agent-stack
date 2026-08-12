@@ -912,8 +912,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
   };
-  const terminaljournal = (outcome: string): void => {
-    appendjournal("terminal", { outcome });
+  const terminaljournal = (
+    outcome: string,
+    fields: Record<string, unknown> = {},
+  ): void => {
+    appendjournal("terminal", { outcome, ...fields });
     requestId = null;
   };
 
@@ -1349,18 +1352,16 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     // --- "a process should have run" -----------------------------------------
-    // Recorded at the two points where a request actually ENDS: gates clean, or
-    // cap reached. A forced continuation is not an end, so recording there
-    // would count one request several times and inflate the rate.
-    //
-    // The denominator is deliberately "work-bearing, non-interactive requests":
-    // the early returns above (no tool calls, asked the user, no assistant text)
-    // never reach here, and none of them could have been routed into a process.
+    // record process shape only when a request ends, never on a continuation.
     const shape = processShape(evidence, changedCount);
-    const recordShape = (outcome: "gates_clean" | "cap_reached" | "stalemate") =>
+    const recordShape = (
+      outcome: "gates_clean" | "released_with_failures",
+      release_reason: string | null = null,
+    ) =>
       ledger.append("process_shape", {
         ...shape,
         outcome,
+        release_reason,
         hasGit,
         subagents: evidence.subagents.length,
         continuations: continuationCount,
@@ -1418,23 +1419,24 @@ export default function gateChecker(pi: ExtensionAPI): void {
       continuationCount > 0 &&
       blockingKey === lastBlockingKey
     ) {
-      recordShape("stalemate");
+      recordShape("released_with_failures", "stalemate");
       try {
         ctx?.ui?.notify?.(
           `gate checker: ${blocking.length} failure(s) unchanged after a retry — releasing. rules: ${[...new Set(blocking.map((f) => f.rule))].join(", ")}`,
           "warning",
         );
-        ctx?.ui?.setStatus?.("gate", `⚠ ${blocking.length} failure(s) — stalemate, released`);
+        ctx?.ui?.setStatus?.("gate", `⚠ ${blocking.length} failure(s) — released with failures (stalemate)`);
       } catch {}
       ledger.append("chain_end", {
-        outcome: "stalemate",
+        outcome: "released_with_failures",
+        release_reason: "stalemate",
         continuations: continuationCount,
         rules: blocking.map((f) => f.rule),
         failures: blocking.map((f) => ({ rule: f.rule, detail: f.detail })),
         hasGit,
         cwd,
       });
-      terminaljournal("stalemate");
+      terminaljournal("released_with_failures", { release_reason: "stalemate" });
       continuationCount = 0;
       lastBlockingKey = null;
       return;
@@ -1482,7 +1484,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     });
 
     if (continuationCount > MAX_CONTINUATIONS) {
-      recordShape("cap_reached");
+      recordShape("released_with_failures", "continuation_cap");
       try {
         ctx?.ui?.notify?.(
           `gate checker: ${blocking.length} unresolved failure(s) after ${continuationCount} continuations — review manually`,
@@ -1490,7 +1492,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         );
         ctx?.ui?.setStatus?.(
           "gate",
-          `⚠ ${blocking.length} failures (cap reached)`,
+          `⚠ ${blocking.length} failures — released with failures (continuation cap)`,
         );
       } catch {}
       try {
@@ -1505,14 +1507,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
       // fixed within a retry or two, so burning every continuation and still
       // failing usually means the gate was wrong, not the agent.
       ledger.append("chain_end", {
-        outcome: "cap_reached",
+        outcome: "released_with_failures",
+        release_reason: "continuation_cap",
         continuations: continuationCount,
         rules,
         failures: blocking.map((f) => ({ rule: f.rule, detail: f.detail })),
         hasGit,
         cwd,
       });
-      terminaljournal("cap_reached");
+      terminaljournal("released_with_failures", {
+        release_reason: "continuation_cap",
+      });
       // The chain ends here: the agent yields to the user despite the failures.
       // Reset so the next request re-baselines at `agent_start` — otherwise the
       // latch would hold a stale baseline for the rest of the session and every

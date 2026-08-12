@@ -178,9 +178,15 @@ function stats(args) {
     console.log("  (no gate activity recorded yet)");
     return 0;
   }
-  console.log(`  chains           ${s.chains}  (resolved ${s.resolved}, cap hit ${s.capHits})`);
+  console.log(
+    `  chains           ${s.chains}  (resolved ${s.resolved}, released with failures ${s.releasedWithFailures})`,
+  );
   console.log(`  cap-hit rate     ${(s.capHitRate * 100).toFixed(1)}%  <- high means gates too strict`);
   console.log(`  forced retries   ${s.continuations}`);
+  const releases = Object.entries(s.releasedByReason).sort((a, b) => b[1] - a[1]);
+  for (const [reason, count] of releases) {
+    console.log(`  released         ${String(count).padStart(5)}  ${reason}`);
+  }
   console.log(`  inline flags     ${s.inlineFlags}  <- caught early, no retry needed`);
   console.log(`  degraded runs    ${s.degraded}`);
 

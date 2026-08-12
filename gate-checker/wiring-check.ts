@@ -127,7 +127,9 @@ const shapes = read(process.env.OMP_GATE_LEDGER!).filter(
 console.log("6. process-shape records");
 expect(shapes.length > 0, `ledger received records (${shapes.length})`);
 expect(
-  shapes.every((r) => r.outcome === "gates_clean" || r.outcome === "cap_reached"),
+  shapes.every((r) =>
+    r.outcome === "gates_clean" || r.outcome === "released_with_failures"
+  ),
   "every record marks an ENDED request, never a forced continuation",
 );
 // case 3 committed one file and the verify gate proved the suite passes, so it
@@ -234,13 +236,16 @@ for (const [label, report, shouldBlock] of [
   const parent = "i modified `src/ghost.ts` as requested";
   const first = await runSub(h, parent, []);
   const second = await runSub(h, parent, []);
-  console.log("11. stalemate");
+  console.log("11. released with failures");
   expect(first.r?.continue === true, "first identical failure forces a continuation");
   expect(second.r === undefined, "second identical failure releases instead of looping");
   const stale = read(process.env.OMP_GATE_LEDGER!).filter(
-    (x) => x.event === "chain_end" && x.outcome === "stalemate",
+    (x) =>
+      x.event === "chain_end" &&
+      x.outcome === "released_with_failures" &&
+      x.release_reason === "stalemate",
   );
-  expect(stale.length > 0, `ledger records the stalemate (${stale.length})`);
+  expect(stale.length > 0, `ledger records the failed release (${stale.length})`);
 }
 
 // ── the dial, through the real command handlers ────────────────────────────
