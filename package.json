@@ -1,0 +1,8 @@
+{
+  "name": "nikos-agent-stack",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun run gate-checker/index.ts && bun run gate-checker/wiring-check.ts"
+  }
+}
