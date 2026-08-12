@@ -114,6 +114,54 @@ function cutover(args) {
 }
 
 /** @param {Record<string, string | boolean>} args */
+function audit(args) {
+  const cwd = String(args.cwd ?? ".");
+  const kind = String(args.kind ?? "uncommitted");
+  const options = { kind, cwd };
+  if (typeof args.folder === "string") options.folder = args.folder;
+  if (kind === "request") {
+    if (typeof args.base !== "string") {
+      console.error("audit: request scope requires --base <ref>");
+      return 2;
+    }
+    options.baseline_sha = args.base;
+    options.baseline_dirty = new Set();
+  } else if (kind === "base") {
+    if (typeof args.base !== "string") {
+      console.error("audit: base scope requires --base <ref>");
+      return 2;
+    }
+    options.base_ref = args.base;
+  } else if (kind === "commit") {
+    if (typeof args.commit !== "string") {
+      console.error("audit: commit scope requires --commit <ref>");
+      return 2;
+    }
+    options.commit_ref = args.commit;
+  } else if (kind !== "uncommitted") {
+    console.error(`audit: unknown scope kind \"${kind}\"`);
+    return 2;
+  }
+
+  try {
+    const scope = resolvescope(options);
+    if (args.json) {
+      console.log(JSON.stringify(scope, null, 2));
+    } else {
+      console.log(`gate audit: ${scope.kind} (${scope.files.length} files)`);
+      console.log(`  digest  ${scope.digest}`);
+      for (const file of scope.files) {
+        console.log(`  ${file.type.padEnd(12)} ${file.path}`);
+      }
+    }
+    return 0;
+  } catch (error) {
+    console.error(`audit: ${String(error)}`);
+    return 2;
+  }
+}
+
+/** @param {Record<string, string | boolean>} args */
 function stats(args) {
   const path = typeof args.ledger === "string" ? args.ledger : LEDGER_PATH;
   const records = read(path);
@@ -166,10 +214,14 @@ const args = parseArgs(rest);
 let code = 0;
 if (command === "cutover") {
   code = cutover(args);
+} else if (command === "audit") {
+  code = audit(args);
 } else if (command === "stats") {
   code = stats(args);
 } else {
-  console.log("usage: gate-cli.js <cutover|stats> [options]");
+  console.log("usage: gate-cli.js <audit|cutover|stats> [options]");
+  console.log("  audit   [--kind uncommitted|request|base|commit] [--base <ref>]");
+  console.log("          [--commit <ref>] [--folder <path>] [--cwd <dir>] [--json]");
   console.log("  cutover [--base <ref>] [--cwd <dir>] [--markers <file>]");
   console.log("  stats   [--json] [--ledger <path>]");
   code = command ? 2 : 0;
