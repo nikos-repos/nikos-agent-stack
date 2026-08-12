@@ -25,6 +25,7 @@ import {
 } from "./predicates.js";
 import { read, summarize, LEDGER_PATH } from "./ledger.js";
 import { resolvescope } from "./scope.js";
+import { auditscope } from "./risks.js";
 
 /**
  * @param {string[]} argv
@@ -142,16 +143,28 @@ function audit(args) {
     console.error(`audit: unknown scope kind \"${kind}\"`);
     return 2;
   }
-
   try {
     const scope = resolvescope(options);
+
+    const risk = auditscope(scope);
+    const output = {
+      ...scope,
+      risk_outcome: risk.outcome,
+      risks: risk.findings,
+    };
     if (args.json) {
-      console.log(JSON.stringify(scope, null, 2));
+      console.log(JSON.stringify(output, null, 2));
     } else {
       console.log(`gate audit: ${scope.kind} (${scope.files.length} files)`);
       console.log(`  digest  ${scope.digest}`);
       for (const file of scope.files) {
         console.log(`  ${file.type.padEnd(12)} ${file.path}`);
+      }
+      for (const finding of risk.findings) {
+        console.log(
+          `  advisory     ${finding.id} ${finding.evidence.path}` +
+          `${finding.evidence.line ? `:${finding.evidence.line}` : ""}`,
+        );
       }
     }
     return 0;

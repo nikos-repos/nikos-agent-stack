@@ -79,6 +79,7 @@ import {
   provenancefromlifecycle,
 } from "./provenance.js";
 import { journal_type, journalfrombranch, journal_version } from "./journal.js";
+import { auditscope } from "./risks.js";
 
 type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -156,7 +157,7 @@ interface ToolResultEventResult {
 }
 
 interface GateFailure {
-  gate: "citation" | "completion" | "verify" | "commit" | "journal";
+  gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk";
   rule: string;
   detail: string;
   // "block" forces a continuation. "warn" is surfaced and recorded but never
@@ -1271,6 +1272,18 @@ export default function gateChecker(pi: ExtensionAPI): void {
         });
         changedFiles = new Set(scope.files.map((file) => file.path));
         added = new Map(Object.entries(scope.added)) as AddedMap;
+        const risk = auditscope(scope);
+        for (const finding of risk.findings) {
+          const location = finding.evidence.line
+            ? `${finding.evidence.path}:${finding.evidence.line}`
+            : finding.evidence.path;
+          failures.push({
+            gate: "risk",
+            rule: finding.id,
+            severity: "warn",
+            detail: `${location}: ${finding.evidence.detail} (scope ${scope.digest.slice(0, 12)})`,
+          });
+        }
       } catch {
         canAdjudicate = false;
       }
