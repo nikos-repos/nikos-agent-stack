@@ -31,7 +31,7 @@ this installation has two related enforcement layers:
 
 both layers use `predicates.js` for added-line parsing, forbidden-marker checks, path matching, manifests, and the clean-tree predicate. this avoids two gate implementations with different results.
 
-sources: [extension entry point](agent/extensions/gate-checker/index.ts), [shared predicates](agent/extensions/gate-checker/predicates.js), [babysitter gates](agent/extensions/gate-checker/gates.js), [delivery process](agent/extensions/gate-checker/delivery-contract.process.js)
+sources: [extension entry point](../gate-checker/index.ts), [shared predicates](../gate-checker/predicates.js), [babysitter gates](../gate-checker/gates.js), [delivery process](../gate-checker/delivery-contract.process.js)
 
 ## quick start
 
@@ -75,7 +75,7 @@ low keeps inline checks and telemetry, but it does not force a continuation.
 
 level changes apply in the current session and persist for later sessions. no restart is required.
 
-source: [command registration and live policy updates](agent/extensions/gate-checker/index.ts), [level descriptions](agent/extensions/gate-checker/config.js)
+source: [command registration and live policy updates](../gate-checker/index.ts), [level descriptions](../gate-checker/config.js)
 
 ## engagement levels
 
@@ -99,7 +99,7 @@ source: [command registration and live policy updates](agent/extensions/gate-che
 
 warnings appear in the user interface and ledger, but they never force another model turn. blocking failures can force a continuation.
 
-source: [policy matrix and rule mapping](agent/extensions/gate-checker/config.js), [policy application and severity handling](agent/extensions/gate-checker/index.ts)
+source: [policy matrix and rule mapping](../gate-checker/config.js), [policy application and severity handling](../gate-checker/index.ts)
 
 ## automatic extension behavior
 
@@ -126,13 +126,13 @@ session stop
   -> warn, release, or force a continuation
 ```
 
-source: [extension hooks](agent/extensions/gate-checker/index.ts)
+source: [extension hooks](../gate-checker/index.ts)
 
 ### inline marker feedback
 
 successful `write` and `edit` results receive an inline notice when that call adds a forbidden marker. the check examines only text introduced by the current tool call. the final session check remains a backstop for bash edits and subagent edits.
 
-source: [inline additions and tool-result hook](agent/extensions/gate-checker/index.ts), [completion predicate](agent/extensions/gate-checker/predicates.js)
+source: [inline additions and tool-result hook](../gate-checker/index.ts), [completion predicate](../gate-checker/predicates.js)
 
 ### final response enforcement
 
@@ -143,7 +143,7 @@ at session stop, the plugin partitions findings into warnings and blocks:
 - an identical blocking result after one forced continuation is a stalemate. the plugin releases the response and records the outcome.
 - the plugin allows at most three forced continuations. unresolved failures then release for manual review.
 
-source: [session-stop enforcement and runaway protection](agent/extensions/gate-checker/index.ts)
+source: [session-stop enforcement and runaway protection](../gate-checker/index.ts)
 
 ### when final enforcement is skipped
 
@@ -156,7 +156,7 @@ final checks do not run when:
 
 verification and commit checks also require at least one observed changed file. read-only work is not required to run tests or create a commit.
 
-source: [session-stop early returns and change gate](agent/extensions/gate-checker/index.ts)
+source: [session-stop early returns and change gate](../gate-checker/index.ts)
 
 ## gate rule reference
 
@@ -175,7 +175,7 @@ source: [session-stop early returns and change gate](agent/extensions/gate-check
 
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 
-sources: [rule mapping](agent/extensions/gate-checker/config.js), [claim and snapshot checks](agent/extensions/gate-checker/index.ts), [marker predicate](agent/extensions/gate-checker/predicates.js)
+sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](../gate-checker/index.ts), [marker predicate](../gate-checker/predicates.js)
 
 ## configuration
 
@@ -225,7 +225,7 @@ omp
 
 because the persisted file has higher precedence, remove or edit it before an environment-only override can change the level. a slash command without a new verification command preserves the existing command. `/gates-disable` also preserves it for later re-engagement.
 
-source: [configuration loading, saving, and precedence](agent/extensions/gate-checker/config.js), [slash command behavior](agent/extensions/gate-checker/index.ts)
+source: [configuration loading, saving, and precedence](../gate-checker/config.js), [slash command behavior](../gate-checker/index.ts)
 
 ## custom forbidden markers
 
@@ -277,7 +277,7 @@ rules:
 
 broad words such as bare `stub`, `placeholder`, `noop`, and `fixme` are not defaults because they can occur in legitimate identifiers or calls.
 
-source: [marker list and loading](agent/extensions/gate-checker/predicates.js)
+source: [marker list and loading](../gate-checker/predicates.js)
 
 ## git and no-git behavior
 
@@ -297,7 +297,7 @@ at session stop, it combines:
 
 it then excludes files that were already unstaged at the baseline. paths come from added, copied, modified, and renamed changes. untracked files and deletions are outside this diff set.
 
-source: [baseline and diff derivation](agent/extensions/gate-checker/index.ts)
+source: [baseline and diff derivation](../gate-checker/index.ts)
 
 ### degraded no-git mode
 
@@ -317,7 +317,7 @@ limitations:
 - a deleted, unreadable, or oversized final file cannot produce an added-line comparison.
 - line-set comparison can identify newly present text but is less exact than a git hunk.
 
-source: [degraded diff and request hooks](agent/extensions/gate-checker/index.ts), [snapshot implementation](agent/extensions/gate-checker/predicates.js)
+source: [degraded diff and request hooks](../gate-checker/index.ts), [snapshot implementation](../gate-checker/predicates.js)
 
 ## verification command behavior
 
@@ -336,7 +336,7 @@ behavior:
 
 the plugin does not guess a default extension-level test command. without a configured command, the verification rule is off even at high level.
 
-source: [verification execution and cache](agent/extensions/gate-checker/index.ts), [level display](agent/extensions/gate-checker/config.js)
+source: [verification execution and cache](../gate-checker/index.ts), [level display](../gate-checker/config.js)
 
 ## commit routing
 
@@ -366,7 +366,7 @@ the extension rewrites supported bash commit commands before execution.
 
 routing creates a local commit only. it does not publish or push.
 
-source: [commit routing implementation](agent/extensions/gate-checker/index.ts)
+source: [commit routing implementation](../gate-checker/index.ts)
 
 ## subagent contract
 
@@ -401,7 +401,7 @@ accepted manifest keys are `changed`, <code>changed&#70;iles</code>, `changed_fi
 
 subagent adjudication starts only when the parent response refers to delegated or reviewed work. if the parent does not rely on a subagent report, parent claims and the actual diff still receive normal checks. each report is judged once per request, including across forced continuations.
 
-source: [subagent injection and citation checks](agent/extensions/gate-checker/index.ts), [manifest parser](agent/extensions/gate-checker/predicates.js)
+source: [subagent injection and citation checks](../gate-checker/index.ts), [manifest parser](../gate-checker/predicates.js)
 
 ## command-line tools
 
@@ -442,7 +442,7 @@ exit codes:
 - `1`: findings printed to standard output.
 - `2`: unknown command.
 
-source: [cutover cli](agent/extensions/gate-checker/gate-cli.js)
+source: [cutover cli](../gate-checker/gate-cli.js)
 
 ### stats
 
@@ -467,7 +467,7 @@ bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js stats \
 
 stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, degraded runs, process-shape rate, miss reasons, and counts by rule.
 
-source: [stats cli](agent/extensions/gate-checker/gate-cli.js), [ledger aggregation](agent/extensions/gate-checker/ledger.js)
+source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js)
 
 ## babysitter gates
 
@@ -500,7 +500,7 @@ configuration fields:
 | <code>max&#82;etries</code> | `3` | verification attempts |
 | <code>base&#82;ef</code> | <code>&#72;&#69;&#65;&#68;~1</code> | cutover baseline |
 
-source: [standalone gates and helper](agent/extensions/gate-checker/gates.js)
+source: [standalone gates and helper](../gate-checker/gates.js)
 
 ## delivery-contract process
 
@@ -534,7 +534,7 @@ successful output contains `success: true`, `phase: delivered`, and the implemen
 
 this process is available for explicit babysitter use. the automatic extension does not route requests into it. instead, telemetry records whether a completed request had a compatible shape: one to eight changed files plus test evidence.
 
-source: [delivery process](agent/extensions/gate-checker/delivery-contract.process.js), [process-shape detector](agent/extensions/gate-checker/index.ts)
+source: [delivery process](../gate-checker/delivery-contract.process.js), [process-shape detector](../gate-checker/index.ts)
 
 ## telemetry and tuning
 
@@ -569,7 +569,7 @@ record types:
 
 process-shape records classify nonmatches as `no-changes`, `too-broad`, or `no-test-run`. the metric measures possible process use; it does not activate the process.
 
-source: [ledger writer and aggregation](agent/extensions/gate-checker/ledger.js), [process-shape recording](agent/extensions/gate-checker/index.ts)
+source: [ledger writer and aggregation](../gate-checker/ledger.js), [process-shape recording](../gate-checker/index.ts)
 
 ## troubleshooting
 
@@ -577,7 +577,7 @@ source: [ledger writer and aggregation](agent/extensions/gate-checker/ledger.js)
 
 run `/gates-engage` and inspect the reported source. the persisted file outranks environment variables. use a slash command or update the file selected by <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#67;&#79;&#78;&#70;&#73;&#71;</code>.
 
-source: [configuration precedence](agent/extensions/gate-checker/config.js)
+source: [configuration precedence](../gate-checker/config.js)
 
 ### high says verification is off
 
@@ -587,13 +587,13 @@ high does not invent a test command. set one explicitly:
 /gates-engage high bun test
 ```
 
-source: [high-level description](agent/extensions/gate-checker/config.js)
+source: [high-level description](../gate-checker/config.js)
 
 ### a test-success statement is rejected
 
 run a recognized test runner through the parent `bash` tool, or configure the verification command. a test run reported only by a subagent is not parent-session evidence.
 
-source: [test evidence checks](agent/extensions/gate-checker/index.ts)
+source: [test evidence checks](../gate-checker/index.ts)
 
 ### a subagent manifest fails
 
@@ -604,13 +604,13 @@ check all of these conditions:
 - a read-only report uses an empty manifest.
 - the parent independently runs tests before repeating test-success claims.
 
-source: [manifest and subagent claim checks](agent/extensions/gate-checker/index.ts), [manifest parser](agent/extensions/gate-checker/predicates.js)
+source: [manifest and subagent claim checks](../gate-checker/index.ts), [manifest parser](../gate-checker/predicates.js)
 
 ### an old marker blocks delivery
 
 normal git mode checks added lines only. if an untouched old marker appears in a finding, confirm that the baseline was captured before the request and that the file was not rewritten wholesale. `write` treats the complete replacement body as authored by that call for inline feedback.
 
-source: [added-line derivation](agent/extensions/gate-checker/index.ts), [whole-file write handling](agent/extensions/gate-checker/predicates.js)
+source: [added-line derivation](../gate-checker/index.ts), [whole-file write handling](../gate-checker/predicates.js)
 
 ### a response is released with unresolved failures
 
@@ -619,56 +619,118 @@ inspect the status and ledger. the plugin releases when:
 - the exact blocking failure repeats after a forced continuation, which records `stalemate`.
 - the chain exceeds three forced continuations, which records `cap_reached`.
 
-source: [runaway protection](agent/extensions/gate-checker/index.ts)
+source: [runaway protection](../gate-checker/index.ts)
 
 ### high blocks on a dirty tree
 
 commit all tracked staged and unstaged changes. untracked files do not fail the commit gate. if the request must not create a commit, use medium instead of high.
 
-source: [commit policy](agent/extensions/gate-checker/config.js), [clean-tree predicate](agent/extensions/gate-checker/predicates.js)
+source: [commit policy](../gate-checker/config.js), [clean-tree predicate](../gate-checker/predicates.js)
 
 ### commit routing does not occur
 
 confirm that `~/.omp/agent/skills/git-pushing/scripts/smart_commit.sh` exists. routing is disabled when the script is absent. amend commits are intentionally not rewritten.
 
-source: [commit routing activation](agent/extensions/gate-checker/index.ts)
+source: [commit routing activation](../gate-checker/index.ts)
 
 ### the plugin reports degraded mode
 
 git baseline capture failed or the working directory is not a repository. the plugin can still watch `write` and `edit` paths and run verification, but it cannot prove changes made outside those hooks or enforce commits.
 
-source: [baseline and degraded mode](agent/extensions/gate-checker/index.ts)
+source: [baseline and degraded mode](../gate-checker/index.ts)
+
+## working repository upgrade
+
+the working build adds deterministic repository scopes without changing native omp tool ownership.
+
+### canonical scopes
+
+`scope.js` resolves four immutable scopes:
+
+- `request`: committed, staged, unstaged, and new untracked changes since the request baseline, excluding files already dirty at that baseline.
+- `uncommitted`: current staged, unstaged, and untracked changes.
+- `base`: the merge base of a supplied ref through the current commit.
+- `commit`: one resolved commit against its parent.
+
+each result contains resolved commit identifiers, normalized file states, added lines, and a sha-256 scope digest. records include additions, modifications, deletions, renames, copies, modes, binaries, and submodules when git reports them.
+
+### read-only cli audit
+
+the upgrade does not register a model-facing audit tool. use the cli when an explicit audit is useful:
+
+```sh
+bun run gate-checker/gate-cli.js audit --kind uncommitted --json
+bun run gate-checker/gate-cli.js audit --kind base --base origin/main --json
+bun run gate-checker/gate-cli.js audit --kind commit --commit @ --json
+```
+
+optional `--folder <path>` limits the immutable scope. audit never fetches, checks out, mutates, commits, changes approval, or starts an agent.
+
+### native task provenance
+
+the extension consumes native `task` result details and lifecycle events. it records the native agent id, task call id, terminal status, duration, model, session file, result artifact, patch, branch metadata, and structured changed-file manifest. text manifests remain a compatibility fallback.
+
+the adapter never registers or replaces `task`.
+
+### request journal and terminal outcomes
+
+the extension writes versioned `omp.gate-checker.journal` custom session entries. it reconstructs active request state after session start, branch, and tree navigation. malformed, stale, or policy-incompatible state closes as `recovery_required`.
+
+terminal outcomes distinguish:
+
+- `passed`
+- `passed_with_warnings`
+- `released_with_failures`, with `stalemate` or `continuation_cap`
+- explicit skip reasons for disabled and non-work-bearing requests
+
+a release with unresolved findings is never reported as a pass.
+
+### advisory risk rules
+
+scope audits report stable advisory rule ids for:
+
+- migrations and schema changes
+- dependency manifests and lockfiles
+- authentication and permission paths
+- public contracts
+- destructive operations
+- file deletion and rename
+- mode, binary, and submodule changes
+
+these findings remain advisory. no finding means that no deterministic rule matched; it does not prove safety.
+
+### opt-in cooperative mutation lease
+
+set <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#77;&#85;&#84;&#65;&#84;&#73;&#79;&#78;&#95;&#76;&#69;&#65;&#83;&#69;=1</code> to coordinate gate-aware sessions that share one git worktree.
+
+the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. stale recovery requires both the configured age and a dead owner process. native `write`, `edit`, and non-isolated `task` calls are blocked for a conflicting gate-aware session.
+
+the lease cannot exclude external editors or arbitrary processes. it is disabled by default.
 
 ## verification and development
 
-### predicate and policy self-check
-
-<pre><code>env &#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#67;&#79;&#78;&#70;&#73;&#71;=\"$(mktemp)\" \
-  &#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#76;&#69;&#68;&#71;&#69;&#82;=\"$(mktemp)\" \
-  bun run ~/.omp/agent/extensions/gate-checker/index.ts
-</code></pre>
-
-this executes the embedded checks for predicates, routing, policy levels, cache behavior, git handling, manifests, and regressions. use isolated paths because the policy checks assert default precedence and a real persisted level can change those fixtures.
-
-### end-to-end wiring check
+run every focused test, the embedded predicate checks, and the end-to-end wiring probe:
 
 ```sh
-bun run ~/.omp/agent/extensions/gate-checker/wiring-check.ts
+bun run test
 ```
 
-this creates isolated temporary repositories and configuration files, then drives the real extension hooks through verify, commit, warning, continuation, subagent, and telemetry scenarios. it redirects the ledger, so the probe does not alter normal tuning data.
-
-sources: [embedded self-check](agent/extensions/gate-checker/index.ts), [wiring probe](agent/extensions/gate-checker/wiring-check.ts)
+use isolated configuration and ledger paths when running `index.ts` directly so persisted user policy does not alter its fixtures.
 
 ## source map
 
 | file | responsibility |
 |---|---|
-| [index.ts](agent/extensions/gate-checker/index.ts) | auto-discovered extension, hooks, commands, evidence, enforcement, commit routing, verification, and self-check |
-| [config.js](agent/extensions/gate-checker/config.js) | engagement levels, rule-family mapping, persistence, precedence, and status text |
-| [predicates.js](agent/extensions/gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
-| [gate-cli.js](agent/extensions/gate-checker/gate-cli.js) | cutover and stats command-line interface |
-| [ledger.js](agent/extensions/gate-checker/ledger.js) | append-only events, safe reading, and metric aggregation |
-| [gates.js](agent/extensions/gate-checker/gates.js) | six standalone babysitter tasks and the full gate-sequence helper |
-| [delivery-contract.process.js](agent/extensions/gate-checker/delivery-contract.process.js) | structured understand, implement, verify, commit, artifact, and cutover process |
-| [wiring-check.ts](agent/extensions/gate-checker/wiring-check.ts) | isolated end-to-end extension probe |
+| [index.ts](../gate-checker/index.ts) | auto-discovered extension, hooks, evidence, enforcement, native task provenance, journal integration, advisory risks, and lease integration |
+| [scope.js](../gate-checker/scope.js) | canonical immutable git scopes and request baseline capture |
+| [provenance.js](../gate-checker/provenance.js) | native task result and lifecycle normalization |
+| [journal.js](../gate-checker/journal.js) | versioned session journal reducer and branch reconstruction |
+| [risks.js](../gate-checker/risks.js) | deterministic advisory diff rules |
+| [lease.js](../gate-checker/lease.js) | opt-in cooperative worktree mutation lease |
+| [config.js](../gate-checker/config.js) | engagement levels, rule-family mapping, persistence, precedence, and status text |
+| [predicates.js](../gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
+| [gate-cli.js](../gate-checker/gate-cli.js) | scope audit, cutover, and stats command-line interface |
+| [ledger.js](../gate-checker/ledger.js) | append-only events, explicit release metrics, safe reading, and aggregation |
+| [gates.js](../gate-checker/gates.js) | six standalone babysitter tasks and the full gate-sequence helper |
+| [delivery-contract.process.js](../gate-checker/delivery-contract.process.js) | structured understand, implement, verify, commit, artifact, and cutover process |
+| [wiring-check.ts](../gate-checker/wiring-check.ts) | isolated end-to-end extension probe |
