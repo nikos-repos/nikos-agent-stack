@@ -200,6 +200,7 @@ interface TurnEvidence {
   subagents: SubagentEvidence[];
   baselineSha: string | null;
   baselineDirty: Set<string>;
+  baselineSnapshots: Record<string, unknown>;
   // git reports paths relative to the repo root, which is not always ctx.cwd.
   repoRoot: string | null;
   // content at FIRST touch, keyed by the path as the agent wrote it. null means
@@ -227,6 +228,7 @@ function freshEvidence(): TurnEvidence {
     subagents: [],
     baselineSha: null,
     baselineDirty: new Set(),
+    baselineSnapshots: {},
     repoRoot: null,
     preTouch: new Map(),
     judgedSubagents: new Set(),
@@ -862,6 +864,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // blocking-failure fingerprint of the previous continuation (see fix 1)
   let lastBlockingKey: string | null = null;
   let requestId: string | null = null;
+  let journalRecovery: string | null = null;
   const leaseOwnerId = randomUUID();
   const leaseEnabled = !["", "0", "false", "off"].includes(
     String(process.env.OMP_GATE_MUTATION_LEASE ?? "").trim().toLowerCase(),
@@ -908,7 +911,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
       requestId = null;
       continuationCount = 0;
       lastBlockingKey = null;
-      if (state.status === "recovery_required") {
+      journalRecovery = state.status === "recovery_required"
+        ? state.reason ?? "gate journal recovery required"
+        : null;
+      if (journalRecovery) {
         try {
           ctx.ui?.setStatus?.("gate", "⚠ gate journal recovery required");
         } catch {}
@@ -918,7 +924,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const current = capturebaseline(String(ctx.cwd ?? "."));
     if (
       state.policy_fingerprint !== policyfingerprint() ||
-      (current.repo_root && current.repo_root !== state.repo_root)
+      (current.repo_root && current.repo_root !== state.repo_root) ||
+      state.baseline_sha === null ||
+      state.baseline_dirty.length > 0
     ) {
       requestId = state.request_id;
       appendjournal("terminal", { outcome: "recovery_required" });
@@ -928,6 +936,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
       requestId = null;
       continuationCount = 0;
       lastBlockingKey = null;
+      journalRecovery =
+        "the restored request lacks complete adjudication evidence; start a fresh request";
       try {
         ctx.ui?.setStatus?.("gate", "⚠ stale gate journal closed");
       } catch {}
@@ -937,6 +947,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
     continuationCount = state.continuation;
     lastBlockingKey = state.failure_hash;
     evidence = freshEvidence();
+    journalRecovery = null;
+    evidence.hadToolCalls = true;
     evidence.baselineSha = state.baseline_sha;
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
@@ -951,6 +963,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     activeLease = null;
     leaseConflict = null;
     requestId = null;
+    journalRecovery = null;
   };
 
   const recordprovenance = (record: SubagentEvidence | null): void => {
@@ -1092,6 +1105,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineSha = baseline.sha;
     evidence.baselineDirty = baseline.dirty;
     evidence.repoRoot = baseline.repo_root;
+    evidence.baselineSnapshots = baseline.snapshots;
     requestId = randomUUID();
     appendjournal("request_start", {
       repo_root: baseline.repo_root ?? cwd,
@@ -1296,18 +1310,18 @@ export default function gateChecker(pi: ExtensionAPI): void {
       terminaljournal("skipped_disabled");
       return void (continuationCount = 0);
     }
-    if (!evidence.hadToolCalls) {
+    if (!evidence.hadToolCalls && !journalRecovery) {
       terminaljournal("skipped_no_tools");
       return void (continuationCount = 0);
     }
-    if (evidence.askedUser) {
+    if (evidence.askedUser && !journalRecovery) {
       terminaljournal("skipped_user_question");
       return void (continuationCount = 0);
     }
 
     const cwd = String(ctx?.cwd ?? ".");
-    const assistantText = getLastAssistantText(ctx);
-    if (!assistantText) {
+    const assistantText = getLastAssistantText(ctx) ?? "";
+    if (!assistantText && !journalRecovery) {
       terminaljournal("skipped_no_assistant_text");
       return void (continuationCount = 0);
     }
@@ -1324,6 +1338,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
         detail:
           "another gate-aware session holds the repository mutation lease. " +
           "wait for it to finish, then retry without bypassing the native tools.",
+      });
+    }
+    if (journalRecovery) {
+      failures.push({
+        gate: "journal",
+        rule: "recovery_required",
+        detail: journalRecovery,
       });
     }
 
@@ -1347,6 +1368,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           cwd: gitCwd,
           baseline_sha: evidence.baselineSha,
           baseline_dirty: evidence.baselineDirty,
+          baseline_snapshots: evidence.baselineSnapshots,
         });
         changedFiles = new Set(scope.files.map((file) => file.path));
         added = new Map(Object.entries(scope.added)) as AddedMap;
@@ -1362,8 +1384,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
             detail: `${location}: ${finding.evidence.detail} (scope ${scope.digest.slice(0, 12)})`,
           });
         }
-      } catch {
+      } catch (error) {
         canAdjudicate = false;
+        failures.push({
+          gate: "journal",
+          rule: "scope_unavailable",
+          detail: `repository scope could not be resolved: ${String(error)}`,
+        });
       }
     } else {
       const d = degradedDiff(evidence.preTouch, cwd);
@@ -2145,6 +2172,13 @@ if (import.meta.main) {
       "degraded: newly added marker flagged",
       checkAddedLines(
         diffByLineSet("m.py", before, before + "\n// stub\n"),
+        DEFAULT_FORBIDDEN_MARKERS,
+      ).length === 1,
+    );
+    check(
+      "degraded: duplicate marker addition is flagged",
+      checkAddedLines(
+        diffByLineSet("m.py", before, `${before}${before.split("\n")[1]}\n`),
         DEFAULT_FORBIDDEN_MARKERS,
       ).length === 1,
     );

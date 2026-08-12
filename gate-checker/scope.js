@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, readlinkSync, readSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { contentToAdded, parseDiffAdditions } from "./predicates.js";
+import { contentToAdded, diffByLineSet, parseDiffAdditions } from "./predicates.js";
 
 const max_buffer = 64 * 1024 * 1024;
 const scope_kinds = new Set(["request", "uncommitted", "base", "commit"]);
@@ -18,13 +18,6 @@ function git(cwd, args, input = undefined) {
   });
 }
 
-function git_or_empty(cwd, args) {
-  try {
-    return git(cwd, args);
-  } catch {
-    return "";
-  }
-}
 
 function resolve_ref(cwd, ref) {
   if (!ref || /[\u0000\r\n]/.test(ref)) throw new Error("invalid git ref");
@@ -43,23 +36,25 @@ function diff_specs(options, repo_root) {
       ? resolve_ref(repo_root, options.baseline_sha)
       : head;
     resolved.base = base;
-    if (base !== head) specs.push({ args: [base, head], staged: false });
-    specs.push({ args: [], staged: false }, { args: ["--cached"], staged: true });
+    specs.push({ args: [base], staged: null, worktree: true });
   } else if (options.kind === "uncommitted") {
-    specs.push({ args: [], staged: false }, { args: ["--cached"], staged: true });
+    specs.push({ args: [head], staged: null, worktree: true });
   } else if (options.kind === "base") {
     const requested = resolve_ref(repo_root, options.base_ref);
     const base = git(repo_root, ["merge-base", requested, head]).trim();
     if (!base) throw new Error(`could not resolve merge base: ${options.base_ref}`);
     resolved.base = base;
-    specs.push({ args: [base, head], staged: false });
+    specs.push({ args: [base, head], staged: null, worktree: false });
   } else {
     const commit = resolve_ref(repo_root, options.commit_ref);
-    const parent = git_or_empty(repo_root, ["rev-parse", "--verify", `${commit}^`]).trim();
-    resolved.base = parent || null;
+    const parents = git(repo_root, ["rev-list", "--parents", "-n", "1", commit])
+      .trim()
+      .split(/\s+/);
+    const parent = parents[1] || null;
+    resolved.base = parent;
     resolved.head = commit;
     const base = parent || git(repo_root, ["hash-object", "-t", "tree", "--stdin"], "").trim();
-    specs.push({ args: [base, commit], staged: false });
+    specs.push({ args: [base, commit], staged: null, worktree: false });
   }
 
   return { specs, resolved };
@@ -105,8 +100,8 @@ function parse_name_status(raw, staged, out) {
       submodule: false,
     };
     current.type = change_type(status);
-    current.staged ||= staged;
-    current.unstaged ||= !staged;
+    if (staged === true) current.staged = true;
+    if (staged === false) current.unstaged = true;
     if (old_path) current.old_path = old_path;
     out.set(path, current);
   }
@@ -151,27 +146,102 @@ function collect_diff(repo_root, spec, folder, records, added) {
   const common = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames"];
   const paths = path_args(folder);
   parse_name_status(
-    git_or_empty(repo_root, [...common, "--name-status", "-z", ...spec.args, ...paths]),
+    git(repo_root, [...common, "--name-status", "-z", ...spec.args, ...paths]),
     spec.staged,
     records,
   );
   parse_raw(
-    git_or_empty(repo_root, [...common, "--raw", "-z", ...spec.args, ...paths]),
+    git(repo_root, [...common, "--raw", "-z", ...spec.args, ...paths]),
     records,
   );
   parse_numstat(
-    git_or_empty(repo_root, [...common, "--numstat", "-z", ...spec.args, ...paths]),
+    git(repo_root, [...common, "--numstat", "-z", ...spec.args, ...paths]),
     records,
   );
   parseDiffAdditions(
-    git_or_empty(repo_root, [...common, "-\u00550", "--diff-filter=\u0041\u0043\u004d\u0052", ...spec.args, ...paths]),
+    git(repo_root, [...common, "-\u00550", "--diff-filter=\u0041\u0043\u004d\u0052", ...spec.args, ...paths]),
     added,
   );
 }
 
+function mark_worktree_flags(repo_root, folder, records) {
+  const paths = path_args(folder);
+  for (const [args, field] of [
+    [["diff", "--name-status", "-z", ...paths], "unstaged"],
+    [["diff", "--cached", "--name-status", "-z", ...paths], "staged"],
+  ]) {
+    const parsed = new Map();
+    parse_name_status(git(repo_root, args), field === "staged", parsed);
+    for (const [path, value] of parsed) {
+      const current = records.get(path);
+      if (!current) continue;
+      current[field] = true;
+      if (value.old_path) current.old_path = value.old_path;
+    }
+  }
+}
+
+function hash_file(absolute) {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  const fd = openSync(absolute, "r");
+  let binary = false;
+  try {
+    for (let size; (size = readSync(fd, buffer, 0, buffer.length, null)) > 0; ) {
+      const chunk = buffer.subarray(0, size);
+      binary ||= chunk.includes(0);
+      hash.update(chunk);
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return { hash: hash.digest("hex"), binary };
+}
+
+function snapshot(repo_root, path, untracked = false) {
+  const absolute = resolvePath(repo_root, path);
+  try {
+    const stat = lstatSync(absolute);
+    if (stat.isSymbolicLink()) {
+      const target = readlinkSync(absolute);
+      return {
+        exists: true,
+        hash: createHash("sha256").update(target).digest("hex"),
+        content: null,
+        binary: true,
+        untracked,
+      };
+    }
+    if (stat.size > 2 * 1024 * 1024) {
+      const large = hash_file(absolute);
+      return {
+        exists: true,
+        hash: large.hash,
+        content: null,
+        binary: large.binary,
+        untracked,
+      };
+    }
+    const buffer = readFileSync(absolute);
+    const binary = buffer.includes(0);
+    return {
+      exists: true,
+      hash: createHash("sha256").update(buffer).digest("hex"),
+      content: binary ? null : buffer.toString("utf8"),
+      binary,
+      untracked,
+    };
+  } catch (error) {
+    if (String(error?.code ?? "").toLowerCase() === "enoent") {
+      return { exists: false, hash: null, content: null, binary: false, untracked };
+    }
+    throw error;
+  }
+}
+
 function collect_untracked(repo_root, folder, records, added) {
   const paths = path_args(folder);
-  const raw = git_or_empty(repo_root, [
+  const raw = git(repo_root, [
     "ls-files",
     "--others",
     "--exclude-standard",
@@ -179,6 +249,7 @@ function collect_untracked(repo_root, folder, records, added) {
     ...paths,
   ]);
   for (const path of raw.split("\0").filter(Boolean)) {
+    const current = snapshot(repo_root, path, true);
     records.set(path, {
       path,
       type: "untracked",
@@ -187,16 +258,15 @@ function collect_untracked(repo_root, folder, records, added) {
       old_path: null,
       old_mode: null,
       new_mode: null,
-      binary: false,
+      binary: current.binary,
       submodule: false,
     });
-    try {
-      const content = readFileSync(resolvePath(repo_root, path), "utf8");
-      if (content.length <= 2 * 1024 * 1024) {
-        for (const [key, lines] of contentToAdded(path, content)) added.set(key, lines);
+    if (current.content !== null) {
+      for (const [key, lines] of contentToAdded(path, current.content)) {
+        added.set(key, lines);
       }
-    } catch {
-      records.get(path).binary = true;
+    } else if (!current.binary) {
+      throw new Error(`untracked text file is too large to adjudicate: ${path}`);
     }
   }
 }
@@ -206,6 +276,12 @@ function freeze(value) {
   Object.freeze(value);
   for (const item of Object.values(value)) freeze(item);
   return value;
+}
+
+function matches_folder(path, folder) {
+  if (!folder) return true;
+  const normalized = folder.replace(/^\.\//, "").replace(/\/+$/, "");
+  return path === normalized || path.startsWith(`${normalized}/`);
 }
 
 export function capturebaseline(cwd = ".") {
@@ -219,16 +295,23 @@ export function capturebaseline(cwd = ".") {
       "--untracked-files=all",
     ]).split("\0");
     const dirty = new Set();
+    const snapshots = {};
     for (let i = 0; i < fields.length - 1; i++) {
       const field = fields[i];
       if (field.length < 4) continue;
       const status = field.slice(0, 2);
-      dirty.add(field.slice(3));
-      if (/[rc]/i.test(status) && fields[i + 1]) dirty.add(fields[++i]);
+      const path = field.slice(3);
+      dirty.add(path);
+      snapshots[path] = snapshot(repo_root, path, status === "??");
+      if (/[rc]/i.test(status) && fields[i + 1]) {
+        const old_path = fields[++i];
+        dirty.add(old_path);
+        snapshots[old_path] = snapshot(repo_root, old_path, false);
+      }
     }
-    return { sha, dirty, repo_root };
+    return { sha, dirty, snapshots, repo_root };
   } catch {
-    return { sha: null, dirty: new Set(), repo_root: null };
+    return { sha: null, dirty: new Set(), snapshots: {}, repo_root: null };
   }
 }
 
@@ -240,15 +323,51 @@ export function resolvescope(options) {
   const records = new Map();
   const added = new Map();
 
-  for (const spec of specs) collect_diff(repo_root, spec, options.folder, records, added);
+  for (const spec of specs) {
+    collect_diff(repo_root, spec, options.folder, records, added);
+    if (spec.worktree) mark_worktree_flags(repo_root, options.folder, records);
+  }
   if (options.kind === "request" || options.kind === "uncommitted") {
     collect_untracked(repo_root, options.folder, records, added);
   }
 
   const excluded = options.baseline_dirty || new Set();
+  const snapshots = options.baseline_snapshots || {};
   for (const path of excluded) {
+    const observed = records.get(path);
     records.delete(path);
     added.delete(path);
+    const before = snapshots[path];
+    if (!before || !matches_folder(path, options.folder)) continue;
+    const after = snapshot(repo_root, path, before.untracked);
+    if (before.exists === after.exists && before.hash === after.hash) continue;
+    if (
+      (before.exists && before.content === null && !before.binary) ||
+      (after.exists && after.content === null && !after.binary)
+    ) throw new Error(`baseline-dirty text file is too large to adjudicate: ${path}`);
+
+    records.set(path, {
+      path,
+      type: !after.exists
+        ? "deleted"
+        : !before.exists
+          ? "added"
+          : before.untracked
+            ? "untracked"
+            : "modified",
+      staged: observed?.staged ?? false,
+      unstaged: observed?.unstaged ?? true,
+      old_path: observed?.old_path ?? null,
+      old_mode: observed?.old_mode ?? null,
+      new_mode: observed?.new_mode ?? null,
+      binary: after.binary,
+      submodule: observed?.submodule ?? false,
+    });
+    if (!after.exists || after.content === null) continue;
+    const additions = before.exists && before.content !== null
+      ? diffByLineSet(path, before.content, after.content)
+      : contentToAdded(path, after.content);
+    for (const [key, lines] of additions) added.set(key, lines);
   }
 
   const files = [...records.values()].sort((a, b) => a.path.localeCompare(b.path));

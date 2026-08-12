@@ -137,10 +137,9 @@ export function contentToAdded(path, content) {
 }
 
 /**
- * Lines present in `after` that were not in `before`. The degraded-mode
- * (no git) equivalent of a diff: it cannot report exact positions the way a
- * real diff does, but it has the property that matters — a pre-existing line
- * is never reported as added, so an old marker cannot block the agent.
+ * Lines whose occurrence count increased in `after`. This is the degraded-mode
+ * equivalent of a diff: it preserves duplicate additions without reporting a
+ * pre-existing occurrence as new.
  *
  * @param {string} path
  * @param {string} before
@@ -148,12 +147,17 @@ export function contentToAdded(path, content) {
  * @returns {AddedMap}
  */
 export function diffByLineSet(path, before, after) {
-  const seen = new Set(before.split("\n"));
+  const remaining = new Map();
+  for (const line of before.split("\n")) {
+    remaining.set(line, (remaining.get(line) ?? 0) + 1);
+  }
   /** @type {AddedLine[]} */
   const added = [];
   const lines = after.split("\n");
   for (let i = 0; i < lines.length; i++) {
-    if (!seen.has(lines[i])) added.push({ line: i + 1, text: lines[i] });
+    const count = remaining.get(lines[i]) ?? 0;
+    if (count > 0) remaining.set(lines[i], count - 1);
+    else added.push({ line: i + 1, text: lines[i] });
   }
   /** @type {AddedMap} */
   const out = new Map();

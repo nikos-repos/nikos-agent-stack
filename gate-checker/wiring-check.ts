@@ -143,6 +143,7 @@ expect(c3shape?.testRan === true, "the delivery verify run counts as a test run"
 // cases 7-11 exercise the DEFAULT level, where the manifest severity is
 // diff-derived and citation failures block
 process.env.OMP_GATES_LEVEL = "medium";
+writeFileSync(resolve(repo, "verified.txt"), "ok\n");
 
 // ── subagent + loop regressions, driven through the real hooks ──────────────
 //
@@ -379,6 +380,37 @@ const retriedLease = (await leaseWaiter.tool_call!(
 expect(retriedLease?.block !== true, "branch navigation releases the prior worktree lease");
 await leaseWaiter.session_shutdown!({}, ctx);
 delete process.env.OMP_GATE_MUTATION_LEASE;
+
+console.log("15. journal recovery");
+await commands["gates-engage"]!(
+  "medium true",
+  { cwd: repo, hasUI: true, ui: { notify: () => {}, setStatus: () => {} } },
+);
+const recovery = mkHandlers();
+const recoveryCtx = {
+  ...ctx,
+  sessionManager: {
+    getBranch: () => [
+      {
+        type: "custom",
+        customType: "omp.gate-checker.journal",
+        data: { version: 1, kind: "request_start" },
+      },
+      { type: "message", message: { role: "assistant", content: "need input." } },
+    ],
+  },
+};
+await recovery.session_start!({}, recoveryCtx);
+await recovery.agent_start!({}, recoveryCtx);
+await recovery.tool_call!({ toolName: "ask", input: {} }, recoveryCtx);
+const recoveryResult = (await recovery.session_stop!({}, recoveryCtx)) as
+  | { continue?: boolean; additionalContext?: string }
+  | undefined;
+expect(
+  recoveryResult?.continue === true &&
+    recoveryResult.additionalContext?.includes("recovery_required") === true,
+  "a user question cannot clear required journal recovery",
+);
 
 rmSync(repo, { recursive: true, force: true });
 rmSync(home, { recursive: true, force: true });

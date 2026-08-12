@@ -34,7 +34,7 @@ function repo() {
 }
 
 describe("canonical gate scopes", () => {
-  test("request scope excludes files dirty before its baseline", () => {
+  test("request scope keeps only edits made after a dirty baseline", () => {
     const { cwd, git } = repo();
     writefilesync(join(cwd, "src/old.txt"), "dirty before\n");
     writefilesync(join(cwd, "src/preexisting.txt"), "untracked before\n");
@@ -43,6 +43,7 @@ describe("canonical gate scopes", () => {
       "src/old.txt",
       "src/preexisting.txt",
     ]);
+    writefilesync(join(cwd, "src/old.txt"), "dirty after\n");
 
     writefilesync(join(cwd, "src/a.txt"), "two\n");
     writefilesync(join(cwd, "src/new.txt"), "new\n");
@@ -52,15 +53,54 @@ describe("canonical gate scopes", () => {
       cwd,
       baseline_sha: baseline.sha,
       baseline_dirty: baseline.dirty,
+      baseline_snapshots: baseline.snapshots,
     });
 
     expect(scope.files.map((file) => file.path)).toEqual([
       "src/a.txt",
       "src/new.txt",
+      "src/old.txt",
     ]);
     expect(scope.added["src/a.txt"]).toEqual([{ line: 1, text: "two" }]);
+    expect(scope.added["src/old.txt"]).toEqual([{ line: 1, text: "dirty after" }]);
     expect(scope.digest).toMatch(/^[a-f0-9]{64}$/);
     expect(Object.isFrozen(scope)).toBe(true);
+  });
+
+  test("request additions reflect the final tree instead of stale staged content", () => {
+    const { cwd, git } = repo();
+    const baseline = capturebaseline(cwd);
+    writefilesync(join(cwd, "src/a.txt"), "staged intermediate\n");
+    git("add", "src/a.txt");
+    writefilesync(join(cwd, "src/a.txt"), "final content\n");
+
+    const scope = resolvescope({
+      kind: "request",
+      cwd,
+      baseline_sha: baseline.sha,
+      baseline_dirty: baseline.dirty,
+      baseline_snapshots: baseline.snapshots,
+    });
+
+    expect(scope.added["src/a.txt"]).toEqual([
+      { line: 1, text: "final content" },
+    ]);
+  });
+
+  test("large dirty text changes fail closed without whole-file snapshots", () => {
+    const { cwd } = repo();
+    const path = join(cwd, "src/old.txt");
+    writefilesync(path, "a".repeat(2 * 1024 * 1024 + 1));
+    const baseline = capturebaseline(cwd);
+    writefilesync(path, `${"a".repeat(2 * 1024 * 1024)}b`);
+
+    expect(() => resolvescope({
+      kind: "request",
+      cwd,
+      baseline_sha: baseline.sha,
+      baseline_dirty: baseline.dirty,
+      baseline_snapshots: baseline.snapshots,
+    })).toThrow("baseline-dirty text file is too large to adjudicate");
   });
 
   test("uncommitted scope normalizes staged unstaged untracked and renamed files", () => {
