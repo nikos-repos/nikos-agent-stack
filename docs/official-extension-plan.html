@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>official omp extension conversion plan</title>
+<style>
+:root{--ink:#17211b;--muted:#526158;--paper:#f5f1e8;--panel:#fffdf7;--line:#b8c2b8;--accent:#155d3a;--warn:#874d00;--code:#e7ece7}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 ui-monospace,monospace}main{max-width:980px;margin:auto;padding:40px 24px}h1,h2{font-family:ui-serif,serif;line-height:1.15}h1{font-size:2.5rem;margin-bottom:.25rem}h2{margin-top:2.4rem;border-bottom:1px solid var(--line);padding-bottom:.35rem}.lead{color:var(--muted);font-size:1.1rem}.decision,.risk{background:var(--panel);border:1px solid var(--line);border-left:6px solid var(--accent);padding:18px;margin:20px 0}.risk{border-left-color:var(--warn)}table{width:100%;border-collapse:collapse;background:var(--panel)}th,td{text-align:left;vertical-align:top;border:1px solid var(--line);padding:10px}th{background:var(--code)}code{background:var(--code);padding:.1rem .3rem}ol li,ul li{margin:.45rem 0}.status{display:inline-block;border:1px solid var(--accent);color:var(--accent);padding:.15rem .5rem;font-weight:700}@media(max-width:700px){main{padding:24px 14px}table,tbody,tr,td{display:block}thead{display:none}td{border-top:0}tr{display:block;margin-bottom:14px;border-top:1px solid var(--line)}}@media print{body{background:white}main{max-width:none}.decision,.risk,table{break-inside:avoid}}
+</style>
+</head>
+<body><main>
+<span class="status">approved direction</span>
+<h1>official omp extension conversion</h1>
+<p class="lead">replace commit-bound omp source patches with one conventional plugin package that installs through the native omp plugin manager.</p>
+<div class="decision"><strong>decision:</strong> publish the repository root as <code>nikos-agent-stack</code>. declare public extension entries in <code>package.json#omp.extensions</code>. bundle the terra task profile through the plugin agent discovery convention. remove format-patch distribution.</div>
+<h2>problem</h2>
+<ul><li>the questionnaire and advisor packages currently require exact omp source commits and <code>git am</code>.</li><li>that process forks the user harness, conflicts with later omp changes, and cannot use the plugin manager rollback and enablement model.</li><li>the gate checker already uses the supported extension api but installs by manual file copy.</li></ul>
+<h2>public-api boundary</h2>
+<table><thead><tr><th>module</th><th>extension-native replacement</th><th>intentional change</th></tr></thead><tbody>
+<tr><td>gate checker</td><td>load <code>gate-checker/index.ts</code> as a declared extension.</td><td>no behavior change.</td></tr>
+<tr><td>ask questionnaire</td><td>load a policy extension that detects new-project prompts, injects ask guidance, and blocks other tools until the native ask tool completes.</td><td>use omp's native ask ui and transport instead of patched core files. no queue internals or forced tool-choice mutation.</td></tr>
+<tr><td>terra advisor</td><td>install <code>agents/terra.md</code> with read-only tools and a structured evidence output schema.</td><td>terra becomes an explicit task agent. plugins cannot register a passive native advisor or write <code>watchdog.yml</code>.</td></tr>
+</tbody></table>
+<div class="risk"><strong>compatibility rule:</strong> the package uses only documented plugin, extension, and agent discovery surfaces. exact native advisor cards, passive advisor interruption, and core queue control stay out of scope because omp does not expose those extension points.</div>
+<h2>implementation phases</h2>
+<ol>
+<li><strong>package contract:</strong> add public package metadata, npm file allowlist, two extension entries, and the terra agent profile.</li>
+<li><strong>questionnaire policy:</strong> port only the new-project requirement into an extension with deterministic prompt detection and request-local state.</li>
+<li><strong>verification:</strong> add focused tests for package contents, extension initialization, policy transitions, and local plugin linking.</li>
+<li><strong>documentation cutover:</strong> replace every patch/base-commit instruction, remove patch artifacts, and document install, update, removal, behavior, and limitations.</li>
+</ol>
+<h2>acceptance</h2>
+<ul><li><code>omp plugin link .</code> discovers and enables the package.</li><li>the gate commands load from the installed package.</li><li>a direct new-project request cannot use another tool before one successful ask call.</li><li>the terra task profile appears in installed agent discovery and remains read-only.</li><li><code>bun run test</code> passes from a clean repository.</li><li>no guide tells users to check out or apply an omp commit.</li></ul>
+<h2>out of scope</h2>
+<ul><li>publishing to npm or pushing to github.</li><li>changing omp core to add new extension points.</li><li>preserving behaviors that require private queue, advisor, or transcript-renderer internals.</li></ul>
+<footer><p>last updated: 2026-08-13</p></footer>
+</main></body></html>
