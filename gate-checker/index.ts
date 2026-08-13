@@ -12,8 +12,8 @@
 // git awareness:
 //   - agent_start captures HEAD baseline + dirty-file set (once per request)
 //   - session_stop diffs baseline..now (covers committed AND uncommitted changes)
-//   - no git repo → degraded mode: first-touch content hashing supplies the
-//     same changed-file set and added-line set, so enforcement stays full
+//   - no git repo → low: no git: first-touch content hashing supplies the same
+//     changed-file set and added-line set, so enforcement stays full
 //
 // sub-agent coverage:
 //   - completion gate scans git diff (agent-agnostic, covers subagent edits)
@@ -204,7 +204,7 @@ interface TurnEvidence {
   // git reports paths relative to the repo root, which is not always ctx.cwd.
   repoRoot: string | null;
   // content at FIRST touch, keyed by the path as the agent wrote it. null means
-  // the file did not exist yet. only populated in degraded (no git) mode.
+  // the file did not exist yet. only populated during no-git operation.
   preTouch: Map<string, string | null>;
   // content hashes of subagent reports already adjudicated in this request, so
   // a forced continuation cannot re-report the same subagent.
@@ -321,7 +321,7 @@ function checkCitations(
   hasGit: boolean,
   cwd = ".",
   // Paths this run can actually adjudicate. null = authoritative for every path
-  // (git diff sees all changes, however they were made). A Set = degraded mode,
+  // (git diff sees all changes, however they were made). a set = no-git mode,
   // where only files we snapshotted at first touch are provable — a file edited
   // via `sed -i` was never watched, so silence is the only honest verdict.
   watched: Set<string> | null = null,
@@ -454,10 +454,10 @@ function checkCitations(
 // set is DERIVED differs: git diff when a repo exists, first-touch content
 // snapshots when it does not.
 
-// Degraded (no git) path. Snapshots taken at first touch give a real
-// before/after, so this is no longer a whole-file scan: a pre-existing marker
-// in an untouched line cannot block the agent here either.
-function degradedDiff(
+// no-git path. snapshots taken at first touch give a real before/after, so this
+// is no longer a whole-file scan: a pre-existing marker in an untouched line
+// cannot block the agent here either.
+function no_git_diff(
   snapshots: Map<string, string | null>,
   cwd: string,
 ): { changed: Set<string>; added: AddedMap } {
@@ -1183,9 +1183,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
     // no git — fall back to first-touch content hashing (see tool_call below)
     if (baseline.sha === null) {
       try {
-        ctx?.ui?.setStatus?.("gate", "⚠ no git repo — hashing touched files");
+        ctx?.ui?.setStatus?.("gate", `${armingStatus()} · low: no git`);
       } catch {}
-      ledger.append("degraded", { reason: "no-git-repo", cwd });
+      ledger.append("no_git", { reason: "no-git-repo", cwd });
     }
 
     // restore the arming state at the start of each request — the previous
@@ -1444,7 +1444,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         });
         changedFiles = new Set(scope.files.map((file) => file.path));
         added = new Map(Object.entries(scope.added)) as AddedMap;
-        const external = degradedDiff(evidence.preTouch, cwd);
+        const external = no_git_diff(evidence.preTouch, cwd);
         for (const path of external.changed) changedFiles.add(path);
         for (const [key, line] of external.added) added.set(key, line);
         const risk = auditscope(scope);
@@ -1468,12 +1468,12 @@ export default function gateChecker(pi: ExtensionAPI): void {
         });
       }
     } else {
-      const d = degradedDiff(evidence.preTouch, cwd);
+      const d = no_git_diff(evidence.preTouch, cwd);
       changedFiles = d.changed;
       added = d.added;
       watched = new Set([...evidence.preTouch.keys()].map(normalizePath));
       try {
-        pi.appendEntry("omp.gate-checker.degraded", {
+        pi.appendEntry("omp.gate-checker.no-git", {
           reason: "no-git-repo",
           watched: evidence.preTouch.size,
           ts: Date.now(),
@@ -1642,7 +1642,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       try {
         ctx?.ui?.setStatus?.(
           "gate",
-          hasGit ? "✓ gates passed" : "✓ gates passed (degraded)",
+          hasGit ? "✓ gates passed" : "✓ gates passed · low: no git",
         );
       } catch {}
       // Only worth a chain_end record if a chain was actually open — a clean
@@ -2127,7 +2127,7 @@ if (import.meta.main) {
     check("subdir cwd: root-relative claim still matches", fromSub("src/sub/a.txt"));
     check("subdir cwd: absolute claim matches", fromSub("/repo/src/sub/a.txt"));
     check("unrelated claim still rejected", !fromSub("other/z.txt"));
-    // no repo root (degraded/self-check) keeps the plain string compare
+    // no repo root keeps the plain string comparison
     check("no repo root: plain compare", makeClaimMatcher(changed, null, "/x")("src/sub/a.txt"));
   }
 
@@ -2230,13 +2230,13 @@ if (import.meta.main) {
     check("no path yields no additions", inlineAdditions("write", "", {}, {}) === null);
   }
 
-  // --- degraded mode: content hashing replaces the whole-file scan ----------
+  // --- no-git mode: content hashing replaces the whole-file scan ------------
   {
     const before = "def a():\n    # TODO: implement\n    pass\n";
     const afterClean = before + "\ndef b():\n    return 1\n";
     // a pre-existing marker in an untouched line must NOT be reported
     check(
-      "degraded: pre-existing marker not flagged",
+      "no git: pre-existing marker not flagged",
       checkAddedLines(
         diffByLineSet("m.py", before, afterClean),
         DEFAULT_FORBIDDEN_MARKERS,
@@ -2244,21 +2244,21 @@ if (import.meta.main) {
     );
     // but a newly added one is
     check(
-      "degraded: newly added marker flagged",
+      "no git: newly added marker flagged",
       checkAddedLines(
         diffByLineSet("m.py", before, before + "\n// stub\n"),
         DEFAULT_FORBIDDEN_MARKERS,
       ).length === 1,
     );
     check(
-      "degraded: duplicate marker addition is flagged",
+      "no git: duplicate marker addition is flagged",
       checkAddedLines(
         diffByLineSet("m.py", before, `${before}${before.split("\n")[1]}\n`),
         DEFAULT_FORBIDDEN_MARKERS,
       ).length === 1,
     );
     check(
-      "degraded: identical content yields no additions",
+      "no git: identical content yields no additions",
       diffByLineSet("m.py", before, before).size === 0,
     );
     check("hash is stable", hashContent("abc") === hashContent("abc"));

@@ -120,7 +120,7 @@ export function parseDiffAdditions(diff, out, fallbackPath) {
 
 /**
  * Treats an entire file body as added — for `write`, which replaces the whole
- * file, and for the degraded-mode first-touch snapshot of a new file.
+ * file, and for the no-git first-touch snapshot of a new file.
  *
  * @param {string} path
  * @param {string} content
@@ -137,7 +137,7 @@ export function contentToAdded(path, content) {
 }
 
 /**
- * Lines whose occurrence count increased in `after`. This is the degraded-mode
+ * Lines whose occurrence count increased in `after`. This is the no-git
  * equivalent of a diff: it preserves duplicate additions without reporting a
  * pre-existing occurrence as new.
  *
@@ -388,7 +388,7 @@ function parseLooseJson(text) {
 export const COMMIT_CLEAN_CMD =
   'git status --porcelain --untracked-files=no';
 
-// ── content hashing (degraded mode) ─────────────────────────────────────────
+// ── content hashing (no git) ────────────────────────────────────────────────
 
 /** @param {string} content @returns {string} */
 export function hashContent(content) {

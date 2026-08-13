@@ -299,7 +299,7 @@ for (const [label, report, shouldBlock] of [
   const h = mkHandlers();
   await h.agent_start!({}, looseCtx);
   // tool_call fires BEFORE the write in a real session — that ordering is what
-  // lets degraded mode snapshot the pre-write state
+  // lets no-git mode snapshot the pre-write state
   await h.tool_call!({ toolName: "write", input: { path: "s.sh" } }, looseCtx);
   writeFileSync(resolve(loose, "s.sh"), "#!/bin/sh\n# TODO: implement\n");
   const r = await h.session_stop!({}, looseCtx);

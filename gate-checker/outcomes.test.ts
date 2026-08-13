@@ -23,6 +23,16 @@ test("released failures remain distinct from passed gate chains", () => {
   expect(summary.capHits).toBe(1);
 });
 
+test("no-git runs include historical degraded records", () => {
+  const summary = summarize([
+    { event: "degraded" },
+    { event: "no_git" },
+  ]);
+
+  expect(summary.no_git_runs).toBe(2);
+  expect("degraded" in summary).toBe(false);
+});
+
 test("journal retains the release reason without calling it a pass", () => {
   const state = reducejournal([
     {

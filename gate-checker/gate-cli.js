@@ -201,7 +201,7 @@ function stats(args) {
     console.log(`  released         ${String(count).padStart(5)}  ${reason}`);
   }
   console.log(`  inline flags     ${s.inlineFlags}  <- caught early, no retry needed`);
-  console.log(`  degraded runs    ${s.degraded}`);
+  console.log(`  low: no git runs ${s.no_git_runs}`);
 
   if (s.shapeRequests > 0) {
     console.log(

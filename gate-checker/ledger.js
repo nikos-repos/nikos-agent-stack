@@ -11,7 +11,7 @@
  *
  * Never throws. A broken ledger must not break the agent.
  *
- * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"degraded"|"process_shape"} LedgerEvent
+ * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"no_git"|"process_shape"} LedgerEvent
  */
 
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from "fs";
@@ -88,7 +88,7 @@ export function summarize(records) {
   const releasedByReason = {};
   let continuations = 0;
   let inlineFlags = 0;
-  let degraded = 0;
+  let no_git_runs = 0;
 
   // "a process should have run" — requests that had the shape Layer 2's
   // delivery-contract process handles. `shapeMissRate` by reason tells you
@@ -126,8 +126,8 @@ export function summarize(records) {
         releasedByReason[reason] = (releasedByReason[reason] ?? 0) + 1;
         if (reason === "continuation_cap") capHits++;
       }
-    } else if (r.event === "degraded") {
-      degraded++;
+    } else if (r.event === "no_git" || r.event === "degraded") {
+      no_git_runs++;
     } else if (r.event === "process_shape") {
       shapeRequests++;
       if (r.matched) shapeMatched++;
@@ -147,7 +147,7 @@ export function summarize(records) {
     releasedWithFailures,
     releasedByReason,
     inlineFlags,
-    degraded,
+    no_git_runs,
     byRule,
     inlineByRule,
     shapeRequests,
