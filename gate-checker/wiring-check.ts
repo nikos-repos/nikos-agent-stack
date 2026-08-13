@@ -344,44 +344,145 @@ for (const [label, report, shouldBlock] of [
   rmSync(loose, { recursive: true, force: true });
 }
 
-// ── a request started outside git binds before its first repository effect ──
+// ── requests started outside git bind before repository effects ─────────────
 {
   console.log("14. automatic repository binding");
-  const loose = mkdtempSync(resolve(tmpdir(), "probe-bind-loose-"));
-  const target = mkdtempSync(resolve(tmpdir(), "probe-bind-repo-"));
-  const targetGit = (command: string) =>
-    execSync(command, { cwd: target, encoding: "utf-8", stdio: "pipe" });
-  targetGit("git init -q .");
-  targetGit("git config user.email t@t.t && git config user.name t");
-  writeFileSync(resolve(target, "tracked.txt"), "before\n");
-  targetGit("git add -A && git commit -q -m init");
-  const statuses: string[] = [];
-  const looseCtx = {
-    cwd: loose,
-    hasUI: false,
-    sessionManager: {
-      getBranch: () => [
-        { type: "message", message: { role: "assistant", content: "updated `tracked.txt`." } },
-      ],
-    },
-    ui: { setStatus: (_key: string, text: string) => statuses.push(text), notify: () => {} },
+  const paths: string[] = [];
+  const makeRepo = () => {
+    const target = mkdtempSync(resolve(tmpdir(), "probe-bind-repo-"));
+    paths.push(target);
+    const git = (command: string) =>
+      execSync(command, { cwd: target, encoding: "utf-8", stdio: "pipe" });
+    git("git init -q .");
+    git("git config user.email t@t.t && git config user.name t");
+    writeFileSync(resolve(target, "tracked.txt"), "before\n");
+    git("git add -A && git commit -q -m init");
+    return { target, git };
   };
+  const makeLoose = (assistant: string, statuses: string[] = []) => {
+    const cwd = mkdtempSync(resolve(tmpdir(), "probe-bind-loose-"));
+    paths.push(cwd);
+    return {
+      cwd,
+      hasUI: false,
+      sessionManager: {
+        getBranch: () => [
+          { type: "message", message: { role: "assistant", content: assistant } },
+        ],
+      },
+      ui: { setStatus: (_key: string, text: string) => statuses.push(text), notify: () => {} },
+    };
+  };
+
+  const cwdRepo = makeRepo();
+  const cwdStatuses: string[] = [];
+  const cwdCtx = makeLoose("updated `tracked.txt`.", cwdStatuses);
   await commands["gates-engage"]!("high true", {
-    cwd: loose,
+    cwd: cwdCtx.cwd,
     hasUI: true,
     ui: { notify: () => {}, setStatus: () => {} },
   });
-  const h = mkHandlers();
-  await h.agent_start!({}, looseCtx);
-  await h.tool_call!({ toolName: "bash", input: { cwd: target, command: "printf after > tracked.txt" } }, looseCtx);
-  writeFileSync(resolve(target, "tracked.txt"), "after\n");
-  const result = (await h.session_stop!({}, looseCtx)) as { additionalContext?: string } | undefined;
+  const cwdHandlers = mkHandlers();
+  const journalStart = sessionEntries.length;
+  await cwdHandlers.agent_start!({}, cwdCtx);
   expect(
-    result?.additionalContext?.includes("uncommitted_changes") ?? false,
-    "a tool working directory binds git scope before mutation",
+    cwdStatuses.at(-1)?.includes("low: no git") ?? false,
+    "no-git status uses the low capability label",
   );
-  rmSync(loose, { recursive: true, force: true });
-  rmSync(target, { recursive: true, force: true });
+  await cwdHandlers.tool_call!(
+    { toolName: "bash", input: { cwd: cwdRepo.target, command: "printf after > tracked.txt" } },
+    cwdCtx,
+  );
+  expect(
+    !(cwdStatuses.at(-1)?.includes("low: no git") ?? true),
+    "repository binding restores normal arming status",
+  );
+  writeFileSync(resolve(cwdRepo.target, "tracked.txt"), "after\n");
+  const cwdResult = (await cwdHandlers.session_stop!({}, cwdCtx)) as
+    | { additionalContext?: string }
+    | undefined;
+  expect(
+    cwdResult?.additionalContext?.includes("uncommitted_changes") ?? false,
+    "an explicit tool working directory binds git scope before mutation",
+  );
+  expect(
+    sessionEntries.slice(journalStart).some(
+      (entry) =>
+        entry.customType === "omp.gate-checker.journal" &&
+        entry.data.kind === "repository_bound" &&
+        entry.data.repo_root === cwdRepo.target,
+    ),
+    "repository binding is journaled",
+  );
+
+  const pathRepo = makeRepo();
+  writeFileSync(resolve(pathRepo.target, "ignored.txt"), "// TODO: implement\n");
+  const pathCtx = makeLoose("wrote `new.ts`.");
+  await commands["gates-engage"]!("medium true", {
+    cwd: pathCtx.cwd,
+    hasUI: true,
+    ui: { notify: () => {}, setStatus: () => {} },
+  });
+  const pathHandlers = mkHandlers();
+  await pathHandlers.agent_start!({}, pathCtx);
+  const newPath = resolve(pathRepo.target, "new.ts");
+  await pathHandlers.tool_call!({ toolName: "write", input: { path: newPath } }, pathCtx);
+  writeFileSync(newPath, "// TODO: implement\n");
+  const pathResult = (await pathHandlers.session_stop!({}, pathCtx)) as
+    | { additionalContext?: string }
+    | undefined;
+  expect(
+    pathResult?.additionalContext?.includes("forbidden_marker") ?? false,
+    "an absolute file path binds before write and keeps dirty baseline exclusion",
+  );
+  expect(
+    !(pathResult?.additionalContext?.includes("ignored.txt") ?? true),
+    "a file dirty before repository discovery stays excluded",
+  );
+
+  const mixedRepo = makeRepo();
+  const mixedCtx = makeLoose("wrote `loose.ts`.");
+  const mixedHandlers = mkHandlers();
+  await mixedHandlers.agent_start!({}, mixedCtx);
+  await mixedHandlers.tool_call!({ toolName: "write", input: { path: "loose.ts" } }, mixedCtx);
+  writeFileSync(resolve(mixedCtx.cwd, "loose.ts"), "// TODO: implement\n");
+  await mixedHandlers.tool_call!(
+    { toolName: "read", input: { path: resolve(mixedRepo.target, "tracked.txt") } },
+    mixedCtx,
+  );
+  const mixedResult = (await mixedHandlers.session_stop!({}, mixedCtx)) as
+    | { additionalContext?: string }
+    | undefined;
+  expect(
+    mixedResult?.additionalContext?.includes("forbidden_marker") ?? false,
+    "binding retains no-git evidence collected earlier in the request",
+  );
+
+  const firstRepo = makeRepo();
+  const secondRepo = makeRepo();
+  const singleCtx = makeLoose("read repository files.");
+  const singleHandlers = mkHandlers();
+  const warningStart = sessionEntries.length;
+  await singleHandlers.agent_start!({}, singleCtx);
+  await singleHandlers.tool_call!(
+    { toolName: "read", input: { path: resolve(firstRepo.target, "tracked.txt") } },
+    singleCtx,
+  );
+  await singleHandlers.tool_call!(
+    { toolName: "read", input: { path: resolve(secondRepo.target, "tracked.txt") } },
+    singleCtx,
+  );
+  expect(
+    sessionEntries.slice(warningStart).some(
+      (entry) =>
+        entry.customType === "omp.gate-checker.repository-limit" &&
+        entry.data.authoritative_root === firstRepo.target &&
+        entry.data.ignored_root === secondRepo.target,
+    ),
+    "a second repository reports the first-repository limitation",
+  );
+
+  for (const path of paths) rmSync(path, { recursive: true, force: true });
 }
 
 console.log("14. cooperative mutation lease");

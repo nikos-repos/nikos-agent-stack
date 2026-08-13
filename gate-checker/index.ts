@@ -206,6 +206,7 @@ interface TurnEvidence {
   // content at FIRST touch, keyed by the path as the agent wrote it. null means
   // the file did not exist yet. only populated during no-git operation.
   preTouch: Map<string, string | null>;
+  warnedRepoRoots: Set<string>;
   // content hashes of subagent reports already adjudicated in this request, so
   // a forced continuation cannot re-report the same subagent.
   judgedSubagents: Set<string>;
@@ -231,6 +232,7 @@ function freshEvidence(): TurnEvidence {
     baselineSnapshots: {},
     repoRoot: null,
     preTouch: new Map(),
+    warnedRepoRoots: new Set(),
     judgedSubagents: new Set(),
     verifyPassed: false,
     flaggedInline: new Set(),
@@ -966,6 +968,33 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return;
     }
   };
+
+  const reportrepositorylimit = (
+    input: Record<string, unknown>,
+    ctx: ExtensionContext,
+  ): void => {
+    if (
+      evidence.repoRoot === null ||
+      (typeof input.cwd !== "string" && typeof input.path !== "string")
+    ) return;
+    const cwd = String(ctx?.cwd ?? ".");
+    for (const candidate of repositoryCandidates(input, cwd)) {
+      const root = capturebaseline(candidate).repo_root;
+      if (
+        root === null ||
+        root === evidence.repoRoot ||
+        evidence.warnedRepoRoots.has(root)
+      ) continue;
+      evidence.warnedRepoRoots.add(root);
+      try {
+        pi.appendEntry("omp.gate-checker.repository-limit", {
+          authoritative_root: evidence.repoRoot,
+          ignored_root: root,
+          ts: Date.now(),
+        });
+      } catch {}
+    }
+  };
   const restorejournal = (ctx: ExtensionContext): void => {
     const branch = ctx.sessionManager?.getBranch?.() ?? [];
     const state = journalfrombranch(branch);
@@ -1204,6 +1233,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     bindrepository(input, ctx);
 
+    reportrepositorylimit(input, ctx);
     if (leaseConflict) {
       let isolated = input?.isolated === true;
       if (toolName === "task" && Array.isArray(input?.tasks)) {
