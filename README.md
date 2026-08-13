@@ -87,7 +87,7 @@ engagement levels:
 | level | behavior |
 |---|---|
 | `low` | every finding is a warning. nothing blocks. for exploration and non-git work. |
-| `medium` | default. completion, citation, subagent-claim, and verify failures block. the commit gate stays off. |
+| `medium` | default. completion, citation, subagent-claim, verify, and gate-integrity failures block. the commit gate stays off. |
 | `high` | every rule blocks, including the commit gate and the subagent manifest. |
 | `off` | all checks and recording stop. set with `/gates-disable`. |
 

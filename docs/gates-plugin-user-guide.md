@@ -175,6 +175,7 @@ source: [command registration and live policy updates](../gate-checker/index.ts)
 | subagent claims against the diff | off | warn | block | block |
 | configured verification command | off | warn | block | block |
 | clean tracked working tree | off | off | off | block |
+| gate integrity (lease conflict, journal recovery, unreadable scope) | off | warn | block | block |
 | telemetry | off | on | on | on |
 | stalemate release and continuation cap | on | on | on | on |
 
@@ -258,6 +259,9 @@ source: [session-stop early returns and change gate](../gate-checker/index.ts)
 | `subagent_unverified_test` | a subagent claims tests passed without parent-session test evidence | run the tests in the parent session |
 | `verify_failed` | the configured verification command exits nonzero or times out | fix the failure; do not weaken the check |
 | `uncommitted_changes` | high mode finds tracked unstaged or staged changes | commit the logical unit or lower the engagement level |
+| `mutation_lease_conflict` | another gate-aware session holds the worktree mutation lease | wait for that session to finish, then retry |
+| `recovery_required` | the request journal is malformed, stale, or policy-incompatible | start a fresh request |
+| `scope_unavailable` | git is present but the repository scope could not be resolved | repair the repository, then retry |
 
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 

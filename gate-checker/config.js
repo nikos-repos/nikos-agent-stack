@@ -45,6 +45,7 @@ export const CONFIG_PATH =
  * @property {RuleMode} subagentClaim Subagent claims checked against the diff.
  * @property {RuleMode} verify        Test command must pass. Needs a configured command.
  * @property {RuleMode} commit        Working tree must be committed. Needs git.
+ * @property {RuleMode} runtime       Gate integrity itself: lease conflict, journal recovery, unreadable scope.
  */
 
 /**
@@ -74,18 +75,21 @@ export function policyFor(level) {
         level, enabled: false, inline: false,
         completion: "off", citation: "off", snapshot: "off",
         manifest: "off", subagentClaim: "off", verify: "off", commit: "off",
+        runtime: "off",
       };
     case "low":
       return {
         level, enabled: true, inline: true,
         completion: "warn", citation: "warn", snapshot: "off",
         manifest: "off", subagentClaim: "warn", verify: "warn", commit: "off",
+        runtime: "warn",
       };
     case "high":
       return {
         level, enabled: true, inline: true,
         completion: "block", citation: "block", snapshot: "block",
         manifest: "block", subagentClaim: "block", verify: "block", commit: "block",
+        runtime: "block",
       };
     case "medium":
     default:
@@ -93,6 +97,7 @@ export function policyFor(level) {
         level: "medium", enabled: true, inline: true,
         completion: "block", citation: "block", snapshot: "warn",
         manifest: "auto", subagentClaim: "block", verify: "block", commit: "off",
+        runtime: "block",
       };
   }
 }
@@ -109,6 +114,9 @@ export const RULE_FAMILY = {
   subagent_unverified_test: "subagentClaim",
   verify_failed: "verify",
   uncommitted_changes: "commit",
+  mutation_lease_conflict: "runtime",
+  recovery_required: "runtime",
+  scope_unavailable: "runtime",
 };
 
 /**
@@ -198,6 +206,7 @@ export function describeLevel(level, verifyCmd) {
     `  snapshot tag references         ${mark(p.snapshot)}`,
     `  test suite must pass            ${verifyCmd ? mark(p.verify) : "off (no verify command set)"}`,
     `  work must be committed          ${mark(p.commit)}`,
+    `  gate integrity failures         ${mark(p.runtime)}`,
     "  runaway protection              always on (stalemate abort + cap 3)",
   ];
   if (level === "high" && !verifyCmd) {

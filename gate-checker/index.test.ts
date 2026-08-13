@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import {
@@ -42,7 +42,7 @@ import {
 	MANIFEST_OPEN,
 } from "./predicates.js";
 import * as ledger from "./ledger.js";
-import { describeLevel, loadConfig, policyFor, saveConfig, LEVELS } from "./config.js";
+import { describeLevel, loadConfig, policyFor, saveConfig, LEVELS, RULE_FAMILY } from "./config.js";
 
 // the self-check that used to run from `bun run index.ts` lives here. the
 // runtime entry point ships without it, and the assertions stay identical.
@@ -662,6 +662,78 @@ test("the dial re-grades every rule family per level", () => {
 			policyFor("high") as GatePolicy,
 		)[0]?.severity,
 	).toBe("warn");
+});
+
+// --- every emitted rule reaches the dial ------------------------------------
+
+// read the rule ids out of the source that emits them, so a rule added later
+// cannot slip past the dial by having no policy entry. a hand-written list here
+// would pass while the real gate blocked at a level that promises not to.
+const RUNTIME_INTEGRITY_RULES = ["mutation_lease_conflict", "recovery_required", "scope_unavailable"];
+
+function emittedRuleIds(): { graded: string[]; advisory: string[] } {
+	const graded = new Set<string>();
+	for (const file of ["index.ts", "predicates.js"]) {
+		const source = readFileSync(resolvePath(import.meta.dir, file), "utf8");
+		for (const [, id] of source.matchAll(/\brule:\s*"([a-z_]+)"/g)) graded.add(id);
+	}
+	const advisory = new Set<string>();
+	const risks = readFileSync(resolvePath(import.meta.dir, "risks.js"), "utf8");
+	for (const [, id] of risks.matchAll(/"(risk\.[a-z_]+)"/g)) advisory.add(id);
+	return { graded: [...graded].sort(), advisory: [...advisory].sort() };
+}
+
+const asEmitted = (rule: string): GateFailure => ({ gate: "journal", rule, detail: rule });
+
+test("the rule enumeration actually finds the emitted rules", () => {
+	const { graded, advisory } = emittedRuleIds();
+	// guards the regexes: an enumeration that matched nothing would make every
+	// test below pass vacuously.
+	expect(graded.length).toBeGreaterThanOrEqual(13);
+	expect(advisory.length).toBeGreaterThanOrEqual(10);
+	for (const rule of RUNTIME_INTEGRITY_RULES) expect(graded).toContain(rule);
+	expect(graded).toContain("forbidden_marker");
+	expect(advisory).toContain("risk.destructive_operation");
+});
+
+test("every emitted rule has a policy family", () => {
+	for (const rule of emittedRuleIds().graded) {
+		expect(RULE_FAMILY[rule]).toBeDefined();
+	}
+});
+
+test("no emitted rule blocks at low", () => {
+	for (const rule of emittedRuleIds().graded) {
+		const graded = applyPolicy([asEmitted(rule)], policyFor("low") as GatePolicy);
+		expect(graded.every((f) => (f.severity ?? "block") !== "block")).toBe(true);
+	}
+});
+
+test("every emitted rule is dropped at off", () => {
+	for (const rule of emittedRuleIds().graded) {
+		expect(applyPolicy([asEmitted(rule)], policyFor("off") as GatePolicy).length).toBe(0);
+	}
+});
+
+test("runtime integrity failures block at medium and high", () => {
+	for (const rule of RUNTIME_INTEGRITY_RULES) {
+		for (const level of ["medium", "high"] as GateLevel[]) {
+			const graded = applyPolicy([asEmitted(rule)], policyFor(level) as GatePolicy);
+			expect(graded.length).toBe(1);
+			expect(graded[0].severity ?? "block").toBe("block");
+		}
+	}
+});
+
+test("advisory risk findings stay advisory at every enabled level", () => {
+	for (const rule of emittedRuleIds().advisory) {
+		for (const level of ["low", "medium", "high"] as GateLevel[]) {
+			const emitted: GateFailure = { gate: "risk", rule, detail: rule, severity: "warn" };
+			const graded = applyPolicy([emitted], policyFor(level) as GatePolicy);
+			expect(graded.length).toBe(1);
+			expect(graded[0].severity).toBe("warn");
+		}
+	}
 });
 
 test("runaway protection is never on the dial", () => {

@@ -95,6 +95,7 @@ export interface GatePolicy {
   subagentClaim: RuleMode;
   verify: RuleMode;
   commit: RuleMode;
+  runtime: RuleMode;
 }
 
 type AddedLine = { line: number; text: string };
