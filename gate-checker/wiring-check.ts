@@ -344,6 +344,46 @@ for (const [label, report, shouldBlock] of [
   rmSync(loose, { recursive: true, force: true });
 }
 
+// ── a request started outside git binds before its first repository effect ──
+{
+  console.log("14. automatic repository binding");
+  const loose = mkdtempSync(resolve(tmpdir(), "probe-bind-loose-"));
+  const target = mkdtempSync(resolve(tmpdir(), "probe-bind-repo-"));
+  const targetGit = (command: string) =>
+    execSync(command, { cwd: target, encoding: "utf-8", stdio: "pipe" });
+  targetGit("git init -q .");
+  targetGit("git config user.email t@t.t && git config user.name t");
+  writeFileSync(resolve(target, "tracked.txt"), "before\n");
+  targetGit("git add -A && git commit -q -m init");
+  const statuses: string[] = [];
+  const looseCtx = {
+    cwd: loose,
+    hasUI: false,
+    sessionManager: {
+      getBranch: () => [
+        { type: "message", message: { role: "assistant", content: "updated `tracked.txt`." } },
+      ],
+    },
+    ui: { setStatus: (_key: string, text: string) => statuses.push(text), notify: () => {} },
+  };
+  await commands["gates-engage"]!("high true", {
+    cwd: loose,
+    hasUI: true,
+    ui: { notify: () => {}, setStatus: () => {} },
+  });
+  const h = mkHandlers();
+  await h.agent_start!({}, looseCtx);
+  await h.tool_call!({ toolName: "bash", input: { cwd: target, command: "printf after > tracked.txt" } }, looseCtx);
+  writeFileSync(resolve(target, "tracked.txt"), "after\n");
+  const result = (await h.session_stop!({}, looseCtx)) as { additionalContext?: string } | undefined;
+  expect(
+    result?.additionalContext?.includes("uncommitted_changes") ?? false,
+    "a tool working directory binds git scope before mutation",
+  );
+  rmSync(loose, { recursive: true, force: true });
+  rmSync(target, { recursive: true, force: true });
+}
+
 console.log("14. cooperative mutation lease");
 process.env.OMP_GATE_MUTATION_LEASE = "1";
 const leaseOwner = mkHandlers();

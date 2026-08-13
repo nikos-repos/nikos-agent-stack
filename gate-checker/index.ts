@@ -39,9 +39,9 @@
 // ============================================================================
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { existsSync, mkdtempSync, writeFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync, statSync } from "fs";
 import { execSync } from "child_process";
-import { resolve as resolvePath, isAbsolute } from "path";
+import { dirname, isAbsolute, relative, resolve as resolvePath, sep } from "path";
 import { homedir, tmpdir } from "os";
 import { randomUUID } from "crypto";
 import {
@@ -484,6 +484,45 @@ function degradedDiff(
   return { changed, added };
 }
 
+function existingDirectory(path: string): string | null {
+  let candidate = path;
+  while (!existsSync(candidate)) {
+    const parent = dirname(candidate);
+    if (parent === candidate) return null;
+    candidate = parent;
+  }
+  try {
+    return statSync(candidate).isDirectory() ? candidate : dirname(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function repositoryCandidates(
+  input: Record<string, unknown>,
+  cwd: string,
+): string[] {
+  const declaredCwd = typeof input.cwd === "string"
+    ? existingDirectory(resolvePath(cwd, input.cwd))
+    : null;
+  const inputPath = typeof input.path === "string"
+    ? existingDirectory(
+      isAbsolute(input.path)
+        ? input.path
+        : resolvePath(declaredCwd ?? cwd, input.path),
+    )
+    : null;
+  return [...new Set([declaredCwd, inputPath, existingDirectory(cwd)].filter(
+    (candidate): candidate is string => candidate !== null,
+  ))];
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel === "" ||
+    (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
 // Derives the added-line set for a single write/edit call, so the inline gate
 // judges exactly what this call introduced — never the rest of the file.
 //
@@ -901,6 +940,27 @@ export default function gateChecker(pi: ExtensionAPI): void {
       });
     } catch {}
   };
+
+  const bindrepository = (
+    input: Record<string, unknown>,
+    ctx: ExtensionContext,
+  ): void => {
+    if (!requestId || evidence.baselineSha !== null) return;
+    const cwd = String(ctx?.cwd ?? ".");
+    for (const candidate of repositoryCandidates(input, cwd)) {
+      const baseline = capturebaseline(candidate);
+      if (baseline.sha === null || baseline.repo_root === null) continue;
+      evidence.baselineSha = baseline.sha;
+      evidence.baselineDirty = baseline.dirty;
+      evidence.baselineSnapshots = baseline.snapshots;
+      evidence.repoRoot = baseline.repo_root;
+      ensurelease(baseline.repo_root);
+      try {
+        ctx?.ui?.setStatus?.("gate", armingStatus());
+      } catch {}
+      return;
+    }
+  };
   const restorejournal = (ctx: ExtensionContext): void => {
     const branch = ctx.sessionManager?.getBranch?.() ?? [];
     const state = journalfrombranch(branch);
@@ -1096,7 +1156,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
     const cwd = String(ctx?.cwd ?? ".");
     if (requestId || continuationCount > 0) {
-      ensurelease(cwd);
+      if (evidence.repoRoot) ensurelease(evidence.repoRoot);
       return;
     }
 
@@ -1113,7 +1173,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       baseline_dirty: [...baseline.dirty].sort(),
       policy_fingerprint: policyfingerprint(),
     });
-    ensurelease(cwd);
+    if (baseline.repo_root) ensurelease(baseline.repo_root);
 
     // no git — fall back to first-touch content hashing (see tool_call below)
     if (baseline.sha === null) {
@@ -1136,6 +1196,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, ctx: ExtensionContext): Promise<ToolCallResult | void> => {
     evidence.hadToolCalls = true;
     const { toolName, input } = event;
+
+    bindrepository(input, ctx);
 
     if (leaseConflict) {
       let isolated = input?.isolated === true;
@@ -1172,15 +1234,20 @@ export default function gateChecker(pi: ExtensionAPI): void {
       const relPath = String(input.path);
       evidence.filesTouched.add(relPath);
 
-      // Degraded mode only: snapshot the file BEFORE this call mutates it, and
-      // only the first time we see it, so the baseline stays the pre-request
-      // state across a whole multi-turn run. With git present the diff is
-      // strictly better and this cost is skipped.
-      if (evidence.baselineSha === null && !evidence.preTouch.has(relPath)) {
-        const cwd = String(ctx?.cwd ?? ".");
-        const abs = isAbsolute(relPath) ? relPath : resolvePath(cwd, relPath);
-        evidence.preTouch.set(relPath, readSnapshot(abs));
-      }
+      // Snapshot before mutation when git cannot cover the path. This retains
+      // no-git evidence collected before a repository bind and covers later
+      // writes outside the bound repository.
+      const cwd = String(ctx?.cwd ?? ".");
+      const declaredCwd = typeof input.cwd === "string"
+        ? resolvePath(cwd, input.cwd)
+        : cwd;
+      const abs = isAbsolute(relPath) ? relPath : resolvePath(declaredCwd, relPath);
+      const outsideRepository = evidence.repoRoot !== null &&
+        !isInside(evidence.repoRoot, abs);
+      if (
+        (evidence.baselineSha === null || outsideRepository) &&
+        !evidence.preTouch.has(relPath)
+      ) evidence.preTouch.set(relPath, readSnapshot(abs));
     }
 
     // commit routing: intercept raw git commit, rewrite to smart_commit.sh
@@ -1372,6 +1439,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
         });
         changedFiles = new Set(scope.files.map((file) => file.path));
         added = new Map(Object.entries(scope.added)) as AddedMap;
+        const external = degradedDiff(evidence.preTouch, cwd);
+        for (const path of external.changed) changedFiles.add(path);
+        for (const [key, line] of external.added) added.set(key, line);
         const risk = auditscope(scope);
         for (const finding of risk.findings) {
           const location = finding.evidence.line
