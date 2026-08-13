@@ -18,6 +18,7 @@ process.env.OMP_DELIVERY_GATES = "1";
 process.env.OMP_VERIFY_CMD = "test -f verified.txt";
 
 const gateChecker = (await import("./index.ts")).default;
+const askQuestionnaire = (await import("../ask-questionnaire/index.ts")).default;
 
 const repo = mkdtempSync(resolve(tmpdir(), "probe-repo-"));
 const git = (c: string) => execSync(c, { cwd: repo, encoding: "utf-8", stdio: "pipe" });
@@ -615,6 +616,124 @@ expect(
     recoveryResult.additionalContext?.includes("recovery_required") === true,
   "a user question cannot clear required journal recovery",
 );
+
+// ── the engagement dial must reach the tool_call handler ───────────────────
+//
+// `off` promises that nothing is checked and nothing is recorded. the handler
+// used to bind a repository, rewrite a commit, and inject the subagent nudge
+// regardless of level. the loose cwd matters: with a git cwd, agent_start has
+// already captured a baseline and the binding path would not run at all.
+{
+	console.log("16. a disabled gate performs no tool-call side effects");
+	const loose = mkdtempSync(resolve(tmpdir(), "probe-off-loose-"));
+	const bound = mkdtempSync(resolve(tmpdir(), "probe-off-repo-"));
+	const boundGit = (c: string) => execSync(c, { cwd: bound, encoding: "utf-8", stdio: "pipe" });
+	boundGit("git init -q .");
+	boundGit("git config user.email t@t.t && git config user.name t");
+	writeFileSync(resolve(bound, "tracked.txt"), "before\n");
+	boundGit("git add -A && git commit -q -m init");
+
+	const offCtx = {
+		cwd: loose,
+		hasUI: false,
+		sessionManager: {
+			getBranch: () => [{ type: "message", message: { role: "assistant", content: "done." } }],
+		},
+		ui: { setStatus: () => {}, notify: () => {} },
+	};
+	await commands["gates-disable"]!("", {
+		cwd: loose,
+		hasUI: true,
+		ui: { notify: () => {}, setStatus: () => {} },
+	});
+	const off = mkHandlers();
+	const offStart = sessionEntries.length;
+	await off.agent_start!({}, offCtx);
+
+	const offTask = (await off.tool_call!(
+		{ toolName: "task", input: { task: "review the change" } },
+		offCtx,
+	)) as { input?: { task?: string } } | undefined;
+	expect(offTask === undefined, "a disabled gate does not inject the subagent nudge");
+
+	await off.tool_call!(
+		{ toolName: "bash", input: { cwd: bound, command: "printf after > tracked.txt" } },
+		offCtx,
+	);
+	expect(
+		!sessionEntries
+			.slice(offStart)
+			.some(
+				(entry) =>
+					entry.customType === "omp.gate-checker.journal" &&
+					entry.data.kind === "repository_bound",
+			),
+		"a disabled gate does not bind a repository from tool context",
+	);
+
+	rmSync(loose, { recursive: true, force: true });
+	rmSync(bound, { recursive: true, force: true });
+}
+
+// ── both extensions in one session ─────────────────────────────────────────
+//
+// the questionnaire forces an `ask` before any other tool on a new-project
+// request. the gate checker treats an `ask` as "the agent stopped to ask the
+// user" and used to skip every gate for the request — so the requests that
+// scaffold new code were exactly the ones that went unchecked.
+{
+	console.log("17. questionnaire and gate checker together");
+	await commands["gates-engage"]!("medium true", {
+		cwd: repo,
+		hasUI: true,
+		ui: { notify: () => {}, setStatus: () => {} },
+	});
+	const quizHandlers = () => {
+		const h: Record<string, H> = {};
+		askQuestionnaire({
+			on: (name: string, f: H) => { h[name] = f; },
+			getActiveTools: () => ["ask", "write", "bash", "task"],
+		} as never);
+		return h;
+	};
+
+	const gate = mkHandlers();
+	const quiz = quizHandlers();
+
+	await quiz.input!(
+		{ type: "input", text: "create a new cli tool for log triage", source: "interactive" },
+		ctx,
+	);
+	const blockedWrite = (await quiz.tool_call!(
+		{ toolName: "write", toolCallId: "1", input: {} },
+		ctx,
+	)) as { block?: boolean } | undefined;
+	expect(blockedWrite?.block === true, "the questionnaire blocks work before the ask");
+
+	await gate.agent_start!({}, ctx);
+	await gate.tool_call!({ toolName: "ask", input: {} }, ctx);
+	await quiz.tool_result!({ toolName: "ask", toolCallId: "1", isError: false }, ctx);
+
+	assistantText = "scaffolded the cli.";
+	await gate.tool_call!({ toolName: "write", input: { path: "src/scaffold.ts" } }, ctx);
+	writeFileSync(resolve(repo, "src/scaffold.ts"), "// TODO: implement\n");
+	const both = (await gate.session_stop!({}, ctx)) as { additionalContext?: string } | undefined;
+	expect(
+		both?.additionalContext?.includes("forbidden_marker") ?? false,
+		"a questionnaire ask does not disarm the completion gate on a changed request",
+	);
+}
+
+// the skip itself is still right when the request genuinely changed nothing.
+{
+	console.log("18. a user question still releases a request that changed nothing");
+	const gate = mkHandlers();
+	assistantText = "answered the question. no changes needed.";
+	await gate.agent_start!({}, ctx);
+	await gate.tool_call!({ toolName: "ask", input: {} }, ctx);
+	const askOnly = await gate.session_stop!({}, ctx);
+	expect(askOnly === undefined, "an ask with no file changes still skips the gates");
+}
 
 rmSync(repo, { recursive: true, force: true });
 rmSync(home, { recursive: true, force: true });

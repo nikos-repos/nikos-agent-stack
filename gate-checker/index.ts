@@ -1226,6 +1226,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // accumulate evidence + commit routing + task-input injection
   pi.on("tool_call", async (event: ToolCallEvent, ctx: ExtensionContext): Promise<ToolCallResult | void> => {
     evidence.hadToolCalls = true;
+    // `off` means off. without this the handler still bound a repository,
+    // rewrote a commit into the git-pushing script, and prepended the gate
+    // nudge to every subagent after /gates-disable.
+    if (!policy.enabled) return;
     const { toolName, input } = event;
 
     bindrepository(input, ctx);
@@ -1416,10 +1420,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
       terminaljournal("skipped_no_tools");
       return void (continuationCount = 0);
     }
-    if (evidence.askedUser && !journalRecovery) {
-      terminaljournal("skipped_user_question");
-      return void (continuationCount = 0);
-    }
 
     const cwd = String(ctx?.cwd ?? ".");
     const assistantText = getLastAssistantText(ctx) ?? "";
@@ -1511,6 +1511,16 @@ export default function gateChecker(pi: ExtensionAPI): void {
       } catch {}
     }
     const changedCount = canAdjudicate ? changedFiles.size : 0;
+
+    // A user question releases the request only when it changed nothing.
+    // Judged HERE, after the diff is known, not on arrival: the questionnaire
+    // extension forces an `ask` before any other tool on a new-project request,
+    // so treating every ask as "the agent stopped to ask the user" skipped every
+    // gate on exactly the requests that scaffold new code.
+    if (evidence.askedUser && changedCount === 0 && !journalRecovery) {
+      terminaljournal("skipped_user_question");
+      return void (continuationCount = 0);
+    }
 
     // --- delivery gates: verify + commit -------------------------------------
     // Change-gated, so a read-only or exploratory request is never asked to

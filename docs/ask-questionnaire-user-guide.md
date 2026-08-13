@@ -137,6 +137,8 @@ the extension listens to omp's interactive-only `input` event. it checks the doc
 
 this keeps extension-originated text, such as injected messages and steering prompts from other extensions, from arming the workflow.
 
+arming also requires the native `ask` tool to be active. the extension checks `pi.getActiveTools()` before it marks a request open, because an open request closes only on a successful ask result: arming with `ask` disabled would block every tool until a lifecycle reset.
+
 sources: [omp input event contract](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/extensions/types.ts#L851-L857), [input handler](../ask-questionnaire/index.ts#L105-L108), [source test](../ask-questionnaire/index.test.ts#L99-L105)
 
 ## guidance injection
@@ -151,7 +153,7 @@ this request starts a new project. call the ask tool now with one batched questi
 |---|---|
 | `customType` | `nikos-agent-stack.ask-questionnaire.guidance` |
 | `display` | `false`, so the message stays out of the transcript |
-| `attribution` | `agent` |
+| `attribution` | not set; omp normalises an absent value to `agent` |
 
 the handler returns nothing when no request is open. omp adds the message on every model turn while the request stays open.
 
@@ -290,10 +292,11 @@ one request is open. call the native `ask` tool, or start, switch, or branch the
 
 ### blocking never stops
 
-the request closes only on a successful ask result or a lifecycle reset. inspect two causes:
+the request closes only on a successful ask result or a lifecycle reset. inspect one cause:
 
-- the `ask` tool is not in the active tool set, so no successful ask result can arrive.
 - each ask call returns an error, which keeps the request open by design.
+
+a request can no longer open while `ask` is inactive, so that combination cannot strand a session.
 
 ### the session keeps continuing at stop
 

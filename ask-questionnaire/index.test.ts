@@ -12,11 +12,16 @@ type Handler = (event: any, ctx?: any) => any | Promise<any>;
 
 class FakeApi {
 	private handlers = new Map<string, Handler[]>();
+	activeTools = ["ask", "read", "write", "bash"];
 
 	on(event: string, handler: Handler): void {
 		const list = this.handlers.get(event) ?? [];
 		list.push(handler);
 		this.handlers.set(event, list);
+	}
+
+	getActiveTools(): string[] {
+		return this.activeTools;
 	}
 
 	async run<T = any>(event: string, payload: any): Promise<T | undefined> {
@@ -31,8 +36,9 @@ class FakeApi {
 	}
 }
 
-async function harness() {
+async function harness(activeTools?: string[]) {
 	const api = new FakeApi();
+	if (activeTools) api.activeTools = activeTools;
 	askQuestionnaire(api as any);
 	return api;
 }
@@ -96,6 +102,20 @@ test("no tool is blocked when the request is not a new project", async () => {
 	expect(result?.block).toBeUndefined();
 });
 
+test("the workflow never arms when the ask tool is not active", async () => {
+	const api = await harness(["read", "write", "bash"]);
+	await send(api, "create a new web app");
+
+	const blocked = await callTool(api, "bash");
+	expect(blocked?.block).toBeUndefined();
+
+	const stop = await api.run<{ continue?: boolean }>("session_stop", {
+		type: "session_stop",
+		stop_hook_active: false,
+	});
+	expect(stop?.continue).toBeUndefined();
+});
+
 test("extension-originated input never arms the workflow", async () => {
 	const api = await harness();
 	await send(api, "create a new app", "extension");
@@ -116,6 +136,9 @@ test("before_agent_start injects guidance only while pending", async () => {
 	const armed = await api.run<{ message?: { content: string; customType: string; display?: boolean } }>("before_agent_start", { type: "before_agent_start", prompt: "create a new service" });
 	expect(armed?.message?.content).toContain("batched questionnaire");
 	expect(armed?.message?.display).toBe(false);
+	// omp normalises an absent attribution to "agent", so the extension does not
+	// restate it.
+	expect("attribution" in (armed?.message ?? {})).toBe(false);
 });
 
 // --- ask result clearing ----------------------------------------------------

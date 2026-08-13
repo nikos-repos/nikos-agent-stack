@@ -237,8 +237,8 @@ final checks do not run when:
 
 - the active level is off.
 - the request made no tool calls.
-- the request used the user-question tool.
 - no final assistant text exists.
+- the request used the user-question tool **and** changed no file. a request that asked the user and then changed files is checked normally.
 
 verification and commit checks also require at least one observed changed file. read-only work is not required to run tests or create a commit.
 
@@ -696,7 +696,7 @@ source: [commit policy](../gate-checker/config.js), [clean-tree predicate](../ga
 
 ### commit routing does not occur
 
-confirm that `~/.omp/agent/skills/git-pushing/scripts/smart_commit.sh` exists. routing is disabled when the script is absent. amend commits are intentionally not rewritten.
+confirm that `~/.omp/agent/skills/git-pushing/scripts/smart_commit.sh` exists. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally not rewritten.
 
 source: [commit routing activation](../gate-checker/index.ts)
 

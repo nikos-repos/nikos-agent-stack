@@ -118,7 +118,7 @@ the questionnaire extension is a policy around the native omp `ask` tool. omp al
 
 it does four things:
 
-1. detects a direct new-project request in user input.
+1. detects a direct new-project request in user input, when the native `ask` tool is active.
 2. injects concise batched-questionnaire guidance before the model call.
 3. blocks every non-`ask` tool while the request is pending.
 4. clears the pending request only after a successful, non-error `ask` result, and asks for one continuation turn at session stop while the request is unanswered.
@@ -138,7 +138,8 @@ the full profile is [`agents/terra.md`](agents/terra.md).
 
 gates:
 
-- enforcement runs at `session_stop`; inline marker feedback runs at `tool_result`.
+- enforcement runs at `session_stop`; inline marker feedback runs at `tool_result`. at level `off` the `tool_call` handler does nothing at all.
+- a request that asked the user is released only when it also changed no file.
 - a continuation chain is capped by the runtime, and a no-progress chain aborts. neither is on the engagement dial.
 - files already dirty at agent start are subtracted from the request diff by design.
 - without git, the gate checker falls back to first-touch content hashing. the changed-file and added-line sets stay complete, but the commit gate cannot apply.
@@ -147,7 +148,7 @@ gates:
 questionnaire:
 
 - it does not mutate the core tool queue, does not force a tool selection, and does not replace or patch the `ask` ui.
-- detection covers direct new-project phrasing in user input only. input from an extension never arms it, and indirect phrasing is not detected.
+- detection covers direct new-project phrasing in user input only. input from an extension never arms it, indirect phrasing is not detected, and nothing arms while the `ask` tool is inactive.
 - while pending, non-`ask` tools are blocked; a failed `ask` keeps the request pending.
 - pending state resets on session start, switch, and branch.
 

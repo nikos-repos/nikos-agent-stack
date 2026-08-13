@@ -56,7 +56,6 @@ interface BeforeAgentStartResult {
 		customType: string;
 		content: string;
 		display?: boolean;
-		attribution?: string;
 	};
 }
 
@@ -102,29 +101,33 @@ export default function askQuestionnaire(pi: ExtensionAPI): void {
 	// detect only direct user input. extension-originated prompts (steers,
 	// follow-ups, injected messages) carry source "extension" and must not arm
 	// the workflow.
+	//
+	// arming also requires the ask tool to be active. a pending request clears
+	// only on a successful ask result, so arming without ask reachable would
+	// block every tool for the rest of the session.
 	pi.on("input", (event: InputEvent) => {
 		if (event.source === "extension") return;
+		if (!pi.getActiveTools().includes("ask")) return;
 		if (initiatesNewProject(event.text)) pending = true;
 	});
 
 	// inject the questionnaire guidance before the model call while pending.
 	// display:false keeps it out of the tui transcript while still entering the
 	// model context.
-	pi.on("before_agent_start", (_event: BeforeAgentStartEvent): BeforeAgentStartResult => {
+	pi.on("before_agent_start", (_event: BeforeAgentStartEvent): BeforeAgentStartResult | void => {
 		if (!pending) return;
 		return {
 			message: {
 				customType: guidanceCustomType,
 				content: guidance,
 				display: false,
-				attribution: "agent",
 			},
 		};
 	});
 
 	// while pending, allow only ask and block every other tool. the returned
 	// reason steers the model back toward the questionnaire.
-	pi.on("tool_call", (event: ToolCallEvent): ToolCallResult => {
+	pi.on("tool_call", (event: ToolCallEvent): ToolCallResult | void => {
 		if (!pending) return;
 		if (event.toolName === "ask") return;
 		return { block: true, reason: guidance };
@@ -140,7 +143,7 @@ export default function askQuestionnaire(pi: ExtensionAPI): void {
 	// if the request is still unanswered at session stop, request one
 	// continuation turn that re-injects the guidance. the runtime caps the
 	// continuation chain; a satisfied ask clears pending and ends the chain.
-	pi.on("session_stop", (_event: SessionStopEvent): SessionStopResult => {
+	pi.on("session_stop", (_event: SessionStopEvent): SessionStopResult | void => {
 		if (!pending) return;
 		return { continue: true, additionalContext: guidance };
 	});
