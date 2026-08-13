@@ -56,6 +56,7 @@ test("journal restores a repository bound after request start", () => {
       repo_root: "/repo",
       baseline_sha: "abc",
       baseline_dirty: ["src/old.ts"],
+      baseline_snapshots: { "src/old.ts": { content: "before\n" } },
     },
   ]);
 
@@ -65,6 +66,9 @@ test("journal restores a repository bound after request start", () => {
     baseline_sha: "abc",
     baseline_dirty: ["src/old.ts"],
   }));
+  expect(state.baseline_snapshots).toEqual({
+    "src/old.ts": { content: "before\n" },
+  });
 });
 
 test("journal terminal events close the active request", () => {

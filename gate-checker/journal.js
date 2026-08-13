@@ -32,6 +32,7 @@ export function reducejournal(events) {
     repo_root: null,
     baseline_sha: null,
     baseline_dirty: [],
+    baseline_snapshots: {},
     policy_fingerprint: null,
     continuation: 0,
     failure_hash: null,
@@ -55,6 +56,10 @@ export function reducejournal(events) {
         repo_root: event.repo_root,
         baseline_sha: typeof event.baseline_sha === "string" ? event.baseline_sha : null,
         baseline_dirty: event.baseline_dirty.filter((path) => typeof path === "string"),
+        baseline_snapshots: event.baseline_snapshots &&
+            typeof event.baseline_snapshots === "object"
+          ? event.baseline_snapshots
+          : {},
         policy_fingerprint: event.policy_fingerprint,
         continuation: 0,
         failure_hash: null,
@@ -80,13 +85,16 @@ export function reducejournal(events) {
       if (
         typeof event.repo_root !== "string" ||
         typeof event.baseline_sha !== "string" ||
-        !Array.isArray(event.baseline_dirty)
+        !Array.isArray(event.baseline_dirty) ||
+        !event.baseline_snapshots ||
+        typeof event.baseline_snapshots !== "object"
       ) return recovery("invalid repository binding");
       state = {
         ...state,
         repo_root: event.repo_root,
         baseline_sha: event.baseline_sha,
         baseline_dirty: event.baseline_dirty.filter((path) => typeof path === "string"),
+        baseline_snapshots: event.baseline_snapshots,
       };
     } else if (event.kind === "verify") {
       if (typeof event.verify_id !== "string") return recovery("invalid verify event");

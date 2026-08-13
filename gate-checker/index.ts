@@ -960,6 +960,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         repo_root: baseline.repo_root,
         baseline_sha: baseline.sha,
         baseline_dirty: [...baseline.dirty].sort(),
+        baseline_snapshots: baseline.snapshots,
       });
       ensurelease(baseline.repo_root);
       try {
@@ -1019,11 +1020,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (
       state.policy_fingerprint !== policyfingerprint() ||
       (current.repo_root && current.repo_root !== state.repo_root) ||
-      state.baseline_sha === null ||
-      state.baseline_dirty.length > 0
+      state.baseline_sha === null
     ) {
-      requestId = state.request_id;
-      appendjournal("terminal", { outcome: "recovery_required" });
       if (activeLease) releaselease(activeLease);
       activeLease = null;
       leaseConflict = null;
@@ -1044,6 +1042,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     journalRecovery = null;
     evidence.hadToolCalls = true;
     evidence.baselineSha = state.baseline_sha;
+    evidence.baselineSnapshots = state.baseline_snapshots;
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
     ensurelease(state.repo_root);
