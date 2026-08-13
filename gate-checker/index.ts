@@ -954,6 +954,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
       evidence.baselineDirty = baseline.dirty;
       evidence.baselineSnapshots = baseline.snapshots;
       evidence.repoRoot = baseline.repo_root;
+      appendjournal("repository_bound", {
+        repo_root: baseline.repo_root,
+        baseline_sha: baseline.sha,
+        baseline_dirty: [...baseline.dirty].sort(),
+      });
       ensurelease(baseline.repo_root);
       try {
         ctx?.ui?.setStatus?.("gate", armingStatus());
@@ -1012,7 +1017,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineSha = state.baseline_sha;
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
-    ensurelease(String(ctx.cwd ?? "."));
+    ensurelease(state.repo_root);
   };
   const terminaljournal = (
     outcome: string,

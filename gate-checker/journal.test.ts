@@ -38,6 +38,35 @@ test("journal reconstructs an active continuation chain", () => {
   expect(state.baseline_dirty).toEqual(["src/old.ts"]);
 });
 
+test("journal restores a repository bound after request start", () => {
+  const state = reducejournal([
+    {
+      version: 1,
+      kind: "request_start",
+      request_id: "request-bound",
+      repo_root: "/outside",
+      baseline_sha: null,
+      baseline_dirty: [],
+      policy_fingerprint: "policy-1",
+    },
+    {
+      version: 1,
+      kind: "repository_bound",
+      request_id: "request-bound",
+      repo_root: "/repo",
+      baseline_sha: "abc",
+      baseline_dirty: ["src/old.ts"],
+    },
+  ]);
+
+  expect(state).toEqual(expect.objectContaining({
+    status: "active",
+    repo_root: "/repo",
+    baseline_sha: "abc",
+    baseline_dirty: ["src/old.ts"],
+  }));
+});
+
 test("journal terminal events close the active request", () => {
   const state = reducejournal([
     {

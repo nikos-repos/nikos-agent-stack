@@ -76,6 +76,18 @@ export function reducejournal(events) {
         continuation: event.continuation,
         failure_hash: typeof event.failure_hash === "string" ? event.failure_hash : null,
       };
+    } else if (event.kind === "repository_bound") {
+      if (
+        typeof event.repo_root !== "string" ||
+        typeof event.baseline_sha !== "string" ||
+        !Array.isArray(event.baseline_dirty)
+      ) return recovery("invalid repository binding");
+      state = {
+        ...state,
+        repo_root: event.repo_root,
+        baseline_sha: event.baseline_sha,
+        baseline_dirty: event.baseline_dirty.filter((path) => typeof path === "string"),
+      };
     } else if (event.kind === "verify") {
       if (typeof event.verify_id !== "string") return recovery("invalid verify event");
       state = { ...state, verify_ids: [...state.verify_ids, event.verify_id] };
