@@ -341,6 +341,60 @@ for (const [label, report, shouldBlock] of [
   const r4 = await h4b.session_stop!({}, looseCtx);
   expect(r4 === undefined, "and clears once the command passes");
 
+  const claimCtx = {
+    ...looseCtx,
+    sessionManager: {
+      getBranch: () => [
+        {
+          type: "message",
+          message: { role: "assistant", content: "i modified `src/claimed.ts`." },
+        },
+      ],
+    },
+  };
+  execSync("mkdir -p src", { cwd: loose });
+  writeFileSync(resolve(loose, "src/claimed.ts"), "unchanged\n");
+  const claimHandlers = mkHandlers();
+  await claimHandlers.agent_start!({}, claimCtx);
+  await claimHandlers.tool_call!(
+    { toolName: "write", input: { path: "src/claimed.ts" } },
+    claimCtx,
+  );
+  const claimResult = (await claimHandlers.session_stop!({}, claimCtx)) as
+    | { additionalContext?: string }
+    | undefined;
+  expect(
+    claimResult?.additionalContext?.includes("fabricated_modification") ?? false,
+    "a relative no-git write keeps relative citation coverage",
+  );
+  const honestCtx = {
+    ...looseCtx,
+    sessionManager: {
+      getBranch: () => [
+        {
+          type: "message",
+          message: { role: "assistant", content: "i modified `src/honest.ts`." },
+        },
+      ],
+    },
+  };
+  writeFileSync(resolve(loose, "src/honest.ts"), "before\n");
+  const honestHandlers = mkHandlers();
+  await honestHandlers.agent_start!({}, honestCtx);
+  await honestHandlers.tool_call!(
+    { toolName: "write", input: { path: "src/honest.ts" } },
+    honestCtx,
+  );
+  writeFileSync(resolve(loose, "src/honest.ts"), "after\n");
+  const honestResult = (await honestHandlers.session_stop!({}, honestCtx)) as
+    | { additionalContext?: string }
+    | undefined;
+  expect(
+    !(honestResult?.additionalContext?.includes("fabricated_modification") ?? false),
+    "an honest relative no-git modification remains grounded",
+  );
+
+
   rmSync(loose, { recursive: true, force: true });
 }
 
@@ -377,13 +431,18 @@ for (const [label, report, shouldBlock] of [
   const cwdRepo = makeRepo();
   const cwdStatuses: string[] = [];
   const cwdCtx = makeLoose("updated `tracked.txt`.", cwdStatuses);
-  await commands["gates-engage"]!("high true", {
+  await commands["gates-engage"]!(`high test "$(pwd)" = ${cwdRepo.target}`, {
     cwd: cwdCtx.cwd,
     hasUI: true,
     ui: { notify: () => {}, setStatus: () => {} },
   });
   const cwdHandlers = mkHandlers();
   const journalStart = sessionEntries.length;
+  await cwdHandlers.session_start!({}, cwdCtx);
+  expect(
+    cwdStatuses.at(-1)?.includes("low: no git") ?? false,
+    "session startup shows the no-git capability label",
+  );
   await cwdHandlers.agent_start!({}, cwdCtx);
   expect(
     cwdStatuses.at(-1)?.includes("low: no git") ?? false,
@@ -439,13 +498,17 @@ for (const [label, report, shouldBlock] of [
     !(pathResult?.additionalContext?.includes("ignored.txt") ?? true),
     "a file dirty before repository discovery stays excluded",
   );
-
   const mixedRepo = makeRepo();
+  const mixedExternal = mkdtempSync(resolve(tmpdir(), "probe-bind-external-"));
+  paths.push(mixedExternal);
   const mixedCtx = makeLoose("wrote `loose.ts`.");
   const mixedHandlers = mkHandlers();
   await mixedHandlers.agent_start!({}, mixedCtx);
-  await mixedHandlers.tool_call!({ toolName: "write", input: { path: "loose.ts" } }, mixedCtx);
-  writeFileSync(resolve(mixedCtx.cwd, "loose.ts"), "// TODO: implement\n");
+  await mixedHandlers.tool_call!(
+    { toolName: "write", input: { cwd: mixedExternal, path: "loose.ts" } },
+    mixedCtx,
+  );
+  writeFileSync(resolve(mixedExternal, "loose.ts"), "// TODO: implement\n");
   await mixedHandlers.tool_call!(
     { toolName: "read", input: { path: resolve(mixedRepo.target, "tracked.txt") } },
     mixedCtx,

@@ -1090,11 +1090,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // unarmed session from an armed one except by spending a turn.
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
     restorejournal(ctx);
+    const status = requestId
+      ? `${armingStatus()} · resumed`
+      : policy.enabled && capturebaseline(String(ctx?.cwd ?? ".")).sha === null
+      ? `${armingStatus()} · low: no git`
+      : armingStatus();
     try {
-      ctx?.ui?.setStatus?.(
-        "gate",
-        requestId ? `${armingStatus()} · resumed` : armingStatus(),
-      );
+      ctx?.ui?.setStatus?.("gate", status);
     } catch {}
   });
   pi.on("session_branch", (_event: unknown, ctx: ExtensionContext) => {
@@ -1204,6 +1206,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       repo_root: baseline.repo_root ?? cwd,
       baseline_sha: baseline.sha,
       baseline_dirty: [...baseline.dirty].sort(),
+      baseline_snapshots: baseline.snapshots,
       policy_fingerprint: policyfingerprint(),
     });
     if (baseline.repo_root) ensurelease(baseline.repo_root);
@@ -1278,10 +1281,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
       const abs = isAbsolute(relPath) ? relPath : resolvePath(declaredCwd, relPath);
       const outsideRepository = evidence.repoRoot !== null &&
         !isInside(evidence.repoRoot, abs);
+      const evidencePath = isInside(cwd, abs)
+        ? normalizePath(relative(cwd, abs))
+        : abs;
       if (
         (evidence.baselineSha === null || outsideRepository) &&
-        !evidence.preTouch.has(relPath)
-      ) evidence.preTouch.set(relPath, readSnapshot(abs));
+        !evidence.preTouch.has(evidencePath)
+      ) evidence.preTouch.set(evidencePath, readSnapshot(abs));
     }
 
     // commit routing: intercept raw git commit, rewrite to smart_commit.sh

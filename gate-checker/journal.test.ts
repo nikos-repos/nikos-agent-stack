@@ -38,6 +38,26 @@ test("journal reconstructs an active continuation chain", () => {
   expect(state.baseline_dirty).toEqual(["src/old.ts"]);
 });
 
+test("journal retains dirty snapshots from request start", () => {
+  const state = reducejournal([
+    {
+      version: 1,
+      kind: "request_start",
+      request_id: "request-dirty",
+      repo_root: "/repo",
+      baseline_sha: "abc",
+      baseline_dirty: ["src/old.ts"],
+      baseline_snapshots: { "src/old.ts": { content: "before\n" } },
+      policy_fingerprint: "policy-1",
+    },
+  ]);
+
+  expect(state.baseline_dirty).toEqual(["src/old.ts"]);
+  expect(state.baseline_snapshots).toEqual({
+    "src/old.ts": { content: "before\n" },
+  });
+});
+
 test("journal restores a repository bound after request start", () => {
   const state = reducejournal([
     {
