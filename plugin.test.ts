@@ -36,61 +36,10 @@ const oldArtifacts = [
 	"advisor-role/UPSTREAM_BASE",
 ];
 
-type yamlValue = string | yamlObject | string[];
-type yamlObject = { [key: string]: yamlValue };
-
-function parseFrontmatter(source: string): yamlObject {
+function parseFrontmatter(source: string): any {
 	const match = source.match(/^---\n([\s\S]*?)\n---/);
 	expect(match).not.toBeNull();
-	return parseYaml(match![1].split("\n"));
-}
-
-function parseYaml(lines: string[], start = 0, indent = 0): yamlObject | string[] {
-	const first = lines[start];
-	const list = first.trimStart().startsWith("- ");
-	const value: yamlObject | string[] = list ? [] : {};
-	let index = start;
-
-	while (index < lines.length) {
-		const line = lines[index];
-		if (!line.trim()) {
-			index++;
-			continue;
-		}
-
-		const lineIndent = line.length - line.trimStart().length;
-		if (lineIndent < indent) break;
-		if (lineIndent > indent) throw new Error(`unexpected yaml indentation: ${line}`);
-
-		const content = line.trim();
-		if (list) {
-			expect(content.startsWith("- ")).toBe(true);
-			(value as string[]).push(content.slice(2));
-			index++;
-			continue;
-		}
-
-		const field = content.match(/^([a-zA-Z]+):(?:\s+(.*))?$/);
-		if (!field) throw new Error(`invalid yaml field: ${line}`);
-		const [, key, inline] = field;
-		if (inline) {
-			(value as yamlObject)[key] = inline;
-			index++;
-			continue;
-		}
-
-		const childStart = index + 1;
-		const child = parseYaml(lines, childStart, indent + 2);
-		(value as yamlObject)[key] = child;
-		index = childStart;
-		while (index < lines.length) {
-			const childIndent = lines[index].length - lines[index].trimStart().length;
-			if (lines[index].trim() && childIndent <= indent) break;
-			index++;
-		}
-	}
-
-	return value;
+	return Bun.YAML.parse(match![1]);
 }
 
 test("the package exposes only the declared public surface", async () => {
@@ -129,13 +78,21 @@ test("terra remains a read-only advisor with source-backed evidence", () => {
 	expect(terra.thinking).toBe("high");
 	expect(terra.tools).toEqual(["read", "grep", "glob"]);
 
-	const output = terra.output as yamlObject;
-	const evidence = (output.properties as yamlObject).evidence as yamlObject;
+	const output = terra.output;
+	const evidence = output.properties.evidence;
 	expect(output.type).toBe("object");
-	expect(output.additionalProperties).toBe("false");
+	// a closed schema is the contract, so the value must be the boolean false —
+	// the string "false" would be a truthy, open schema anywhere it is consumed.
+	expect(output.additionalProperties).toBe(false);
 	expect(output.required).toEqual(["advice", "evidence"]);
 	expect(evidence.type).toBe("object");
-	expect(evidence.additionalProperties).toBe("false");
+	expect(evidence.additionalProperties).toBe(false);
 	expect(evidence.required).toEqual(["path", "line", "claim", "digest"]);
-	expect(Object.keys(evidence.properties as yamlObject)).toEqual(["path", "line", "claim", "digest"]);
+
+	const fields = evidence.properties;
+	expect(Object.keys(fields)).toEqual(["path", "line", "claim", "digest"]);
+	expect(fields.path.type).toBe("string");
+	expect(fields.line.type).toBe("integer");
+	expect(fields.claim.type).toBe("string");
+	expect(fields.digest.type).toBe("string");
 });
