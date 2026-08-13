@@ -118,14 +118,16 @@ export const RULE_FAMILY = {
  * legacy OMP_DELIVERY_GATES (which armed verify + commit, so it maps to high)
  * > medium.
  *
+ * @param {Record<string, string | undefined>} [env]
+ * @param {string} [configPath]
  * @returns {{ level: GateLevel, verifyCmd: string | null, source: string }}
  */
-export function loadConfig(env = process.env) {
+export function loadConfig(env = process.env, configPath = CONFIG_PATH) {
   const cmdFromEnv = String(env.OMP_VERIFY_CMD ?? "").trim() || null;
 
-  if (existsSync(CONFIG_PATH)) {
+  if (existsSync(configPath)) {
     try {
-      const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+      const raw = JSON.parse(readFileSync(configPath, "utf-8"));
       const level = LEVELS.includes(raw?.level) ? raw.level : DEFAULT_LEVEL;
       const verifyCmd =
         typeof raw?.verifyCmd === "string" && raw.verifyCmd.trim()
@@ -153,15 +155,16 @@ export function loadConfig(env = process.env) {
 /**
  * @param {GateLevel} level
  * @param {string | null} [verifyCmd]
+ * @param {string} [configPath]
  * @returns {{ ok: boolean, error?: string }}
  */
-export function saveConfig(level, verifyCmd) {
+export function saveConfig(level, verifyCmd, configPath = CONFIG_PATH) {
   try {
-    mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+    mkdirSync(dirname(configPath), { recursive: true });
     /** @type {Record<string, unknown>} */
     const body = { level };
     if (verifyCmd) body.verifyCmd = verifyCmd;
-    writeFileSync(CONFIG_PATH, JSON.stringify(body, null, 2) + "\n", "utf-8");
+    writeFileSync(configPath, JSON.stringify(body, null, 2) + "\n", "utf-8");
     return { ok: true };
   } catch (err) {
     return { ok: false, error: String(err) };

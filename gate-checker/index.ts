@@ -2190,33 +2190,35 @@ if (import.meta.main) {
     check("hash distinguishes content", hashContent("abc") !== hashContent("abd"));
   }
 
+  const tmpCfg = resolvePath(mkdtempSync(resolvePath(tmpdir(), "gate-cfg-")), "config.json");
+
   // --- delivery gates (verify + commit) -------------------------------------
   {
     // arming, now via the engagement dial
-    check("default level is medium", loadConfig({}).level === "medium");
+    check("default level is medium", loadConfig({}, tmpCfg).level === "medium");
     check(
       "OMP_GATES_LEVEL selects a level",
-      loadConfig({ OMP_GATES_LEVEL: "low" }).level === "low",
+      loadConfig({ OMP_GATES_LEVEL: "low" }, tmpCfg).level === "low",
     );
     check(
       "an unknown OMP_GATES_LEVEL falls back to the default",
-      loadConfig({ OMP_GATES_LEVEL: "paranoid" }).level === "medium",
+      loadConfig({ OMP_GATES_LEVEL: "paranoid" }, tmpCfg).level === "medium",
     );
     // the old env var armed verify + commit, which is exactly what high does
     check(
       "legacy OMP_DELIVERY_GATES maps to high",
-      loadConfig({ OMP_DELIVERY_GATES: "1" }).level === "high",
+      loadConfig({ OMP_DELIVERY_GATES: "1" }, tmpCfg).level === "high",
     );
     check(
       "OMP_DELIVERY_GATES=0 does not arm",
-      loadConfig({ OMP_DELIVERY_GATES: "0" }).level === "medium",
+      loadConfig({ OMP_DELIVERY_GATES: "0" }, tmpCfg).level === "medium",
     );
     // an absent verify command must NOT become "npm test" — guessing turns a
     // repo with no test runner into a permanent retry block
-    check("verify command is null when unset", loadConfig({}).verifyCmd === null);
+    check("verify command is null when unset", loadConfig({}, tmpCfg).verifyCmd === null);
     check(
       "verify command read from env",
-      loadConfig({ OMP_VERIFY_CMD: "bun test" }).verifyCmd === "bun test",
+      loadConfig({ OMP_VERIFY_CMD: "bun test" }, tmpCfg).verifyCmd === "bun test",
     );
 
     // predicates, against a real throwaway repo
@@ -2540,20 +2542,14 @@ if (import.meta.main) {
     }
 
     // round trip through a real config file
-    const tmpCfg = resolvePath(mkdtempSync(resolvePath(tmpdir(), "gate-cfg-")), "config.json");
-    process.env.OMP_GATE_CONFIG = tmpCfg;
-    {
-      const cfg = await import(`./config.js?t=${Date.now()}`);
-      check("save writes the level", cfg.saveConfig("high", "bun test").ok);
-      const back = cfg.loadConfig({});
-      check("load reads the level back", back.level === "high");
-      check("load reads the verify command back", back.verifyCmd === "bun test");
-      check("config file beats the env var", cfg.loadConfig({ OMP_GATES_LEVEL: "low" }).level === "high");
-      cfg.saveConfig("off");
-      check("disable round-trips", cfg.loadConfig({}).level === "off");
-    }
+    check("save writes the level", saveConfig("high", "bun test", tmpCfg).ok);
+    const back = loadConfig({}, tmpCfg);
+    check("load reads the level back", back.level === "high");
+    check("load reads the verify command back", back.verifyCmd === "bun test");
+    check("config file beats the env var", loadConfig({ OMP_GATES_LEVEL: "low" }, tmpCfg).level === "high");
+    saveConfig("off", undefined, tmpCfg);
+    check("disable round-trips", loadConfig({}, tmpCfg).level === "off");
     rmSync(resolvePath(tmpCfg, ".."), { recursive: true, force: true });
-    delete process.env.OMP_GATE_CONFIG;
 
     // the description must name what actually changes
     check("describe names the level", describeLevel("high", "bun test").includes("HIGH"));
