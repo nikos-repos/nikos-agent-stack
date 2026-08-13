@@ -127,17 +127,17 @@ sources: [detector](../ask-questionnaire/index.ts#L20-L31), [detector tests](../
 
 ## input sources that arm the policy
 
-the extension listens to the `input` event and checks the documented `source` field.
+the extension listens to omp's interactive-only `input` event. it checks the documented `source` field defensively, but rpc and headless requests do not emit this event and do not arm the policy.
 
 | source | effect |
 |---|---|
 | `interactive` | detection runs |
-| `rpc` | detection runs |
 | `extension` | the handler returns immediately and detection never runs |
+| `rpc` or headless input | no `input` event; the policy does not arm |
 
 this keeps extension-originated text, such as injected messages and steering prompts from other extensions, from arming the workflow.
 
-sources: [input handler](../ask-questionnaire/index.ts#L105-L108), [source test](../ask-questionnaire/index.test.ts#L99-L105)
+sources: [omp input event contract](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/extensions/types.ts#L851-L857), [input handler](../ask-questionnaire/index.ts#L105-L108), [source test](../ask-questionnaire/index.test.ts#L99-L105)
 
 ## guidance injection
 
@@ -279,7 +279,7 @@ sources: [test harness](../ask-questionnaire/index.test.ts#L1-L50), [`package.js
 check in this order:
 
 1. the phrase matches the detector table above.
-2. the text arrived as user input with source `interactive` or `rpc`.
+2. the text arrived through omp's interactive input event.
 3. the plugin is installed and enabled, and omp restarted after installation.
 
 the omp event contract fires `input` for interactive submissions, so a flow that never emits that event never arms the policy.
