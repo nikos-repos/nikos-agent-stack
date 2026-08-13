@@ -1,18 +1,18 @@
 /**
  * @module gate-checker/config
- * @description The engagement dial. One place decides how hard every gate bites,
+ * @description the engagement dial. one place decides how hard every gate bites,
  *              so a level change cannot leave one rule out of step with the rest.
  *
- * Set it with `/gates-engage low|medium|high`, clear it with `/gates-disable`.
+ * set it with `/gates-engage low|medium|high`, clear it with `/gates-disable`.
  *
- * Why a dial exists at all: the gates were built assuming a git repo and a
- * commit at the end of every unit of work. A lot of real work is neither —
- * exploratory sessions, edits outside any repo, one-off scripts. Forcing a
+ * why a dial exists at all: the gates were built assuming a git repo and a
+ * commit at the end of every unit of work. a lot of real work is neither —
+ * exploratory sessions, edits outside any repo, one-off scripts. forcing a
  * commit there is not enforcement, it is an obstacle, and an agent that cannot
  * satisfy a gate burns retries until the cap.
  *
- * Two things are NOT on the dial and never will be: the no-progress abort and
- * the continuation cap. Those exist to stop runaway loops, and a level that
+ * two things are not on the dial and never will be: the no-progress abort and
+ * the continuation cap. those exist to stop runaway loops, and a level that
  * disabled them would re-create the failure the dial is meant to prevent.
  */
 
@@ -36,34 +36,34 @@ export const CONFIG_PATH =
 /**
  * @typedef {object} GatePolicy
  * @property {GateLevel} level
- * @property {boolean}  enabled       Any gate at all.
- * @property {boolean}  inline        Flag a marker at tool_result, while the agent is still in the file.
- * @property {RuleMode} completion    Forbidden markers in ADDED lines.
- * @property {RuleMode} citation      Parent claims about files and test results.
- * @property {RuleMode} snapshot      Snapshot-tag references.
- * @property {RuleMode} manifest      Subagent manifest. "auto" keeps the diff-derived severity.
- * @property {RuleMode} subagentClaim Subagent claims checked against the diff.
- * @property {RuleMode} verify        Test command must pass. Needs a configured command.
- * @property {RuleMode} commit        Working tree must be committed. Needs git.
- * @property {RuleMode} runtime       Gate integrity itself: lease conflict, journal recovery, unreadable scope.
+ * @property {boolean}  enabled       any gate at all.
+ * @property {boolean}  inline        flag a marker at tool_result, while the agent is still in the file.
+ * @property {RuleMode} completion    forbidden markers in added lines.
+ * @property {RuleMode} citation      parent claims about files and test results.
+ * @property {RuleMode} snapshot      snapshot-tag references.
+ * @property {RuleMode} manifest      subagent manifest. "auto" keeps the diff-derived severity.
+ * @property {RuleMode} subagentClaim subagent claims checked against the diff.
+ * @property {RuleMode} verify        test command must pass. needs a configured command.
+ * @property {RuleMode} commit        working tree must be committed. needs git.
+ * @property {RuleMode} runtime       gate integrity itself: lease conflict, journal recovery, unreadable scope.
  */
 
 /**
- * The dial.
+ * the dial.
  *
- * low    — intentionally loose. Nothing blocks. Findings are surfaced and
+ * low    — intentionally loose. nothing blocks. findings are surfaced and
  *          recorded so the ledger still learns, but the agent is never stopped.
- *          For non-git work, exploration, and anything outside a project.
+ *          for non-git work, exploration, and anything outside a project.
  *
- * medium — the default, and the right setting for most coding work. Real
+ * medium — the default, and the right setting for most coding work. real
  *          defects block: an unimplemented stub in a line you just added, a
- *          claim the diff denies, a failing test suite. Commit discipline stays
- *          OFF, because forcing a commit at the end of every turn is the single
+ *          claim the diff denies, a failing test suite. commit discipline stays
+ *          off, because forcing a commit at the end of every turn is the single
  *          most disruptive rule and it is wrong outside a repo.
  *
- * high   — elevated security requirements. Everything blocks, including the
+ * high   — elevated security requirements. everything blocks, including the
  *          commit gate and the subagent manifest regardless of corroboration.
- *          Use it when the work must be attributable and checkpointed.
+ *          use it when the work must be attributable and checkpointed.
  *
  * @param {GateLevel} level
  * @returns {GatePolicy}
@@ -102,7 +102,7 @@ export function policyFor(level) {
   }
 }
 
-/** Which policy field governs a rule. @type {Record<string, keyof GatePolicy>} */
+/** which policy field governs a rule. @type {Record<string, keyof GatePolicy>} */
 export const RULE_FAMILY = {
   forbidden_marker: "completion",
   fabricated_modification: "citation",
@@ -120,9 +120,9 @@ export const RULE_FAMILY = {
 };
 
 /**
- * Reads the persisted level.
+ * reads the persisted level.
  *
- * Precedence: config file (written by /gates-engage) > OMP_GATES_LEVEL >
+ * precedence: config file (written by /gates-engage) > OMP_GATES_LEVEL >
  * legacy OMP_DELIVERY_GATES (which armed verify + commit, so it maps to high)
  * > medium.
  *
@@ -180,7 +180,7 @@ export function saveConfig(level, verifyCmd, configPath = CONFIG_PATH) {
 }
 
 /**
- * Human-readable summary of what a level actually does. Shown by the commands,
+ * human-readable summary of what a level actually does. shown by the commands,
  * so the dial is never a number whose meaning you have to remember.
  *
  * @param {GateLevel} level

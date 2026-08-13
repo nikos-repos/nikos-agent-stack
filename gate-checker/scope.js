@@ -27,7 +27,7 @@ function resolve_ref(cwd, ref) {
 }
 
 function diff_specs(options, repo_root) {
-  const head = resolve_ref(repo_root, "\u0048\u0045\u0041\u0044");
+  const head = resolve_ref(repo_root, "HEAD");
   const specs = [];
   const resolved = { head };
 
@@ -159,7 +159,7 @@ function collect_diff(repo_root, spec, folder, records, added) {
     records,
   );
   parseDiffAdditions(
-    git(repo_root, [...common, "-\u00550", "--diff-filter=\u0041\u0043\u004d\u0052", ...spec.args, ...paths]),
+    git(repo_root, [...common, "-U0", "--diff-filter=ACMR", ...spec.args, ...paths]),
     added,
   );
 }
@@ -287,7 +287,7 @@ function matches_folder(path, folder) {
 export function capturebaseline(cwd = ".") {
   try {
     const repo_root = git(cwd, ["rev-parse", "--show-toplevel"]).trim();
-    const sha = resolve_ref(repo_root, "\u0048\u0045\u0041\u0044");
+    const sha = resolve_ref(repo_root, "HEAD");
     const fields = git(repo_root, [
       "status",
       "--porcelain=v1",

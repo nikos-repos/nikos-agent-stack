@@ -141,20 +141,19 @@ const c3shape = shapes.find((r) => r.outcome === "gates_clean");
 expect(c3shape?.matched === true, `a verified bounded change is process-shaped (${c3shape?.reason})`);
 expect(c3shape?.testRan === true, "the delivery verify run counts as a test run");
 
-// cases 7-11 exercise the DEFAULT level, where the manifest severity is
+// cases 7-11 exercise the default level, where the manifest severity is
 // diff-derived and citation failures block
 process.env.OMP_GATES_LEVEL = "medium";
 writeFileSync(resolve(repo, "verified.txt"), "ok\n");
 
 // ── subagent + loop regressions, driven through the real hooks ──────────────
 //
-// Every case below reproduces part of the run that spent six forced
-// continuations and four extra subagent spawns on completed work.
+// each case below protects one subagent or continuation-loop invariant.
 
 const MO = "<changed-files>";
 const MC = "</changed-files>";
 
-// Drives one full request: agent_start -> subagent reports -> session_stop.
+// drives one full request: agent_start -> subagent reports -> session_stop.
 const runSub = async (
   h: Record<string, H>,
   parentText: string,
@@ -179,13 +178,13 @@ const runSub = async (
   };
 };
 
-// fix 3 — manifest fixtures. only the last one is a real failure.
+// manifest fixtures: only the last report is a real failure.
 console.log("7. subagent manifest fixtures");
 for (const [label, report, shouldBlock] of [
   ["json changed: []", JSON.stringify({ review: "ok", changed: [] }), false],
   ["json embedded token", JSON.stringify({ verdict: "ok", manifest: `${MO}\n${MC}` }), false],
   ["prose literal block", `reviewed it.\n${MO}\n${MC}`, false],
-  // no manifest, but the report contradicts nothing -> warn, not block (fix 5)
+  // no manifest, but the report contradicts nothing -> warn, not block
   ["no manifest, corroborated", "reviewed it. looks correct.", false],
   // no manifest AND a claim the diff denies -> block
   ["no manifest, contradicted", "I updated `src/ghost.ts` for you", true],
@@ -199,7 +198,7 @@ for (const [label, report, shouldBlock] of [
   );
 }
 
-// fix 5 — a read-only reviewer with no manifest warns, it does not block
+// a read-only reviewer with no manifest warns; it does not block.
 {
   const h = mkHandlers();
   const { r } = await runSub(h, "the reviewer subagent reported back", ["looks correct to me"]);
@@ -207,7 +206,7 @@ for (const [label, report, shouldBlock] of [
   expect(r === undefined, "corroborated missing manifest does NOT force a continuation");
 }
 
-// fix 4 — a parent that verified the work itself is not judged for the report
+// a parent that verified the work itself is not judged for the report.
 {
   const h = mkHandlers();
   const { r } = await runSub(h, "i ran the tests myself; all green.", ["no manifest here"]);
@@ -215,7 +214,7 @@ for (const [label, report, shouldBlock] of [
   expect(r === undefined, "parent citing no subagent is released");
 }
 
-// fix 2 — a retry must not grow the failure count
+// a retry must not grow the failure count.
 {
   const h = mkHandlers();
   const parent = "the reviewer subagent claimed `src/ghost.ts` was updated";
@@ -230,9 +229,9 @@ for (const [label, report, shouldBlock] of [
   );
 }
 
-// fix 1 — identical blocking failures twice in a row release the agent.
-// Uses the PARENT's own fabricated claim: a repeated subagent report is already
-// swallowed by the dedupe in fix 2, so it would not reach the stalemate path.
+// identical blocking failures twice in a row release the agent. use the
+// parent's fabricated claim because repeated subagent reports are deduplicated
+// before they reach the stalemate path.
 {
   const h = mkHandlers();
   const parent = "i modified `src/ghost.ts` as requested";

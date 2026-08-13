@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 /**
  * @module gate-checker/gate-cli
- * @description Command-line surface over the shared predicates, so an audit run
- *              outside a session applies the SAME code as the extension instead
+ * @description command-line surface over the shared predicates, so an audit run
+ *              outside a session applies the same code as the extension instead
  *              of a parallel `grep '^+'` pipeline that drifts from it.
  *
- * Commands:
+ * commands:
  *   cutover [--base <ref>] [--cwd <dir>] [--markers <file>]
- *       Exit 0 when no forbidden marker appears in lines added since <ref>.
- *       Exit 1 (with the offending lines on stdout) otherwise.
+ *       exit 0 when no forbidden marker appears in lines added since <ref>.
+ *       exit 1 (with the offending lines on stdout) otherwise.
  *
  *   stats [--json] [--ledger <path>]
- *       Summarize the gate ledger. `capHitRate` is the headline number: a high
+ *       summarize the gate ledger. `capHitRate` is the headline number: a high
  *       rate means the gates are too strict, because the agent could not
  *       satisfy them even given every retry.
  */
@@ -67,10 +67,10 @@ function git(command, cwd) {
 /** @param {Record<string, string | boolean>} args */
 function cutover(args) {
   const cwd = String(args.cwd ?? ".");
-  let base = String(args.base ?? "\u0048\u0045\u0041\u0044~1");
+  let base = String(args.base ?? "HEAD~1");
 
   if (!git(["rev-parse", "--verify", `${base}^{commit}`], cwd).trim()) {
-    base = git(["rev-list", "--max-parents=0", "\u0048\u0045\u0041\u0044"], cwd)
+    base = git(["rev-list", "--max-parents=0", "HEAD"], cwd)
       .trim()
       .split("\n")[0];
   }

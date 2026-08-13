@@ -108,7 +108,7 @@ describe("canonical gate scopes", () => {
     writefilesync(join(cwd, "src/a.txt"), "two\n");
     git("add", "src/a.txt");
     renamesync(join(cwd, "src/old.txt"), join(cwd, "src/moved.txt"));
-    git("add", "-\u0041", "src/old.txt", "src/moved.txt");
+    git("add", "-A", "src/old.txt", "src/moved.txt");
     writefilesync(join(cwd, "src/new.txt"), "new\n");
 
     const scope = resolvescope({ kind: "uncommitted", cwd });
@@ -122,11 +122,11 @@ describe("canonical gate scopes", () => {
 
   test("base and commit scopes resolve immutable commit identifiers", () => {
     const { cwd, git } = repo();
-    const base = git("rev-parse", "\u0048\u0045\u0041\u0044");
+    const base = git("rev-parse", "HEAD");
     writefilesync(join(cwd, "src/a.txt"), "two\n");
     git("add", ".");
     git("commit", "-q", "-m", "second");
-    const head = git("rev-parse", "\u0048\u0045\u0041\u0044");
+    const head = git("rev-parse", "HEAD");
 
     const base_scope = resolvescope({ kind: "base", cwd, base_ref: base });
     const commit_scope = resolvescope({ kind: "commit", cwd, commit_ref: head });
@@ -139,7 +139,7 @@ describe("canonical gate scopes", () => {
 
   test("commit scope includes files from a root commit", () => {
     const { cwd, git } = repo();
-    const root = git("rev-parse", "\u0048\u0045\u0041\u0044");
+    const root = git("rev-parse", "HEAD");
     const scope = resolvescope({ kind: "commit", cwd, commit_ref: root });
 
     expect(scope.resolved.base).toBeNull();

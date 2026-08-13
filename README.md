@@ -110,7 +110,7 @@ audit scopes:
 - `base`: changes from a supplied merge base through the current commit.
 - `commit`: changes introduced by one commit.
 
-the [gates plugin user guide](docs/gates-plugin-user-guide.md) covers configuration, rule reference, git and no-git behavior, commit routing, and troubleshooting.
+the [gates plugin user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md) covers configuration, rule reference, git and no-git behavior, commit routing, and troubleshooting.
 
 ## questionnaire
 
@@ -123,6 +123,8 @@ it does four things:
 3. blocks every non-`ask` tool while the request is pending.
 4. clears the pending request only after a successful, non-error `ask` result, and asks for one continuation turn at session stop while the request is unanswered.
 
+the [ask questionnaire user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) covers detection, policy transitions, and limitations.
+
 ## terra advisor
 
 `terra-advisor` is an installed task agent, not a passive native advisor. it is spawned like any other agent and returns one structured record.
@@ -133,6 +135,8 @@ it does four things:
 - it never delegates, and it never claims approval, gate, or handoff authority.
 
 the full profile is [`agents/terra.md`](agents/terra.md).
+
+the [advisor role user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md) covers the output schema, evidence rules, and limitations.
 
 ## behavior boundaries
 
@@ -184,4 +188,6 @@ this runs the gate-checker and questionnaire unit tests, the packaged-surface te
 | [`gate-checker/wiring-check.ts`](gate-checker/wiring-check.ts) | end-to-end probe that the gate fires from `session_stop` |
 | [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts) | questionnaire extension around the native `ask` tool |
 | [`agents/terra.md`](agents/terra.md) | read-only terra advisor agent profile and output schema |
-| [`docs/gates-plugin-user-guide.md`](docs/gates-plugin-user-guide.md) | complete gate user and operator guide |
+| [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md) | complete gate user and operator guide |
+| [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire detection, policy, and limitations |
+| [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md) | advisor output schema, evidence rules, and limitations |

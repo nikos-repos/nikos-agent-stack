@@ -279,39 +279,39 @@ by default, slash commands write:
 
 format:
 
-<pre><code>{
-  \"level\": \"medium\",
-  \"verify&#67;md\": \"bun test\"
+```json
+{
+  "level": "medium",
+  "verifyCmd": "bun test"
 }
-</code></pre>
+```
 
 ### configuration precedence
 
-highest precedence appears first:
-
 1. the persisted configuration file.
-2. <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#83;&#95;&#76;&#69;&#86;&#69;&#76;</code>.
-3. legacy <code>&#79;&#77;&#80;&#95;&#68;&#69;&#76;&#73;&#86;&#69;&#82;&#89;&#95;&#71;&#65;&#84;&#69;&#83;</code>, which maps any enabled value to high.
+2. `OMP_GATES_LEVEL`.
+3. legacy `OMP_DELIVERY_GATES`, which maps any enabled value to high.
 4. the default level, medium.
 
-<code>&#79;&#77;&#80;&#95;&#86;&#69;&#82;&#73;&#70;&#89;&#95;&#67;&#77;&#68;</code> supplies a verification command when the persisted configuration does not contain one.
+`OMP_VERIFY_CMD` supplies a verification command when the persisted configuration does not contain one.
 
 ### environment variables
 
 | variable | purpose |
 |---|---|
-| <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#83;&#95;&#76;&#69;&#86;&#69;&#76;</code> | selects `off`, `low`, `medium`, or `high` when no persisted config takes precedence |
-| <code>&#79;&#77;&#80;&#95;&#86;&#69;&#82;&#73;&#70;&#89;&#95;&#67;&#77;&#68;</code> | sets the verification command when the config file does not set one |
-| <code>&#79;&#77;&#80;&#95;&#68;&#69;&#76;&#73;&#86;&#69;&#82;&#89;&#95;&#71;&#65;&#84;&#69;&#83;</code> | legacy switch; an enabled value maps to high |
-| <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#67;&#79;&#78;&#70;&#73;&#71;</code> | redirects the persisted configuration file |
-| <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#76;&#69;&#68;&#71;&#69;&#82;</code> | redirects the telemetry ledger |
+| `OMP_GATES_LEVEL` | selects `off`, `low`, `medium`, or `high` when no persisted config takes precedence |
+| `OMP_VERIFY_CMD` | sets the verification command when the config file does not set one |
+| `OMP_DELIVERY_GATES` | legacy switch; an enabled value maps to high |
+| `OMP_GATE_CONFIG` | redirects the persisted configuration file |
+| `OMP_GATE_LEDGER` | redirects the telemetry ledger |
 
-html-rendered shell examples:
+shell examples:
 
-<pre><code>export &#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#83;&#95;&#76;&#69;&#86;&#69;&#76;=medium
-export &#79;&#77;&#80;&#95;&#86;&#69;&#82;&#73;&#70;&#89;&#95;&#67;&#77;&#68;='bun test'
+```sh
+export OMP_GATES_LEVEL=medium
+export OMP_VERIFY_CMD='bun test'
 omp
-</code></pre>
+```
 
 because the persisted file has higher precedence, remove or edit it before an environment-only override can change the level. a slash command without a new verification command preserves the existing command. `/gates-disable` also preserves it for later re-engagement.
 
@@ -498,7 +498,7 @@ for read-only work, use an empty block:
 }
 ```
 
-accepted manifest keys are `changed`, <code>changed&#70;iles</code>, `changed_files`, and `manifest`. `null` and an empty array both mean that the subagent changed no files.
+accepted manifest keys are `changed`, `changedFiles`, `changed_files`, and `manifest`. `null` and an empty array both mean that the subagent changed no files.
 
 subagent adjudication starts only when the parent response refers to delegated or reviewed work. if the parent does not rely on a subagent report, parent claims and the actual diff still receive normal checks. each report is judged once per request, including across forced continuations.
 
@@ -539,7 +539,7 @@ options:
 | option | default | meaning |
 |---|---|---|
 | `--cwd <dir>` | `.` | repository to inspect |
-| `--base <ref>` | <code>&#72;&#69;&#65;&#68;~1</code> | baseline for committed additions |
+| `--base <ref>` | `HEAD~1` | baseline for committed additions |
 | `--markers <file>` | project marker file | explicit extra-marker file |
 
 cutover scans:
@@ -646,7 +646,7 @@ source: [declared executable](../package.json), [cli entry point](../gate-checke
 
 ### a level change does not take effect
 
-run `/gates-engage` and inspect the reported source. the persisted file outranks environment variables. use a slash command or update the file selected by <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#67;&#79;&#78;&#70;&#73;&#71;</code>.
+run `/gates-engage` and inspect the reported source. the persisted file outranks environment variables. use a slash command or update the file selected by `OMP_GATE_CONFIG`.
 
 source: [configuration precedence](../gate-checker/config.js)
 
@@ -775,7 +775,7 @@ these findings remain advisory. no finding means that no deterministic rule matc
 
 ### opt-in cooperative mutation lease
 
-set <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#77;&#85;&#84;&#65;&#84;&#73;&#79;&#78;&#95;&#76;&#69;&#65;&#83;&#69;=1</code> to coordinate gate-aware sessions that share one git worktree.
+set `OMP_GATE_MUTATION_LEASE=1` to coordinate gate-aware sessions that share one git worktree.
 
 the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. stale recovery requires both the configured age and a dead owner process. native `write`, `edit`, `bash`, and non-isolated `task` calls are blocked for a conflicting gate-aware session.
 
@@ -788,9 +788,9 @@ source for the public surface. it declares:
 
 | manifest field | contents |
 |---|---|
-| <code>omp.&#101;xtensions</code> | `./gate-checker/index.ts` and `./ask-questionnaire/index.ts`, the entries omp loads |
+| `omp.extensions` | `./gate-checker/index.ts` and `./ask-questionnaire/index.ts`, the entries omp loads |
 | `bin` | `nikos-gates`, mapped to `gate-checker/gate-cli.js` |
-| `exports` | `./gate-cli`, `./gates`, and <code>./delivery-contract.&#112;rocess</code> for importing processes |
+| `exports` | `./gate-cli`, for importing the command-line surface |
 | `files` | the runtime file allowlist the plugin manager installs |
 
 run every focused test, the package-contract test, and the end-to-end wiring probe from the repository root:

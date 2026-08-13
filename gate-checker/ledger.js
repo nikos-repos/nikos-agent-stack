@@ -1,15 +1,13 @@
 /**
  * @module gate-checker/ledger
- * @description Append-only JSONL record of every gate fire and its outcome.
+ * @description append-only jsonl record of every gate fire and its outcome.
  *
- * The gates block work, so they need a measured precision. Without this, tuning
- * is blind — which is how six false-positive-generating bugs shipped and sat
- * undetected until an explicit audit. The metric that matters most is the
- * cap-hit rate: a real defect is fixed within a retry or two, so a chain that
- * burns every continuation and still fails is almost always the gate being
- * wrong, not the agent.
+ * the gates block work, so they need a measured precision. without this, tuning
+ * is blind. the metric that matters most is the cap-hit rate: a real defect is
+ * fixed within a retry or two, so a chain that burns every continuation and
+ * still fails is almost always the gate being wrong, not the agent.
  *
- * Never throws. A broken ledger must not break the agent.
+ * never throws. a broken ledger must not break the agent.
  *
  * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"no_git"|"process_shape"} LedgerEvent
  */
@@ -68,7 +66,7 @@ export function read(path = LEDGER_PATH) {
 }
 
 /**
- * Aggregates the ledger into the numbers that drive tuning decisions.
+ * aggregates the ledger into the numbers that drive tuning decisions.
  *
  * `capHitRate` is the headline: high means the gates are too strict, because
  * the agent could not satisfy them even given every retry.

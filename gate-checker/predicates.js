@@ -1,15 +1,15 @@
 /**
  * @module gate-checker/predicates
- * @description Single source of truth for every gate predicate in the stack.
+ * @description single source of truth for every gate predicate in the stack.
  *
- * The extension (index.ts) and the CLI (gate-cli.js) previously each carried
+ * the extension (index.ts) and the CLI (gate-cli.js) previously each carried
  * their own copy of the marker list and their own added-line extraction — one
- * in TypeScript, one as a shell `grep '^+'` pipeline. They drifted: a fix to
+ * in TypeScript, one as a shell `grep '^+'` pipeline. they drifted: a fix to
  * the pre-existing-marker false positive had to be written twice, in two
  * languages, with two behaviors.
  *
- * Plain JS with JSDoc types on purpose: the extension is TypeScript run through
- * bun and the CLI is plain JS. A .js module with JSDoc is the form both can
+ * plain JS with JSDoc types on purpose: the extension is TypeScript run through
+ * bun and the CLI is plain JS. a .js module with JSDoc is the form both can
  * import with no build step and no `any`.
  *
  * @typedef {{ line: number, text: string }} AddedLine
@@ -24,10 +24,10 @@ import { resolve as resolvePath, isAbsolute } from "path";
 // ── forbidden markers ───────────────────────────────────────────────────────
 
 /**
- * Bare "placeholder" / "STUB" / "FIXME" / "noop" are deliberately absent: they
+ * bare "placeholder" / "STUB" / "FIXME" / "noop" are deliberately absent: they
  * match legitimate code (PLACEHOLDER_USER_ID, sinon.stub(), noopMiddleware) and
- * produced false blocks. Every entry here must be specific enough that its
- * presence in an ADDED line is unambiguous evidence of unfinished work.
+ * produced false blocks. every entry here must be specific enough that its
+ * presence in an added line is unambiguous evidence of unfinished work.
  *
  * @type {string[]}
  */
@@ -53,10 +53,10 @@ export const DEFAULT_FORBIDDEN_MARKERS = [
 ];
 
 /**
- * Loads `<dir>/.omp/gates-markers.txt` (one marker per line, `#` for comments)
+ * loads `<dir>/.omp/gates-markers.txt` (one marker per line, `#` for comments)
  * and appends it to the defaults.
  *
- * @param {string} dir Directory to resolve the marker file against.
+ * @param {string} dir directory to resolve the marker file against.
  * @returns {string[]}
  */
 export function loadForbiddenMarkers(dir) {
@@ -79,16 +79,16 @@ export function loadForbiddenMarkers(dir) {
 // ── diff parsing ────────────────────────────────────────────────────────────
 
 /**
- * Parses unified-diff text into per-file added lines, keyed by repo-root-
- * relative path with the line number in the NEW file.
+ * parses unified-diff text into per-file added lines, keyed by repo-root-
+ * relative path with the line number in the new file.
  *
- * Accepts both full `git diff` output and a bare hunk list (the omp edit tool
+ * accepts both full `git diff` output and a bare hunk list (the omp edit tool
  * returns `details.diff` with `@@` headers but no `+++` line), hence
  * `fallbackPath`.
  *
  * @param {string} diff
- * @param {AddedMap} out Accumulator, mutated in place.
- * @param {string} [fallbackPath] Path to attribute hunks that have no `+++`.
+ * @param {AddedMap} out accumulator, mutated in place.
+ * @param {string} [fallbackPath] path to attribute hunks that have no `+++`.
  */
 export function parseDiffAdditions(diff, out, fallbackPath) {
   let file = fallbackPath ?? null;
@@ -116,9 +116,8 @@ export function parseDiffAdditions(diff, out, fallbackPath) {
     // "-" lines are deletions: they do not advance the new-file counter
   }
 }
-
 /**
- * Treats an entire file body as added — for `write`, which replaces the whole
+ * treats an entire file body as added — for `write`, which replaces the whole
  * file, and for the no-git first-touch snapshot of a new file.
  *
  * @param {string} path
@@ -136,7 +135,7 @@ export function contentToAdded(path, content) {
 }
 
 /**
- * Lines whose occurrence count increased in `after`. This is the no-git
+ * lines whose occurrence count increased in `after`. this is the no-git
  * equivalent of a diff: it preserves duplicate additions without reporting a
  * pre-existing occurrence as new.
  *
@@ -167,12 +166,11 @@ export function diffByLineSet(path, before, after) {
 // ── the completion predicate ────────────────────────────────────────────────
 
 /**
- * THE completion check. Judges only lines added by this unit of work, never
+ * the completion check. judges only lines added by this unit of work, never
  * whole files: a pre-existing marker on an untouched line used to trap the
  * agent in a continuation loop it could only escape by editing unrelated code.
  *
- * Both layers and the inline (tool_result) gate route through this function.
- *
+ * both layers and the inline (tool_result) gate route through this function.
  * @param {AddedMap} added
  * @param {string[]} markers
  * @returns {GateFailure[]}
@@ -206,12 +204,10 @@ export function checkAddedLines(added, markers) {
 export const normalizePath = (p) => p.replace(/^\.\//, "");
 
 /**
- * Changed-file paths come from git and are repo-root-relative; the agent writes
- * paths relative to ITS cwd. When those differ (omp launched from a
+ * changed-file paths come from git and are repo-root-relative; the agent writes
+ * paths relative to its cwd. when those differ (omp launched from a
  * subdirectory) a naive string compare marks every honest claim fabricated.
- * Accepts a claim that resolves to a changed file from either anchor.
- *
- * @param {Set<string>} changedFiles
+ * accepts a claim that resolves to a changed file from either anchor.
  * @param {string | null} repoRoot
  * @param {string} cwd
  * @returns {(claim: string) => boolean}
@@ -244,19 +240,19 @@ export const MANIFEST_CLOSE = "</changed-files>";
 export const MANIFEST_JSON_KEYS = ["changed", "changedFiles", "changed_files", "manifest"];
 
 /**
- * Parses the structured manifest a subagent must emit.
+ * parses the structured manifest a subagent must emit.
  *
- * The citation gate only ever fired on prose matching a verb + backticked path,
+ * the citation gate only ever fired on prose matching a verb + backticked path,
  * so the cheapest way to satisfy "do not claim changes you did not make" was to
- * stop making checkable claims at all — vagueness passed silently. Requiring an
+ * stop making checkable claims at all — vagueness passed silently. requiring an
  * explicit manifest inverts that: absence is the failure, so there is no reward
  * for saying less.
  *
- * An EMPTY manifest is valid and is how a read-only subagent reports "I changed
+ * an empty manifest is valid and is how a read-only subagent reports "i changed
  * nothing" — the point is an explicit statement, not a non-empty one.
  *
  * @param {string} text
- * @returns {string[] | null} Listed paths, or null when no manifest is present.
+ * @returns {string[] | null} listed paths, or null when no manifest is present.
  */
 export function extractManifest(text) {
   const literal = manifestFromLiteral(text);
@@ -267,9 +263,9 @@ export function extractManifest(text) {
 /** @param {string} raw @returns {string[]} */
 function manifestLines(raw) {
   return raw
-    // A subagent that yields structured output has its report JSON-encoded by
+    // a subagent that yields structured output has its report JSON-encoded by
     // the harness, so a manifest inside a string value arrives with escaped
-    // newlines. Without this the whole block reads as one bogus path.
+    // newlines. without this the whole block reads as one bogus path.
     .replace(/\\r\\n|\\n/g, "\n")
     .split("\n")
     .map((l) => l.trim().replace(/^[-*]\s*/, "").replace(/^`|`$/g, "").trim())
@@ -287,12 +283,12 @@ function manifestFromLiteral(text) {
 }
 
 /**
- * Recovers a manifest from a JSON subagent report.
+ * recovers a manifest from a JSON subagent report.
  *
- * The literal-block-only check was unsatisfiable for any subagent bound to an
+ * the literal-block-only check was unsatisfiable for any subagent bound to an
  * output schema: the harness serializes its result, so the block can never
- * appear as free prose. A report carrying `"changed": []` states exactly the
- * required fact and was still rejected. Accepting the JSON forms costs a little
+ * appear as free prose. a report carrying `"changed": []` states exactly the
+ * required fact and was still rejected. accepting the JSON forms costs a little
  * strictness and buys a rule an agent can actually satisfy.
  *
  * @param {string} text
@@ -325,7 +321,7 @@ function manifestFromJson(text) {
 
 /** @param {unknown} value @returns {string[] | null} */
 function manifestValue(value) {
-  // `"changed": null` and `"changed": []` both mean "I changed nothing", which
+  // `"changed": null` and `"changed": []` both mean "i changed nothing", which
   // is a valid manifest — the rule demands an explicit statement, not a
   // non-empty one.
   if (value === null) return [];
@@ -335,7 +331,7 @@ function manifestValue(value) {
   if (typeof value === "string") {
     const nested = manifestFromLiteral(value);
     if (nested !== null) return nested;
-    // A bare string is only a manifest if it reads like paths. `"changed": "yes"`
+    // a bare string is only a manifest if it reads like paths. `"changed": "yes"`
     // would otherwise become a manifest naming one file called "yes", which the
     // diff cannot contain — a fabricated `subagent_manifest_mismatch` produced
     // entirely by the parser.
@@ -351,7 +347,7 @@ function looksLikePath(s) {
 }
 
 /**
- * Parses JSON that may be wrapped in surrounding text (fences, log lines, the
+ * parses json that may be wrapped in surrounding text (fences, log lines, the
  * harness's own `<output>` envelope).
  *
  * @param {string} text
@@ -375,14 +371,14 @@ function parseLooseJson(text) {
 // ── shell predicates ────────────────────────────────────────────────────────
 
 /**
- * Working tree carries no uncommitted change to a TRACKED file.
+ * working tree carries no uncommitted change to a tracked file.
  *
  * `--untracked-files=no`: an untracked build artifact, log, or scratch file is
- * not an uncommitted *change*, but it made the gate unpassable. It also keeps
+ * not an uncommitted *change*, but it made the gate unpassable. it also keeps
  * this predicate consistent with the `--diff-filter=ACMR` diffs the rest of the
  * stack reads — those do not report untracked files either.
  *
- * The commit gate in index.ts runs this string directly.
+ * the commit gate in index.ts runs this string directly.
  */
 export const COMMIT_CLEAN_CMD =
   'git status --porcelain --untracked-files=no';
@@ -395,7 +391,7 @@ export function hashContent(content) {
 }
 
 /**
- * Reads a file for snapshotting. Returns null when absent or too large to be
+ * reads a file for snapshotting. returns null when absent or too large to be
  * worth holding in memory for a whole request.
  *
  * @param {string} abs

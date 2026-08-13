@@ -1,17 +1,18 @@
 // ============================================================================
 // gate-checker — deterministic post-turn gate system for omp
 // ============================================================================
-// enforces two delivery-contract rules with machine-checkable post-conditions:
-//   1. citation grounding — modification/test claims must match git diff
-//   2. completion — changed files must not contain stubs/placeholders
+// enforces the current rule families with machine-checkable post-conditions:
+// citation grounding (modification/test claims must match the diff), completion
+// (changed files must not contain stubs or placeholders), snapshot tags,
+// subagent manifests and claims, verify, and commit. declared through
+// package.json#omp.extensions; the session_stop hook is the enforcement point.
 //
-// enforcement mechanism: the session_stop hook. before the agent yields, the
-// gate runs. on failure it returns { continue: true, additionalContext } which
-// forces the agent to keep working (runtime caps at 8 continuations).
+// on failure it returns { continue: true, additionalContext } which forces the
+// agent to keep working (runtime caps at 8 continuations).
 //
 // git awareness:
-//   - agent_start captures HEAD baseline + dirty-file set (once per request)
-//   - session_stop diffs baseline..now (covers committed AND uncommitted changes)
+//   - agent_start captures head baseline + dirty-file set (once per request)
+//   - session_stop diffs baseline..now (covers committed and uncommitted changes)
 //   - no git repo → low: no git: first-touch content hashing supplies the same
 //     changed-file set and added-line set, so enforcement stays full
 //
@@ -32,9 +33,6 @@
 //
 // every fire is appended to ~/.omp/gate-checker/ledger.jsonl (see ledger.js);
 // `bun run gate-cli.js stats` summarizes it.
-//
-// install: lives at ~/.omp/agent/extensions/gate-checker/index.ts
-//          auto-discovered by omp on startup — no fork, no config needed.
 // optional: <cwd>/.omp/gates-markers.txt — one forbidden marker per line, # for comments
 // ============================================================================
 
@@ -163,11 +161,11 @@ export interface GateFailure {
   rule: string;
   detail: string;
   // "block" forces a continuation. "warn" is surfaced and recorded but never
-  // stops the agent — for rules about how work was REPORTED, when the diff
-  // already corroborates the work itself. A reporting-format rule must not
+  // stops the agent — for rules about how work was reported, when the diff
+  // already corroborates the work itself. a reporting-format rule must not
   // block delivery of tested, committed code.
   //
-  // ponytail: optional, absent means "block". Every rule that can stop an agent
+  // ponytail: optional, absent means "block". every rule that can stop an agent
   // stays blocking unless it opts out, so a new rule cannot become advisory by
   // omission.
   severity?: "block" | "warn";
@@ -204,14 +202,14 @@ export interface TurnEvidence {
   baselineSnapshots: Record<string, unknown>;
   // git reports paths relative to the repo root, which is not always ctx.cwd.
   repoRoot: string | null;
-  // content at FIRST touch, keyed by the path as the agent wrote it. null means
+  // content at first touch, keyed by the path as the agent wrote it. null means
   // the file did not exist yet. only populated during no-git operation.
   preTouch: Map<string, string | null>;
   warnedRepoRoots: Set<string>;
   // content hashes of subagent reports already adjudicated in this request, so
   // a forced continuation cannot re-report the same subagent.
   judgedSubagents: Set<string>;
-  // the delivery verify gate ran the configured command and it passed. That is
+  // the delivery verify gate ran the configured command and it passed. that is
   // evidence a test claim is true, and it is what `ranTestRunner` cannot see:
   // the gate runs the command itself, not through the bash tool.
   verifyPassed: boolean;
@@ -302,13 +300,10 @@ export function ranTestRunner(ev: TurnEvidence): boolean {
 
 // --- citation gate ----------------------------------------------------------
 
-// Does the parent's final text lean on a subagent's report?
-//
-// The subagent rules exist to stop the parent repeating claims it did not
-// verify. If the parent never refers to the delegated work, there is nothing to
-// repeat — and the parent's OWN claims stay fully covered by
-// `fabricated_modification`, `fabricated_test_result`, and the completion gate,
-// none of which care who made the edit.
+// only when the parent leans on a subagent's report do the subagent rules apply;
+// its own claims stay covered by `fabricated_modification`,
+// `fabricated_test_result`, and the completion gate, none of which care who
+// made the edit.
 const SUBAGENT_REFERENCE_RE =
   /\b(sub-?agents?|reviewers?|review(?:ed|s)?\s+(?:by|agent)|delegat(?:e|ed|ion)|spawned\s+agents?|per\s+the\s+review|according\s+to\s+the\s+(?:review|agent)|the\s+agent\s+(?:reported|found|said|confirmed)|its?\s+report)\b/i;
 
@@ -323,9 +318,9 @@ export function checkCitations(
   ev: TurnEvidence,
   hasGit: boolean,
   cwd = ".",
-  // Paths this run can actually adjudicate. null = authoritative for every path
+  // paths this run can actually adjudicate. null = authoritative for every path
   // (git diff sees all changes, however they were made). a set = no-git mode,
-  // where only files we snapshotted at first touch are provable — a file edited
+  // where only files snapshotted at first touch are provable — a file edited
   // via `sed -i` was never watched, so silence is the only honest verdict.
   watched: Set<string> | null = null,
 ): GateFailure[] {
@@ -357,21 +352,9 @@ export function checkCitations(
     });
   }
 
-  // 3. subagent manifest + claims vs the diff
-  //
-  // Two gates guard this loop, both added after a run in which a manifest-less
-  // subagent trapped the agent for six continuations:
-  //
-  //   reliance — the rule exists to stop the parent REPEATING unverified
-  //     subagent claims. A parent that cites nothing repeats nothing. The
-  //     failure text has always offered "verify its work yourself" as a
-  //     resolution; until now the code ignored it, so obeying the instruction
-  //     changed nothing.
-  //
-  //   already judged — evidence survives a forced continuation by design (the
-  //     baseline latch), so without this every retry re-reported the same
-  //     subagent AND any newly spawned one. The failure count grew 1 → 2 → 3 as
-  //     the agent tried to comply. A gate that punishes the fix inverts itself.
+  // 3. subagent manifest + claims vs the diff. each subagent is judged once per
+  // request: evidence survives a forced continuation, so the dedupe stops the
+  // same report being re-billed on every retry.
   const relies = reliesOnSubagents(assistantText);
   for (let i = 0; i < subagents.length; i++) {
     const raw = subagents[i];
@@ -388,11 +371,9 @@ export function checkCitations(
     // json report parser remains as a compatibility fallback.
     const manifest = subagent.manifest ?? extractManifest(text);
     if (manifest === null) {
-      // Severity depends on whether the diff contradicts the subagent. A
-      // read-only reviewer that changed nothing and claimed nothing is a
-      // reporting-format issue, not a defect — it must not block delivery of
-      // verified, committed work. A subagent whose claims disagree with the
-      // diff is a different matter entirely.
+      // severity follows the diff: a read-only reviewer that changed nothing is
+      // a reporting-format issue (warn), while a claim the diff denies is a
+      // defect (block).
       const contradicts =
         (hasGit || watched !== null) &&
         extractModClaims(text).some((c) => canJudge(c) && !isChanged(c));
@@ -452,9 +433,9 @@ export function checkCitations(
 
 // --- completion gate (agent-agnostic) ---------------------------------------
 //
-// The predicate itself is checkAddedLines() in predicates.js — shared verbatim
-// with the inline tool_result gate and the gate-cli cutover command. Only the
-// way the added-line set is DERIVED differs: git diff when a repo exists,
+// the predicate itself is checkAddedLines() in predicates.js — shared verbatim
+// with the inline tool_result gate and the gate-cli cutover command. only the
+// way the added-line set is derived differs: git diff when a repo exists,
 // first-touch content snapshots when it does not.
 
 // no-git path. snapshots taken at first touch give a real before/after, so this
@@ -526,7 +507,7 @@ function isInside(root: string, path: string): boolean {
     (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-// Derives the added-line set for a single write/edit call, so the inline gate
+// derives the added-line set for a single write/edit call, so the inline gate
 // judges exactly what this call introduced — never the rest of the file.
 //
 //  - edit  → `details.diff` is a unified diff (hunk headers, no `+++` line),
@@ -572,22 +553,12 @@ function extractCommitMessage(command: string): string | null {
   return null;
 }
 
-// --- direct smart_commit.sh invocation (fix 7) ------------------------------
+// --- direct smart_commit.sh invocation -------------------------------------
 //
-// Commit routing used to intercept `git commit` only. An agent that read the
-// git-pushing skill instead ran the script by the RELATIVE path the skill
-// documents, which does not resolve from a project directory: exit 127, a
-// filesystem hunt that burned a 300-second bash timeout, and a user
-// interjection to supply the real path. The direct call also skipped the
-// `--no-push` the rewrite adds, so it then failed against a repo with no
-// remote.
-//
-// Any invocation naming the script now gets the absolute path and --no-push.
-// The optional quote group matters: `\S*` alone swallows a surrounding quote,
-// so an already-correct `bash '<abs>/smart_commit.sh'` compared unequal to the
-// absolute path and got rewritten into `''<abs>''`.
-// The leading boundary matters: without it `my_smart_commit.sh` matched and got
-// rewritten into the real script.
+// any invocation naming smart_commit.sh gets the absolute path and --no-push.
+// the optional quote group prevents an already-quoted path being re-quoted, and
+// the leading boundary prevents a prefixed name like `my_smart_commit.sh`
+// matching.
 const SMART_COMMIT_RE = /(['"]?)(?<![\w.-])((?:[^\s'"]*\/)?smart_commit\.sh)\1/;
 
 export function rewriteSmartCommit(command: string, scriptPath: string): string | null {
@@ -682,31 +653,31 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
 
 // --- delivery gates (verify + commit), armed by env var ---------------------
 //
-// The citation and completion gates already answer "did the work happen and is
-// it finished?". The two questions they cannot answer are `verify` (do the
-// tests pass?) and `commit` (is the work checkpointed?). This runs those two
-// inline, so one always-on layer covers the whole delivery contract.
+// the citation and completion gates answer "did the work happen and is it
+// finished?". the two questions they cannot answer are `verify` (do the tests
+// pass?) and `commit` (is the work checkpointed?). this runs those two inline,
+// so one always-on layer covers the whole delivery contract.
 //
-// Armed by env var, not by config file, so the trigger is the act of launching
+// armed by env var, not by config file, so the trigger is the act of launching
 // the omp-dev session — no heuristic decides whether the regime applies.
 //
 //   OMP_DELIVERY_GATES=1        arm both gates
 //   OMP_VERIFY_CMD="bun test"   test command; UNSET = verify gate stays off
 //
-// Deliberately NOT defaulted to "npm test": guessing a test command in a repo
-// that has none turns every session into a 6-retry block on a command that was
-// never going to pass. An absent command means the user did not ask for the
+// deliberately not defaulted to "npm test": guessing a test command in a repo
+// that has none turns every session into a retry loop on a command that was
+// never going to pass. an absent command means the user did not ask for the
 // verify gate.
 
-// Re-grades every failure through the engagement level, and drops the ones the
-// level switches off. Applying the dial HERE, on the finished failure list,
+// re-grades every failure through the engagement level, and drops the ones the
+// level switches off. applying the dial here, on the finished failure list,
 // keeps predicates.js free of levels — gate-cli.js imports the same predicates
 // and has no dial of its own.
 export function applyPolicy(failures: GateFailure[], policy: GatePolicy): GateFailure[] {
   const out: GateFailure[] = [];
   for (const f of failures) {
     const family = RULE_FAMILY[f.rule] as keyof GatePolicy | undefined;
-    // An unmapped rule is a rule added without a policy entry. It stays at its
+    // an unmapped rule is a rule added without a policy entry. it stays at its
     // own severity rather than silently disappearing — a new rule must never
     // become invisible by omission.
     const mode = family ? (policy[family] as RuleMode) : "auto";
@@ -717,14 +688,14 @@ export function applyPolicy(failures: GateFailure[], policy: GatePolicy): GateFa
   return out;
 }
 
-// PASS results only, keyed on the tree state. A forced continuation caused by
-// some OTHER gate then does not re-run a suite that already went green.
+// pass results only, keyed on the tree state. a forced continuation caused by
+// some other gate then does not re-run a suite that already went green.
 //
-// A FAILURE is never cached, and that asymmetry is the whole point. Any cache
+// a failure is never cached, and that asymmetry is the whole point. any cache
 // key is narrower than what a test command can actually read — an untracked
-// fixture, a generated artifact, a gitignored `.env`. Reusing a stale failure
+// fixture, a generated artifact, a gitignored `.env`. reusing a stale failure
 // therefore risks a gate the agent cannot clear by any edit, which is the exact
-// trap this stack must not contain. Re-running a failing suite costs time;
+// trap this stack must not contain. re-running a failing suite costs time;
 // caching its failure costs the agent the whole request.
 interface VerifyCache {
   key: string;
@@ -732,7 +703,7 @@ interface VerifyCache {
 
 // `--untracked-files=normal`: a new file the agent just wrote is part of the
 // state the test command sees, so it must move the key.
-// A key that can never equal another. `Date.now()` alone collides inside the
+// a key that can never equal another. `Date.now()` alone collides inside the
 // same millisecond, which would let the cache reuse a verdict for a state we
 // explicitly could not measure.
 let unknownStateSeq = 0;
@@ -753,8 +724,8 @@ export function treeStateKey(
     } catch {}
     return unknownState(); // never reuse a cached verdict for an unreadable tree
   }
-  // No repo: key on the CURRENT content of every file this request touched.
-  // Without this the key was a timestamp, so the suite re-ran on every
+  // no repo: key on the current content of every file this request touched.
+  // without this the key was a timestamp, so the suite re-ran on every
   // continuation — the exact repeated cost the cache exists to avoid.
   const parts: string[] = [];
   for (const rel of [...touched.keys()].sort()) {
@@ -813,12 +784,12 @@ export function runCommitGate(cwd: string): GateFailure | null {
 
 // --- "a process should have run" detector -----------------------------------
 //
-// Measures how often a request was a bounded, verified, code-changing unit of
-// work, WITHOUT changing how any request is handled. Measuring before acting is
-// how this stack avoids the false-positive class it already shipped six times:
-// an unmeasured gate is a guess.
+// measures how often a request was a bounded, verified, code-changing unit of
+// work, without changing how any request is handled. measuring before acting is
+// how this stack avoids the false-positive class it already hit: an unmeasured
+// gate is a guess.
 //
-// `bun run gate-cli.js stats` is the only consumer. The upper file bound is the
+// `bun run gate-cli.js stats` is the only consumer. the upper file bound is the
 // honest part: a 40-file sweep is not a delivery unit, it is a migration.
 
 export const PROCESS_SHAPE_MAX_FILES = 8;
@@ -860,7 +831,7 @@ export function formatFailures(failures: GateFailure[]): string {
 
 // --- task-input injection nudge ---------------------------------------------
 
-// The manifest requirement is stated FIRST and in full, because it is the only
+// the manifest requirement is stated first and in full, because it is the only
 // rule whose violation the subagent cannot talk its way around: an empty
 // manifest is a valid answer, so there is no incentive to omit it.
 export const GATE_NUDGE =
@@ -872,8 +843,8 @@ export const GATE_NUDGE =
   "If you changed no files, emit the block empty — that is a valid answer. " +
   "The listed paths are checked against the real diff, so list exactly what " +
   "you changed: no more, no less.\n" +
-  // A subagent bound to an output schema cannot emit free prose, so the block
-  // alone was unreachable for it. Naming the JSON form here means the nudge
+  // a subagent bound to an output schema cannot emit free prose, so the block
+  // alone was unreachable for it. naming the JSON form here means the nudge
   // states something every subagent can actually do.
   `If your output is JSON, put the same list in a \`${MANIFEST_JSON_KEYS.join("\`/\`")}\` ` +
   "field instead — an empty array is the valid answer for a read-only task.\n\n" +
@@ -885,10 +856,8 @@ export const GATE_NUDGE =
 
 // --- factory ----------------------------------------------------------------
 
-// Dropped from 6 after a run that spent six forced continuations, four extra
-// subagent spawns, and 39 messages on work that was already complete and
-// correct. With the no-progress abort in place this is a second line of
-// defense, not the primary one.
+// the no-progress abort is the primary defense against a stuck loop; the cap is
+// a backstop for the case it misses.
 export const MAX_CONTINUATIONS = 3;
 
 export default function gateChecker(pi: ExtensionAPI): void {
@@ -898,7 +867,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   let config = loadConfig();
   let policy = policyFor(config.level) as GatePolicy;
   let verifyCache: VerifyCache | null = null;
-  // blocking-failure fingerprint of the previous continuation (see fix 1)
+  // blocking-failure fingerprint of the previous continuation (no-progress abort)
   let lastBlockingKey: string | null = null;
   let requestId: string | null = null;
   let journalRecovery: string | null = null;
@@ -1080,8 +1049,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
     return bits.join(" · ");
   };
 
-  // Show the arming state the moment the session opens, BEFORE the first prompt
-  // costs anything. Every other handler fires per request, so until this existed
+  // show the arming state the moment the session opens, before the first prompt
+  // costs anything. every other handler fires per request, so until this existed
   // the status bar stayed empty at startup and there was no way to tell an
   // unarmed session from an armed one except by spending a turn.
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
@@ -1107,8 +1076,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
 
   // --- commands -------------------------------------------------------------
-  // The level takes effect immediately, in this session, and persists to
-  // CONFIG_PATH so the next session starts the same way. No restart.
+  // the level takes effect immediately, in this session, and persists to
+  // CONFIG_PATH so the next session starts the same way. no restart.
 
   const applyLevel = (
     level: GateLevel,
@@ -1118,7 +1087,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const saved = saveConfig(level, verifyCmd);
     config = { level, verifyCmd, source: "config" };
     policy = policyFor(level) as GatePolicy;
-    // A level change invalidates a cached verify verdict: the same tree can be
+    // a level change invalidates a cached verify verdict: the same tree can be
     // acceptable at one level and not at another.
     verifyCache = null;
     lastBlockingKey = null;
@@ -1140,11 +1109,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
     handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const level = String(parts[0] ?? "").toLowerCase() as GateLevel;
-      // A verify command may contain spaces, so everything after the level is it.
+      // a verify command may contain spaces, so everything after the level is it.
       const cmd = parts.slice(1).join(" ").trim() || config.verifyCmd;
 
       if (!parts.length) {
-        // No argument is a question, not a mistake — report the current state.
+        // no argument is a question, not a mistake — report the current state.
         ctx?.ui?.notify?.(
           `${describeLevel(config.level, config.verifyCmd)}\n\n` +
             `source: ${config.source}\nchange with: /gates-engage low|medium|high`,
@@ -1171,16 +1140,16 @@ export default function gateChecker(pi: ExtensionAPI): void {
     },
   });
 
-  // Reset the ledger + capture the git baseline once per user request.
+  // reset the ledger + capture the git baseline once per user request.
   //
   // `agent_start` (not `turn_start`) is the right seam: `turn_start` fires for
   // every LLM turn, but `session_stop` only fires when the whole run settles.
-  // Re-baselining per turn meant files edited in turn 1 were "already dirty" by
+  // re-baselining per turn meant files edited in turn 1 were "already dirty" by
   // turn 3, got subtracted from the diff, and every honest claim about them was
   // reported as fabricated — a false-positive block on any multi-turn task.
-  // It also wiped the bash/snapshot ledgers that later turns cite.
+  // it also wiped the bash/snapshot ledgers that later turns cite.
   //
-  // A forced continuation re-enters through `agent_start` too, so the baseline
+  // a forced continuation re-enters through `agent_start` too, so the baseline
   // is latched while a continuation chain is open (continuationCount > 0);
   // otherwise the retry would measure only the retry's own edits and the cap
   // would never advance.
@@ -1271,7 +1240,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       const relPath = String(input.path);
       evidence.filesTouched.add(relPath);
 
-      // Snapshot before mutation when git cannot cover the path. This retains
+      // snapshot before mutation when git cannot cover the path. this retains
       // no-git evidence collected before a repository bind and covers later
       // writes outside the bound repository.
       const cwd = String(ctx?.cwd ?? ".");
@@ -1323,7 +1292,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     // --- inline completion gate ---------------------------------------------
-    // Flag a forbidden marker the moment write/edit introduces it. session_stop
+    // flag a forbidden marker the moment write/edit introduces it. session_stop
     // is minutes and many tool calls later; catching it there forces a full
     // response retry to fix what is, right now, a one-line edit the agent still
     // has full context for. session_stop remains the backstop for anything that
@@ -1411,7 +1380,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
   // run gates before the agent yields — the enforcement point
   pi.on("session_stop", async (_event: unknown, ctx: ExtensionContext): Promise<SessionStopResult | void> => {
-    // Any path that does not return `{ continue: true }` ends the continuation
+    // any path that does not return `{ continue: true }` ends the continuation
     // chain, so it must clear the counter that latches the baseline.
     if (!policy.enabled) {
       terminaljournal("skipped_disabled");
@@ -1452,15 +1421,15 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     // --- derive what this request changed ------------------------------------
-    // Hoisted out of the gates so the delivery gates can run FIRST. Ordering
+    // hoisted out of the gates so the delivery gates can run first. ordering
     // matters: `fabricated_test_result` fires when the agent claims tests pass
-    // without evidence, and the verify gate IS that evidence. Running the
+    // without evidence, and the verify gate is that evidence. running the
     // citation gate first flagged a true claim as a fabrication.
     let changedFiles = new Set<string>();
     let added: AddedMap = new Map();
     let watched: Set<string> | null = null;
     // git present but unreadable (corrupt index, permissions, a ref that will
-    // not resolve). Judging nothing is the only honest verdict: an empty
+    // not resolve). judging nothing is the only honest verdict: an empty
     // changed-file set would report every honest claim as fabricated.
     let canAdjudicate = true;
 
@@ -1513,8 +1482,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
     const changedCount = canAdjudicate ? changedFiles.size : 0;
 
-    // A user question releases the request only when it changed nothing.
-    // Judged HERE, after the diff is known, not on arrival: the questionnaire
+    // a user question releases the request only when it changed nothing.
+    // judged here, after the diff is known, not on arrival: the questionnaire
     // extension forces an `ask` before any other tool on a new-project request,
     // so treating every ask as "the agent stopped to ask the user" skipped every
     // gate on exactly the requests that scaffold new code.
@@ -1524,10 +1493,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     // --- delivery gates: verify + commit -------------------------------------
-    // Change-gated, so a read-only or exploratory request is never asked to
+    // change-gated, so a read-only or exploratory request is never asked to
     // pass tests or commit.
     if (policy.enabled && canAdjudicate && changedCount > 0) {
-      // The verify gate does NOT need git — running a test suite is unrelated
+      // the verify gate does not need git — running a test suite is unrelated
       // to version control, and a lot of real work happens outside a repo.
       if (policy.verify !== "off" && config.verifyCmd) {
         const key = treeStateKey(gitCwd, hasGit, evidence.preTouch);
@@ -1538,10 +1507,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
           const failure = runVerifyGate(hasGit ? gitCwd : cwd, config.verifyCmd);
           verifyCache = failure ? null : { key };
           if (failure) failures.push(failure);
-          // A passing verify run IS evidence that the tests pass, so a claim to
-          // that effect is grounded. Recorded before the citation gate reads it.
+          // a passing verify run is evidence that the tests pass, so a claim to
+          // that effect is grounded. recorded before the citation gate reads it.
           //
-          // Assigned, never OR-ed: evidence survives a forced continuation by
+          // assigned, never OR-ed: evidence survives a forced continuation by
           // design, so a pass in retry 1 would otherwise keep grounding a test
           // claim in retry 2 after the agent broke the suite again.
           evidence.verifyPassed = !failure;
@@ -1560,7 +1529,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         }
       }
 
-      // The commit gate genuinely needs git, and stays off below "high":
+      // the commit gate genuinely needs git, and stays off below "high":
       // forcing a commit at the end of every turn is the most disruptive rule
       // in the stack and it is meaningless outside a repo.
       if (policy.commit !== "off" && hasGit) {
@@ -1603,12 +1572,12 @@ export default function gateChecker(pi: ExtensionAPI): void {
       });
 
     // --- engagement level ----------------------------------------------------
-    // Re-grade everything through the dial before anything acts on severity.
+    // re-grade everything through the dial before anything acts on severity.
     const graded = applyPolicy(failures, policy);
 
-    // --- severity partition (fix 5) ------------------------------------------
-    // Only blocking failures can force a continuation. Warnings are surfaced
-    // and recorded, then the agent yields — a rule about how work was REPORTED
+    // --- severity partition ---------------------------------------------------
+    // only blocking failures can force a continuation. warnings are surfaced
+    // and recorded, then the agent yields — a rule about how work was reported
     // must not stop delivery of work the diff and the tests already confirm.
     const blocking = graded.filter((f) => (f.severity ?? "block") === "block");
     const warnings = graded.filter((f) => f.severity === "warn");
@@ -1629,14 +1598,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
       } catch {}
     }
 
-    // --- no-progress abort (fix 1) -------------------------------------------
-    // If a forced continuation produced exactly the same blocking failures as
-    // the one before it, the agent cannot clear them. Forcing again spends a
+    // --- no-progress abort ----------------------------------------------------
+    // if a forced continuation produced exactly the same blocking failures as
+    // the one before it, the agent cannot clear them. forcing again spends a
     // full response, and any subagent the retry spawns, to reproduce the same
-    // text. This is the universal safety net: it ends the loop for every rule,
+    // text. this is the universal safety net: it ends the loop for every rule,
     // including rules not yet written.
     //
-    // Real defects change the failure text as the agent works. Byte-identical
+    // real defects change the failure text as the agent works. byte-identical
     // repetition is a mechanical signal, not a judgment call.
     const blockingKey =
       blocking.length === 0
@@ -1686,7 +1655,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           hasGit ? "✓ gates passed" : "✓ gates passed · low: no git",
         );
       } catch {}
-      // Only worth a chain_end record if a chain was actually open — a clean
+      // only worth a chain_end record if a chain was actually open — a clean
       if (continuationCount > 0) {
         ledger.append("chain_end", {
           outcome: "resolved",
@@ -1737,7 +1706,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           ts: Date.now(),
         });
       } catch {}
-      // A cap hit is the headline false-positive signal: a real defect gets
+      // a cap hit is the headline false-positive signal: a real defect gets
       // fixed within a retry or two, so burning every continuation and still
       // failing usually means the gate was wrong, not the agent.
       ledger.append("chain_end", {
@@ -1752,8 +1721,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
       terminaljournal("released_with_failures", {
         release_reason: "continuation_cap",
       });
-      // The chain ends here: the agent yields to the user despite the failures.
-      // Reset so the next request re-baselines at `agent_start` — otherwise the
+      // the chain ends here: the agent yields to the user despite the failures.
+      // reset so the next request re-baselines at `agent_start` — otherwise the
       // latch would hold a stale baseline for the rest of the session and every
       // later request would trip the cap immediately.
       continuationCount = 0;
