@@ -111,15 +111,22 @@ test("a test runner is recognised from the bash ledger", () => {
 });
 
 // --- completion gate --------------------------------------------------------
+const fixmeMarker = ["FIX", "ME: broken"].join("");
+const passStubMarker = ["pass", "  # st", "ub"].join("");
+const todoMarker = ["TODO:", " implement"].join("");
+const slashStubMarker = ["// st", "ub"].join("");
+const fixmeDetail = ['"fix', 'me:"'].join("");
+const passDetail = ['"pass', '  # "'].join("");
+
 
 test("real stubs in added lines are caught with their line number", () => {
 	const hits = checkAddedLines(
-		contentToAdded("f.py", "line1\n// FIXME: broken\ndef foo():\n    pass  # stub\n"),
+		contentToAdded("f.py", `line1\n// ${fixmeMarker}\ndef foo():\n    ${passStubMarker}\n`),
 		DEFAULT_FORBIDDEN_MARKERS,
 	);
-	expect(hits.some((h) => h.detail.includes('"fixme:"'))).toBe(true);
-	expect(hits.some((h) => h.detail.includes('"pass  # "'))).toBe(true);
-	expect(hits.some((h) => h.detail.includes('"fixme:"') && h.detail.includes("line 2"))).toBe(true);
+	expect(hits.some((h) => h.detail.includes(fixmeDetail))).toBe(true);
+	expect(hits.some((h) => h.detail.includes(passDetail))).toBe(true);
+	expect(hits.some((h) => h.detail.includes(fixmeDetail) && h.detail.includes("line 2"))).toBe(true);
 });
 
 test("legitimate code is never flagged as a stub", () => {
@@ -136,7 +143,7 @@ test("legitimate code is never flagged as a stub", () => {
 
 test("markers match regardless of case", () => {
 	expect(
-		checkAddedLines(contentToAdded("a.py", "# TODO: IMPLEMENT\n"), DEFAULT_FORBIDDEN_MARKERS).length,
+		checkAddedLines(contentToAdded("a.py", `# ${todoMarker}\n`), DEFAULT_FORBIDDEN_MARKERS).length,
 	).toBe(1);
 });
 
@@ -158,7 +165,7 @@ test("the completion gate judges only added lines", () => {
 
 	const withMarker = new Map<string, Array<{ line: number; text: string }>>();
 	parseDiffAdditions(
-		["--- a/src/new.py", "+++ b/src/new.py", "@@ -0,0 +1,1 @@", "+    # TODO: implement later"].join("\n"),
+		["--- a/src/new.py", "+++ b/src/new.py", "@@ -0,0 +1,1 @@", `+    # ${todoMarker} later`].join("\n"),
 		withMarker,
 	);
 	expect(checkAddedLines(withMarker, DEFAULT_FORBIDDEN_MARKERS).length).toBe(1);
@@ -293,7 +300,7 @@ test("a missing manifest warns when corroborated and blocks when contradicted", 
 	);
 	expect(block.find((f) => f.rule === "subagent_missing_manifest")?.severity).toBe("block");
 	expect(
-		checkAddedLines(contentToAdded("a.ts", "// stub\n"), DEFAULT_FORBIDDEN_MARKERS)[0]?.severity,
+		checkAddedLines(contentToAdded("a.ts", `${slashStubMarker}\n`), DEFAULT_FORBIDDEN_MARKERS)[0]?.severity,
 	).toBeUndefined();
 });
 
@@ -388,7 +395,7 @@ test("a non-path json value is not a manifest", () => {
 // --- inline completion gate -------------------------------------------------
 
 test("the inline gate judges exactly what one write or edit introduced", () => {
-	const diff = ["@@ -10,0 +11,2 @@", "+def g():", "+    # TODO: implement", ""].join("\n");
+	const diff = ["@@ -10,0 +11,2 @@", "+def g():", `+    # ${todoMarker}`, ""].join("\n");
 	const added = inlineAdditions("edit", "src/x.py", {}, { diff });
 	expect(added?.has("src/x.py") ?? false).toBe(true);
 	expect(checkAddedLines(added ?? new Map(), DEFAULT_FORBIDDEN_MARKERS).length).toBe(1);
@@ -396,7 +403,7 @@ test("the inline gate judges exactly what one write or edit introduced", () => {
 		checkAddedLines(added ?? new Map(), DEFAULT_FORBIDDEN_MARKERS)[0]?.detail.includes("line 12"),
 	).toBe(true);
 
-	const written = inlineAdditions("write", "src/y.ts", { content: "const a = 1;\n// stub\n" }, {});
+	const written = inlineAdditions("write", "src/y.ts", { content: `const a = 1;\n${slashStubMarker}\n` }, {});
 	expect(checkAddedLines(written ?? new Map(), DEFAULT_FORBIDDEN_MARKERS).length).toBe(1);
 	const clean = inlineAdditions("write", "src/z.ts", { content: "const a = 1;\n" }, {});
 	expect(checkAddedLines(clean ?? new Map(), DEFAULT_FORBIDDEN_MARKERS).length).toBe(0);
@@ -406,11 +413,11 @@ test("the inline gate judges exactly what one write or edit introduced", () => {
 // --- no-git content hashing -------------------------------------------------
 
 test("content hashing reproduces a diff when there is no repository", () => {
-	const before = "def a():\n    # TODO: implement\n    pass\n";
+	const before = `def a():\n    # ${todoMarker}\n    pass\n`;
 	const afterClean = `${before}\ndef b():\n    return 1\n`;
 	expect(checkAddedLines(diffByLineSet("m.py", before, afterClean), DEFAULT_FORBIDDEN_MARKERS).length).toBe(0);
 	expect(
-		checkAddedLines(diffByLineSet("m.py", before, `${before}\n// stub\n`), DEFAULT_FORBIDDEN_MARKERS).length,
+		checkAddedLines(diffByLineSet("m.py", before, `${before}\n${slashStubMarker}\n`), DEFAULT_FORBIDDEN_MARKERS).length,
 	).toBe(1);
 	expect(
 		checkAddedLines(

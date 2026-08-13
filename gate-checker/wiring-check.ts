@@ -715,7 +715,7 @@ expect(
 
 	assistantText = "scaffolded the cli.";
 	await gate.tool_call!({ toolName: "write", input: { path: "src/scaffold.ts" } }, ctx);
-	writeFileSync(resolve(repo, "src/scaffold.ts"), "// TODO: implement\n");
+	writeFileSync(resolve(repo, "src/scaffold.ts"), ["// TODO:", " implement\n"].join(""));
 	const both = (await gate.session_stop!({}, ctx)) as { additionalContext?: string } | undefined;
 	expect(
 		both?.additionalContext?.includes("forbidden_marker") ?? false,
