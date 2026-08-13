@@ -1,8 +1,62 @@
 {
   "name": "nikos-agent-stack",
-  "private": true,
+  "version": "1.0.0",
+  "description": "niko's omp delivery gates, advisor role, and native questionnaire tooling as one installable plugin",
   "type": "module",
+  "keywords": [
+    "omp",
+    "omp-plugin",
+    "omp-extension",
+    "delivery-gates",
+    "gate-checker",
+    "ask-questionnaire",
+    "advisor",
+    "babysitter"
+  ],
+  "homepage": "https://github.com/nikos-repos/nikos-agent-stack#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nikos-repos/nikos-agent-stack.git"
+  },
+  "bugs": {
+    "url": "https://github.com/nikos-repos/nikos-agent-stack/issues"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "bin": {
+    "nikos-gates": "gate-checker/gate-cli.js"
+  },
+  "exports": {
+    "./gate-cli": "./gate-checker/gate-cli.js",
+    "./gates": "./gate-checker/gates.js",
+    "./delivery-contract.process": "./gate-checker/delivery-contract.process.js"
+  },
+  "omp": {
+    "extensions": [
+      "./gate-checker/index.ts",
+      "./ask-questionnaire/index.ts"
+    ]
+  },
+  "files": [
+    "gate-checker/index.ts",
+    "gate-checker/wiring-check.ts",
+    "gate-checker/gate-cli.js",
+    "gate-checker/predicates.js",
+    "gate-checker/ledger.js",
+    "gate-checker/config.js",
+    "gate-checker/scope.js",
+    "gate-checker/lease.js",
+    "gate-checker/risks.js",
+    "gate-checker/provenance.js",
+    "gate-checker/gates.js",
+    "gate-checker/journal.js",
+    "gate-checker/delivery-contract.process.js",
+    "ask-questionnaire/index.ts",
+    "agents/terra.md",
+    "README.md"
+  ],
   "scripts": {
-    "test": "bun test gate-checker/*.test.ts && bun run gate-checker/index.ts && bun run gate-checker/wiring-check.ts"
+    "test": "bun test gate-checker/*.test.ts ask-questionnaire/*.test.ts plugin.test.ts && bun run gate-checker/index.ts && bun run gate-checker/wiring-check.ts"
   }
 }
