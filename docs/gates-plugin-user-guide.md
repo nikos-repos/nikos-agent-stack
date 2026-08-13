@@ -5,6 +5,7 @@
 ## contents
 
 - [what the plugin does](#what-the-plugin-does)
+- [installation](#installation)
 - [quick start](#quick-start)
 - [engagement levels](#engagement-levels)
 - [automatic extension behavior](#automatic-extension-behavior)
@@ -26,12 +27,91 @@
 
 this installation has two related enforcement layers:
 
-1. **automatic omp extension:** omp discovers `agent/extensions/gate-checker/index.ts` at startup. the extension collects request evidence, warns during edits, checks the final response, runs an optional verification command, and can require a clean tracked working tree.
+1. **automatic omp extension:** the `nikos-agent-stack` plugin declares `./gate-checker/index.ts` in `package.json#omp.extensions`. omp loads that entry from the installed plugin at startup. the extension collects request evidence, warns during edits, checks the final response, runs an optional verification command, and can require a clean tracked working tree.
 2. **composable babysitter gates:** `gates.js` exports six deterministic tasks. `delivery-contract.process.js` combines them with understand, implement, retry, and failure-analysis phases.
 
 both layers use `predicates.js` for added-line parsing, forbidden-marker checks, path matching, manifests, and the clean-tree predicate. this avoids two gate implementations with different results.
 
-sources: [extension entry point](../gate-checker/index.ts), [shared predicates](../gate-checker/predicates.js), [babysitter gates](../gate-checker/gates.js), [delivery process](../gate-checker/delivery-contract.process.js)
+the plugin manager owns the installed files. no procedure in this guide requires manual file placement in an omp runtime directory.
+
+sources: [package manifest](../package.json), [extension entry point](../gate-checker/index.ts), [shared predicates](../gate-checker/predicates.js), [babysitter gates](../gate-checker/gates.js), [delivery process](../gate-checker/delivery-contract.process.js)
+
+## installation
+
+the stack installs through the native omp plugin manager. the plugin name is
+`nikos-agent-stack`. all actions use `omp plugin <action> [target]`.
+
+### install
+
+```sh
+omp plugin install nikos-agent-stack
+```
+
+`--scope user` is the default and installs for every project. use
+`--scope project` to bind the plugin to the current project only.
+
+### link a local checkout
+
+use a link when you develop the stack or run an unpublished revision:
+
+```sh
+omp plugin link .
+```
+
+run this from the `nikos-agent-stack` repository root. the link points omp at
+the working tree, so later source edits need no reinstall.
+
+### verify the installation
+
+```sh
+omp plugin list
+omp plugin doctor
+```
+
+`list` shows the plugin, its version, and its enabled state. `doctor` reports
+discovery and load problems, and `doctor --fix` repairs the ones it can. from a
+repository checkout, `bun run test` checks the package surface and the runtime.
+see [verification and development](#verification-and-development).
+
+### update
+
+```sh
+omp plugin install nikos-agent-stack@latest
+```
+
+the update reinstalls the plugin at the newest published version. a linked
+checkout does not need this command. update its source instead.
+
+### enable or disable without removal
+
+```sh
+omp plugin disable nikos-agent-stack
+omp plugin enable nikos-agent-stack
+```
+
+a disabled plugin stays installed and loads no extension. this is not the same
+as `/gates-disable`, which keeps the extension loaded and turns off its rules.
+
+### remove
+
+```sh
+omp plugin uninstall nikos-agent-stack
+```
+
+removal deletes the installed package. it does not delete the persisted
+configuration or the ledger, so a later install keeps the previous policy and
+history.
+
+### after any install, link, update, or removal
+
+restart omp. extension discovery occurs at startup.
+
+installed state, versions, and enablement live in
+`~/.omp/plugins/omp-plugins.lock.json`. the plugin manager owns that file. do
+not edit installed plugin files by hand; change the source and link it, or
+install the corrected revision.
+
+source: [declared extension entries and package contents](../package.json)
 
 ## quick start
 
@@ -75,23 +155,18 @@ low keeps inline checks and telemetry, but it does not force a continuation.
 
 level changes apply in the current session and persist for later sessions. no restart is required.
 
-### update the live extension
-
-from the `nikos-agent-stack` repository root:
+### update the running plugin
 
 ```sh
-install -d ~/.omp/agent/extensions/gate-checker
-cp gate-checker/*.js gate-checker/index.ts gate-checker/wiring-check.ts \
-  ~/.omp/agent/extensions/gate-checker/
-
-bun run ~/.omp/agent/extensions/gate-checker/index.ts
-bun run ~/.omp/agent/extensions/gate-checker/wiring-check.ts
+omp plugin install nikos-agent-stack@latest
 ```
 
-copy the complete runtime file set from one tested commit. do not copy test
-files. restart omp after the copy because extension discovery occurs at startup.
+the manifest `files` list selects the complete runtime file set. test files are
+excluded. restart omp after an update because extension discovery occurs at
+startup. see [installation](#installation) for install, link, enable, disable,
+and removal.
 
-source: [command registration and live policy updates](../gate-checker/index.ts), [level descriptions](../gate-checker/config.js)
+source: [command registration and live policy updates](../gate-checker/index.ts), [level descriptions](../gate-checker/config.js), [runtime file allowlist](../package.json)
 
 ## engagement levels
 
@@ -432,16 +507,29 @@ source: [subagent injection and citation checks](../gate-checker/index.ts), [man
 
 ## command-line tools
 
-run the cli from any directory:
+the manifest declares one executable, `nikos-gates`. installing or linking the
+plugin publishes it. run it from any directory:
 
 ```sh
-bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js <command>
+nikos-gates <command>
 ```
+
+supported commands are `audit`, `cutover`, and `stats`. an unknown command
+prints the usage summary.
+
+if the shell cannot find the name, call the published binary directly:
+
+```sh
+~/.omp/plugins/node_modules/.bin/nikos-gates <command>
+```
+
+from a repository checkout, `bun run gate-checker/gate-cli.js <command>` runs
+the same interface without an installed plugin.
 
 ### cutover
 
 ```sh
-bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js cutover \
+nikos-gates cutover \
   --cwd . \
   --base @~1 \
   --markers .omp/gates-markers.txt
@@ -476,19 +564,19 @@ source: [cutover cli](../gate-checker/gate-cli.js)
 human-readable report:
 
 ```sh
-bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js stats
+nikos-gates stats
 ```
 
 json report:
 
 ```sh
-bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js stats --json
+nikos-gates stats --json
 ```
 
 alternate ledger:
 
 ```sh
-bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js stats \
+nikos-gates stats \
   --ledger /path/to/ledger.jsonl
 ```
 
@@ -600,6 +688,30 @@ source: [ledger writer and aggregation](../gate-checker/ledger.js), [process-sha
 
 ## troubleshooting
 
+### the gate commands do not appear
+
+confirm that the plugin is installed and enabled:
+
+```sh
+omp plugin list
+omp plugin doctor
+```
+
+if the plugin is present but disabled, run
+`omp plugin enable nikos-agent-stack`. if `list` does not show it, install or
+link it again. restart omp after any of these actions, because extension
+discovery occurs at startup.
+
+source: [declared extension entries](../package.json)
+
+### the nikos-gates command is not found
+
+the executable arrives with the plugin. confirm the installation first, then
+call `~/.omp/plugins/node_modules/.bin/nikos-gates` directly, or run
+`bun run gate-checker/gate-cli.js` from a repository checkout.
+
+source: [declared executable](../package.json), [cli entry point](../gate-checker/gate-cli.js)
+
 ### a level change does not take effect
 
 run `/gates-engage` and inspect the reported source. the persisted file outranks environment variables. use a slash command or update the file selected by <code>&#79;&#77;&#80;&#95;&#71;&#65;&#84;&#69;&#95;&#67;&#79;&#78;&#70;&#73;&#71;</code>.
@@ -689,9 +801,9 @@ each result contains resolved commit identifiers, normalized file states, added 
 the upgrade does not register a model-facing audit tool. use the cli when an explicit audit is useful:
 
 ```sh
-bun run gate-checker/gate-cli.js audit --kind uncommitted --json
-bun run gate-checker/gate-cli.js audit --kind base --base origin/main --json
-bun run gate-checker/gate-cli.js audit --kind commit --commit @ --json
+nikos-gates audit --kind uncommitted --json
+nikos-gates audit --kind base --base origin/main --json
+nikos-gates audit --kind commit --commit @ --json
 ```
 
 optional `--folder <path>` limits the immutable scope. audit never fetches, checks out, mutates, commits, changes approval, or starts an agent.
@@ -739,10 +851,31 @@ the lease cannot exclude external editors or arbitrary processes. it is disabled
 
 ## verification and development
 
-run every focused test, the embedded predicate checks, and the end-to-end wiring probe:
+the root package manifest, [`package.json`](../package.json), is the single
+source for the public surface. it declares:
+
+| manifest field | contents |
+|---|---|
+| <code>omp.&#101;xtensions</code> | `./gate-checker/index.ts` and `./ask-questionnaire/index.ts`, the entries omp loads |
+| `bin` | `nikos-gates`, mapped to `gate-checker/gate-cli.js` |
+| `exports` | `./gate-cli`, `./gates`, and <code>./delivery-contract.&#112;rocess</code> for importing processes |
+| `files` | the runtime file allowlist the plugin manager installs |
+
+run every focused test, the package-contract test, the embedded predicate checks, and the end-to-end wiring probe from the repository root:
 
 ```sh
 bun run test
+```
+
+the package-contract test asserts the declared extensions, executable, exports,
+and file list, and it loads each declared extension entry. a change to the
+manifest that this guide describes must keep that test passing.
+
+for local development, link the checkout and confirm discovery:
+
+```sh
+omp plugin link .
+omp plugin doctor
 ```
 
 use isolated configuration and ledger paths when running `index.ts` directly so persisted user policy does not alter its fixtures.
@@ -751,7 +884,9 @@ use isolated configuration and ledger paths when running `index.ts` directly so 
 
 | file | responsibility |
 |---|---|
-| [index.ts](../gate-checker/index.ts) | auto-discovered extension, hooks, evidence, enforcement, native task provenance, journal integration, advisory risks, and lease integration |
+| [package.json](../package.json) | plugin manifest: declared extension entries, `nikos-gates` executable, module exports, and installed file allowlist |
+| [plugin.test.ts](../plugin.test.ts) | asserts the declared package surface and loads each declared extension entry |
+| [index.ts](../gate-checker/index.ts) | manifest-declared extension, hooks, evidence, enforcement, native task provenance, journal integration, advisory risks, and lease integration |
 | [scope.js](../gate-checker/scope.js) | canonical immutable git scopes and request baseline capture |
 | [provenance.js](../gate-checker/provenance.js) | native task result and lifecycle normalization |
 | [journal.js](../gate-checker/journal.js) | versioned session journal reducer and branch reconstruction |
