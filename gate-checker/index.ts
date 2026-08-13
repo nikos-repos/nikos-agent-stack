@@ -452,9 +452,9 @@ function checkCitations(
 // --- completion gate (agent-agnostic) ---------------------------------------
 //
 // The predicate itself is checkAddedLines() in predicates.js — shared verbatim
-// with Layer 2 and with the inline tool_result gate. Only the way the added-line
-// set is DERIVED differs: git diff when a repo exists, first-touch content
-// snapshots when it does not.
+// with the inline tool_result gate and the gate-cli cutover command. Only the
+// way the added-line set is DERIVED differs: git diff when a repo exists,
+// first-touch content snapshots when it does not.
 
 // no-git path. snapshots taken at first touch give a real before/after, so this
 // is no longer a whole-file scan: a pre-existing marker in an untouched line
@@ -681,11 +681,10 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
 
 // --- delivery gates (verify + commit), armed by env var ---------------------
 //
-// Layer 2 owns six gates; Layer 1 natively covers four of them (understand,
-// changes, artifacts, cutover) through the citation and completion gates. The
-// two it never ran are `verify` (do the tests pass?) and `commit` (is the work
-// checkpointed?). This runs those two inline, so the always-on layer covers the
-// whole contract without spawning the Layer 2 process.
+// The citation and completion gates already answer "did the work happen and is
+// it finished?". The two questions they cannot answer are `verify` (do the
+// tests pass?) and `commit` (is the work checkpointed?). This runs those two
+// inline, so one always-on layer covers the whole delivery contract.
 //
 // Armed by env var, not by config file, so the trigger is the act of launching
 // the omp-dev session — no heuristic decides whether the regime applies.
@@ -700,8 +699,8 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
 
 // Re-grades every failure through the engagement level, and drops the ones the
 // level switches off. Applying the dial HERE, on the finished failure list,
-// keeps predicates.js free of levels — Layer 2 imports the same predicates and
-// has no dial of its own.
+// keeps predicates.js free of levels — gate-cli.js imports the same predicates
+// and has no dial of its own.
 function applyPolicy(failures: GateFailure[], policy: GatePolicy): GateFailure[] {
   const out: GateFailure[] = [];
   for (const f of failures) {
@@ -813,17 +812,13 @@ function runCommitGate(cwd: string): GateFailure | null {
 
 // --- "a process should have run" detector -----------------------------------
 //
-// Measures how often a request had the shape Layer 2's delivery-contract
-// process handles, WITHOUT routing anything into it. Routing before measuring
-// is how the six false-positive bugs shipped: an unmeasured gate is a guess.
+// Measures how often a request was a bounded, verified, code-changing unit of
+// work, WITHOUT changing how any request is handled. Measuring before acting is
+// how this stack avoids the false-positive class it already shipped six times:
+// an unmeasured gate is a guess.
 //
-// A request matches when it is a bounded, verified, code-changing unit of work
-// — the only shape `delivery-contract.process.js` can actually accept, since it
-// needs `files[]` up front and fails at `changesGate` when nothing changed.
-//
-// The upper file bound is the honest part: a 40-file sweep is not a
-// delivery-contract unit, it is a migration, and the process would spend three
-// implement retries discovering that.
+// `bun run gate-cli.js stats` is the only consumer. The upper file bound is the
+// honest part: a 40-file sweep is not a delivery unit, it is a migration.
 
 const PROCESS_SHAPE_MAX_FILES = 8;
 

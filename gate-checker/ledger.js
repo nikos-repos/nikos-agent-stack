@@ -90,10 +90,9 @@ export function summarize(records) {
   let inlineFlags = 0;
   let no_git_runs = 0;
 
-  // "a process should have run" — requests that had the shape Layer 2's
-  // delivery-contract process handles. `shapeMissRate` by reason tells you
-  // whether the thresholds are wrong or the workload is simply not
-  // process-shaped, which is the decision phase 3 depends on.
+  // "a process should have run" — requests that were bounded, verified,
+  // code-changing units of work. `shapeMissRate` by reason tells you whether
+  // the thresholds are wrong or the workload is simply not that shape.
   let shapeRequests = 0;
   let shapeMatched = 0;
   /** @type {Record<string, number>} */

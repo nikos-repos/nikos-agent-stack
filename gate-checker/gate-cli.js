@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
  * @module gate-checker/gate-cli
- * @description Command-line surface over the shared predicates, so Layer 2's
- *              shell gates run the SAME code as Layer 1 instead of a parallel
- *              `grep '^+'` pipeline that drifts from it.
+ * @description Command-line surface over the shared predicates, so an audit run
+ *              outside a session applies the SAME code as the extension instead
+ *              of a parallel `grep '^+'` pipeline that drifts from it.
  *
  * Commands:
  *   cutover [--base <ref>] [--cwd <dir>] [--markers <file>]

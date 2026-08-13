@@ -1,6 +1,6 @@
 # gates plugin user guide
 
-> deterministic delivery checks for omp sessions and babysitter processes
+> deterministic delivery checks for omp sessions
 
 ## contents
 
@@ -16,8 +16,6 @@
 - [commit routing](#commit-routing)
 - [subagent contract](#subagent-contract)
 - [command-line tools](#command-line-tools)
-- [babysitter gates](#babysitter-gates)
-- [delivery-contract process](#delivery-contract-process)
 - [telemetry and tuning](#telemetry-and-tuning)
 - [troubleshooting](#troubleshooting)
 - [verification and development](#verification-and-development)
@@ -25,16 +23,13 @@
 
 ## what the plugin does
 
-this installation has two related enforcement layers:
+this installation has one enforcement layer: the `nikos-agent-stack` plugin declares `./gate-checker/index.ts` in `package.json#omp.extensions`. omp loads that entry from the installed plugin at startup. the extension collects request evidence, warns during edits, checks the final response, runs an optional verification command, and can require a clean tracked working tree.
 
-1. **automatic omp extension:** the `nikos-agent-stack` plugin declares `./gate-checker/index.ts` in `package.json#omp.extensions`. omp loads that entry from the installed plugin at startup. the extension collects request evidence, warns during edits, checks the final response, runs an optional verification command, and can require a clean tracked working tree.
-2. **composable babysitter gates:** `gates.js` exports six deterministic tasks. `delivery-contract.process.js` combines them with understand, implement, retry, and failure-analysis phases.
-
-both layers use `predicates.js` for added-line parsing, forbidden-marker checks, path matching, manifests, and the clean-tree predicate. this avoids two gate implementations with different results.
+the extension and the `gate-cli.js` command-line surface both use `predicates.js` for added-line parsing, forbidden-marker checks, path matching, manifests, and the clean-tree predicate. this avoids two gate implementations with different results.
 
 the plugin manager owns the installed files. no procedure in this guide requires manual file placement in an omp runtime directory.
 
-sources: [package manifest](../package.json), [extension entry point](../gate-checker/index.ts), [shared predicates](../gate-checker/predicates.js), [babysitter gates](../gate-checker/gates.js), [delivery process](../gate-checker/delivery-contract.process.js)
+sources: [package manifest](../package.json), [extension entry point](../gate-checker/index.ts), [shared predicates](../gate-checker/predicates.js)
 
 ## installation
 
@@ -584,73 +579,6 @@ stats include record count, continuation chains, resolved chains, cap hits, cap-
 
 source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js)
 
-## babysitter gates
-
-`gates.js` exports six standalone deterministic tasks. another process can import one gate or call the full sequence helper.
-
-| order | export | task id | pass condition |
-|---:|---|---|---|
-| 1 | `understand_gate` | `delivery-gate.understand` | every planned file exists, or its parent directory exists for a new file |
-| 2 | `changes_gate` | `delivery-gate.changes` | current staged or unstaged added, copied, modified, or renamed paths are nonempty |
-| 3 | `verify_gate` | `delivery-gate.verify` | the supplied command exits zero; default is `npm test` |
-| 4 | `commit_gate` | `delivery-gate.commit` | no tracked staged or unstaged changes remain; untracked files are ignored |
-| 5 | `artifacts_gate` | `delivery-gate.artifacts` | every declared artifact exists as a file; this gate is optional |
-| 6 | `cutover_gate` | `delivery-gate.cutover` | no default or custom forbidden marker occurs in added lines since the base |
-
-note: the real javascript export names use camel case: <code>understand&#71;ate</code>, <code>changes&#71;ate</code>, <code>verify&#71;ate</code>, <code>commit&#71;ate</code>, <code>artifacts&#71;ate</code>, and <code>cutover&#71;ate</code>.
-
-### full sequence helper
-
-<code>run&#68;elivery&#71;ates</code> runs the gates in the listed order and stops at the first unresolved failure. it retries only the verification gate.
-
-configuration fields:
-
-| field | default | purpose |
-|---|---|---|
-| `files` | `[]` | planned changed or created paths |
-| <code>test&#67;ommand</code> | `npm test` | verification shell command |
-| `cwd` | `.` | working directory |
-| <code>markers&#70;ile</code> | project default | extra marker file |
-| `artifacts` | none | optional required files |
-| <code>max&#82;etries</code> | `3` | verification attempts |
-| <code>base&#82;ef</code> | <code>&#72;&#69;&#65;&#68;~1</code> | cutover baseline |
-
-source: [standalone gates and helper](../gate-checker/gates.js)
-
-## delivery-contract process
-
-`delivery-contract.process.js` provides a complete structured process over the six gates.
-
-### inputs
-
-| input | required | default | purpose |
-|---|---:|---|---|
-| `task` | yes | none | requested implementation |
-| `files` | yes | `[]` | planned affected paths |
-| <code>test&#67;ommand</code> | no | `npm test` | verification command |
-| `cwd` | no | `.` | working directory |
-| <code>markers&#70;ile</code> | no | project default | extra marker file |
-| <code>must&#72;aves.artifacts</code> | no | none | required output files |
-
-### process flow
-
-1. capture the pre-work commit for later cutover comparison.
-2. ask an agent to read and explain all planned files without editing.
-3. check that each planned path or its parent is reachable.
-4. ask an agent to implement the minimal root-cause change.
-5. retry implementation up to three times if no staged or unstaged change appears.
-6. run verification up to three times.
-7. after a failed verification attempt, ask an agent to analyze the failure, then ask an implementation agent to fix it.
-8. require a clean tracked working tree.
-9. require optional declared artifacts.
-10. reject forbidden markers in additions since the pre-work commit.
-
-successful output contains `success: true`, `phase: delivered`, and the implementation report’s changed-file list. failure output identifies the failed phase and failure messages.
-
-this process is available for explicit babysitter use. the automatic extension does not route requests into it. instead, telemetry records whether a completed request had a compatible shape: one to eight changed files plus test evidence.
-
-source: [delivery process](../gate-checker/delivery-contract.process.js), [process-shape detector](../gate-checker/index.ts)
-
 ## telemetry and tuning
 
 ### ledger
@@ -896,6 +824,4 @@ use isolated configuration and ledger paths when running `index.ts` directly so 
 | [predicates.js](../gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
 | [gate-cli.js](../gate-checker/gate-cli.js) | scope audit, cutover, and stats command-line interface |
 | [ledger.js](../gate-checker/ledger.js) | append-only events, explicit release metrics, safe reading, and aggregation |
-| [gates.js](../gate-checker/gates.js) | six standalone babysitter tasks and the full gate-sequence helper |
-| [delivery-contract.process.js](../gate-checker/delivery-contract.process.js) | structured understand, implement, verify, commit, artifact, and cutover process |
 | [wiring-check.ts](../gate-checker/wiring-check.ts) | isolated end-to-end extension probe |

@@ -180,8 +180,6 @@ this runs the gate-checker and questionnaire unit tests, the packaged-surface te
 | [`gate-checker/journal.js`](gate-checker/journal.js) | request journal and recovery state |
 | [`gate-checker/lease.js`](gate-checker/lease.js) | repository mutation lease |
 | [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js) | cutover, audit, and telemetry command-line interface |
-| [`gate-checker/gates.js`](gate-checker/gates.js) | composable babysitter gate tasks |
-| [`gate-checker/delivery-contract.process.js`](gate-checker/delivery-contract.process.js) | gated delivery-contract process built from those tasks |
 | [`gate-checker/wiring-check.ts`](gate-checker/wiring-check.ts) | end-to-end probe that the gate fires from `session_stop` |
 | [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts) | questionnaire extension around the native `ask` tool |
 | [`agents/terra.md`](agents/terra.md) | read-only terra advisor agent profile and output schema |

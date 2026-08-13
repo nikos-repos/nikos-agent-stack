@@ -2,16 +2,15 @@
  * @module gate-checker/predicates
  * @description Single source of truth for every gate predicate in the stack.
  *
- * Layer 1 (the omp extension, index.ts) and Layer 2 (the babysitter gates,
- * gates.js / gate-cli.js) previously each carried their own copy of the marker
- * list and their own added-line extraction — one in TypeScript, one as a shell
- * `grep '^+'` pipeline. They drifted: a fix to the pre-existing-marker false
- * positive had to be written twice, in two languages, with two behaviors.
+ * The extension (index.ts) and the CLI (gate-cli.js) previously each carried
+ * their own copy of the marker list and their own added-line extraction — one
+ * in TypeScript, one as a shell `grep '^+'` pipeline. They drifted: a fix to
+ * the pre-existing-marker false positive had to be written twice, in two
+ * languages, with two behaviors.
  *
  * Plain JS with JSDoc types on purpose: the extension is TypeScript run through
- * bun, the babysitter gates are plain JS, and a CLI wrapper runs under either.
- * A .js module with JSDoc is the only form all three can import with no build
- * step and no `any`.
+ * bun and the CLI is plain JS. A .js module with JSDoc is the form both can
+ * import with no build step and no `any`.
  *
  * @typedef {{ line: number, text: string }} AddedLine
  * @typedef {Map<string, AddedLine[]>} AddedMap
@@ -373,7 +372,7 @@ function parseLooseJson(text) {
   }
 }
 
-// ── shell predicates shared with Layer 1 ────────────────────────────────────
+// ── shell predicates ────────────────────────────────────────────────────────
 
 /**
  * Working tree carries no uncommitted change to a TRACKED file.
@@ -383,7 +382,7 @@ function parseLooseJson(text) {
  * this predicate consistent with the `--diff-filter=ACMR` diffs the rest of the
  * stack reads — those do not report untracked files either.
  *
- * Layer 1 runs this string directly; Layer 2's commitGate wraps it in a task.
+ * The commit gate in index.ts runs this string directly.
  */
 export const COMMIT_CLEAN_CMD =
   'git status --porcelain --untracked-files=no';

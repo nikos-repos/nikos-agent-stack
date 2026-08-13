@@ -13,8 +13,6 @@ const expectedExtensions = [
 
 const expectedExports = {
 	"./gate-cli": "./gate-checker/gate-cli.js",
-	"./gates": "./gate-checker/gates.js",
-	"./delivery-contract.process": "./gate-checker/delivery-contract.process.js",
 };
 
 const expectedFiles = [
@@ -28,9 +26,7 @@ const expectedFiles = [
 	"gate-checker/lease.js",
 	"gate-checker/risks.js",
 	"gate-checker/provenance.js",
-	"gate-checker/gates.js",
 	"gate-checker/journal.js",
-	"gate-checker/delivery-contract.process.js",
 	"ask-questionnaire/index.ts",
 	"agents/terra.md",
 	"README.md",
