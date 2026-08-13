@@ -17,7 +17,6 @@ const expectedExports = {
 
 const expectedFiles = [
 	"gate-checker/index.ts",
-	"gate-checker/wiring-check.ts",
 	"gate-checker/gate-cli.js",
 	"gate-checker/predicates.js",
 	"gate-checker/ledger.js",

@@ -39,10 +39,10 @@
 // ============================================================================
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { existsSync, mkdtempSync, writeFileSync, rmSync, statSync } from "fs";
+import { existsSync, statSync } from "fs";
 import { execSync } from "child_process";
 import { dirname, isAbsolute, relative, resolve as resolvePath, sep } from "path";
-import { homedir, tmpdir } from "os";
+import { homedir } from "os";
 import { randomUUID } from "crypto";
 import {
   DEFAULT_FORBIDDEN_MARKERS,
@@ -82,9 +82,9 @@ import { journal_type, journalfrombranch, journal_version } from "./journal.js";
 import { auditscope } from "./risks.js";
 import { acquirelease, releaselease } from "./lease.js";
 
-type GateLevel = "off" | "low" | "medium" | "high";
+export type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
-interface GatePolicy {
+export interface GatePolicy {
   level: GateLevel;
   enabled: boolean;
   inline: boolean;
@@ -157,7 +157,7 @@ interface ToolResultEventResult {
   isError?: boolean;
 }
 
-interface GateFailure {
+export interface GateFailure {
   gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk" | "lease";
   rule: string;
   detail: string;
@@ -191,7 +191,7 @@ interface SubagentEvidence {
   manifest_source: string | null;
 }
 
-interface TurnEvidence {
+export interface TurnEvidence {
   hadToolCalls: boolean;
   askedUser: boolean;
   filesTouched: Set<string>;
@@ -219,7 +219,7 @@ interface TurnEvidence {
   flaggedInline: Set<string>;
 }
 
-function freshEvidence(): TurnEvidence {
+export function freshEvidence(): TurnEvidence {
   return {
     hadToolCalls: false,
     askedUser: false,
@@ -265,7 +265,7 @@ const TEST_RUNNER_RE =
 const MOD_CLAIM_RE =
   /(?:modif(?:ied|y)|updated?|changed?|edited?|added?\s+to|fixed?\s+in|refactored?|rewrote?|replaced?|removed?\s+(?:from|in)|deleted?\s+(?:from|in))\s+`([a-zA-Z0-9_./~-]+[/][a-zA-Z0-9_./~-]+\.[a-zA-Z]{1,8})`/gi;
 
-function extractSnapshotRefs(
+export function extractSnapshotRefs(
   text: string,
 ): Array<{ path: string; tag: string }> {
   const refs: Array<{ path: string; tag: string }> = [];
@@ -277,7 +277,7 @@ function extractSnapshotRefs(
   return refs;
 }
 
-function extractModClaims(text: string): string[] {
+export function extractModClaims(text: string): string[] {
   const paths: string[] = [];
   let m: RegExpExecArray | null;
   MOD_CLAIM_RE.lastIndex = 0;
@@ -287,11 +287,11 @@ function extractModClaims(text: string): string[] {
   return [...new Set(paths)];
 }
 
-function claimsTestSuccess(text: string): boolean {
+export function claimsTestSuccess(text: string): boolean {
   return TEST_PASS_RE.test(text) || ALL_PASS_RE.test(text);
 }
 
-function ranTestRunner(ev: TurnEvidence): boolean {
+export function ranTestRunner(ev: TurnEvidence): boolean {
   if (ev.verifyPassed) return true;
   return ev.bashCommands.some(
     (c) => TEST_RUNNER_RE.test(c.cmd) && !c.isError,
@@ -311,11 +311,11 @@ function ranTestRunner(ev: TurnEvidence): boolean {
 const SUBAGENT_REFERENCE_RE =
   /\b(sub-?agents?|reviewers?|review(?:ed|s)?\s+(?:by|agent)|delegat(?:e|ed|ion)|spawned\s+agents?|per\s+the\s+review|according\s+to\s+the\s+(?:review|agent)|the\s+agent\s+(?:reported|found|said|confirmed)|its?\s+report)\b/i;
 
-function reliesOnSubagents(assistantText: string): boolean {
+export function reliesOnSubagents(assistantText: string): boolean {
   return SUBAGENT_REFERENCE_RE.test(assistantText);
 }
 
-function checkCitations(
+export function checkCitations(
   assistantText: string,
   subagents: Array<SubagentEvidence | string>,
   changedFiles: Set<string>,
@@ -531,7 +531,7 @@ function isInside(root: string, path: string): boolean {
 //  - edit  → `details.diff` is a unified diff (hunk headers, no `+++` line),
 //            so real line numbers survive.
 //  - write → replaces the file wholesale, so every line is authored now.
-function inlineAdditions(
+export function inlineAdditions(
   toolName: string,
   relPath: string,
   input: Record<string, unknown> | undefined,
@@ -589,7 +589,7 @@ function extractCommitMessage(command: string): string | null {
 // rewritten into the real script.
 const SMART_COMMIT_RE = /(['"]?)(?<![\w.-])((?:[^\s'"]*\/)?smart_commit\.sh)\1/;
 
-function rewriteSmartCommit(command: string, scriptPath: string): string | null {
+export function rewriteSmartCommit(command: string, scriptPath: string): string | null {
   const m = SMART_COMMIT_RE.exec(command);
   if (!m) return null;
   const safe = scriptPath.replace(/'/g, "'\\''");
@@ -633,7 +633,7 @@ function splitCommitSegment(
   return { before, commitPart, after };
 }
 
-function rewriteGitCommit(command: string, scriptPath: string): string | null {
+export function rewriteGitCommit(command: string, scriptPath: string): string | null {
   // skip if no real commit command at a boundary, or if --amend
   if (!COMMIT_BOUNDARY_RE.test(command) || /--amend/.test(command)) return null;
 
@@ -701,7 +701,7 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
 // level switches off. Applying the dial HERE, on the finished failure list,
 // keeps predicates.js free of levels — gate-cli.js imports the same predicates
 // and has no dial of its own.
-function applyPolicy(failures: GateFailure[], policy: GatePolicy): GateFailure[] {
+export function applyPolicy(failures: GateFailure[], policy: GatePolicy): GateFailure[] {
   const out: GateFailure[] = [];
   for (const f of failures) {
     const family = RULE_FAMILY[f.rule] as keyof GatePolicy | undefined;
@@ -737,7 +737,7 @@ interface VerifyCache {
 let unknownStateSeq = 0;
 const unknownState = (): string => `unknown:${Date.now()}:${unknownStateSeq++}`;
 
-function treeStateKey(
+export function treeStateKey(
   cwd: string,
   hasGit: boolean,
   touched: Map<string, string | null>,
@@ -763,7 +763,7 @@ function treeStateKey(
   return parts.length > 0 ? hashContent(parts.join("\n")) : unknownState();
 }
 
-function runVerifyGate(cwd: string, cmd: string): GateFailure | null {
+export function runVerifyGate(cwd: string, cmd: string): GateFailure | null {
   try {
     execSync(cmd, {
       cwd,
@@ -787,7 +787,7 @@ function runVerifyGate(cwd: string, cmd: string): GateFailure | null {
   }
 }
 
-function runCommitGate(cwd: string): GateFailure | null {
+export function runCommitGate(cwd: string): GateFailure | null {
   try {
     const dirty = execSync(`${COMMIT_CLEAN_CMD} 2>/dev/null`, {
       cwd,
@@ -820,7 +820,7 @@ function runCommitGate(cwd: string): GateFailure | null {
 // `bun run gate-cli.js stats` is the only consumer. The upper file bound is the
 // honest part: a 40-file sweep is not a delivery unit, it is a migration.
 
-const PROCESS_SHAPE_MAX_FILES = 8;
+export const PROCESS_SHAPE_MAX_FILES = 8;
 
 interface ProcessShape {
   matched: boolean;
@@ -831,7 +831,7 @@ interface ProcessShape {
   reason: "no-changes" | "too-broad" | "no-test-run" | null;
 }
 
-function processShape(ev: TurnEvidence, changedCount: number): ProcessShape {
+export function processShape(ev: TurnEvidence, changedCount: number): ProcessShape {
   const testRan = ranTestRunner(ev);
   const base = { changed: changedCount, testRan };
   if (changedCount === 0) return { ...base, matched: false, reason: "no-changes" };
@@ -844,7 +844,7 @@ function processShape(ev: TurnEvidence, changedCount: number): ProcessShape {
 
 // --- failure formatting -----------------------------------------------------
 
-function formatFailures(failures: GateFailure[]): string {
+export function formatFailures(failures: GateFailure[]): string {
   const lines = failures.map(
     (f, i) => `${i + 1}. ${f.gate}/${f.rule}\n   ${f.detail}`,
   );
@@ -862,7 +862,7 @@ function formatFailures(failures: GateFailure[]): string {
 // The manifest requirement is stated FIRST and in full, because it is the only
 // rule whose violation the subagent cannot talk its way around: an empty
 // manifest is a valid answer, so there is no incentive to omit it.
-const GATE_NUDGE =
+export const GATE_NUDGE =
   "[GATE CHECKER] your report MUST end with this exact block, listing every " +
   "file you changed, one path per line:\n" +
   `${MANIFEST_OPEN}\n` +
@@ -888,7 +888,7 @@ const GATE_NUDGE =
 // subagent spawns, and 39 messages on work that was already complete and
 // correct. With the no-progress abort in place this is a second line of
 // defense, not the primary one.
-const MAX_CONTINUATIONS = 3;
+export const MAX_CONTINUATIONS = 3;
 
 export default function gateChecker(pi: ExtensionAPI): void {
   let evidence = freshEvidence();
@@ -1770,968 +1770,4 @@ export default function gateChecker(pi: ExtensionAPI): void {
       additionalContext: formatFailures(blocking),
     };
   });
-}
-
-// --- self-check (run: bun run index.ts) -------------------------------------
-
-if (import.meta.main) {
-  let pass = 0;
-  let fail = 0;
-  function check(name: string, cond: boolean) {
-    if (cond) {
-      pass++;
-    } else {
-      fail++;
-      console.error(`  FAIL: ${name}`);
-    }
-  }
-
-  // extractSnapshotRefs
-  const refs = extractSnapshotRefs("edited [foo.ts#A1B2] and [bar.py#C3D4]");
-  check("extracts two snapshot refs", refs.length === 2);
-  check("tag is uppercased", refs[0].tag === "A1B2");
-
-  // extractModClaims
-  const mods = extractModClaims(
-    "I updated `src/foo.ts` and changed `lib/bar.py`",
-  );
-  check("extracts two mod claims", mods.length === 2);
-  check("first claim is foo.ts", mods[0] === "src/foo.ts");
-
-  // claimsTestSuccess
-  check("detects 'tests passed'", claimsTestSuccess("all tests passed successfully"));
-  check("detects 'suite passes'", claimsTestSuccess("the test suite passes"));
-  check("ignores unrelated text", !claimsTestSuccess("the function returns a value"));
-
-  // ranTestRunner
-  const ev = freshEvidence();
-  ev.bashCommands.push({ cmd: "npm test", isError: false });
-  check("detects npm test", ranTestRunner(ev));
-  ev.bashCommands.push({ cmd: "pytest -xvs", isError: false });
-  check("detects pytest", ranTestRunner(ev));
-  const evNoTest = freshEvidence();
-  evNoTest.bashCommands.push({ cmd: "echo hello", isError: false });
-  check("no false positive on echo", !ranTestRunner(evNoTest));
-
-  // checkAddedLines — real stubs caught (shared predicate, both layers)
-  const hits = checkAddedLines(
-    contentToAdded("f.py", "line1\n// FIXME: broken\ndef foo():\n    pass  # stub\n"),
-    DEFAULT_FORBIDDEN_MARKERS,
-  );
-  check("finds FIXME:", hits.some((h) => h.detail.includes('"fixme:"')));
-  check("finds pass stub", hits.some((h) => h.detail.includes('"pass  # "')));
-  check(
-    "correct line for FIXME",
-    hits.some((h) => h.detail.includes('"fixme:"') && h.detail.includes("line 2")),
-  );
-
-  // checkAddedLines — false-positive guard: legitimate code NOT flagged
-  const legitCode = [
-    'test("stub server returns 200", () => {',
-    'const stub = sinon.stub();',
-    'const noop = () => {};',
-    'const PLACEHOLDER_USER_ID = "user";',
-  ];
-  for (const line of legitCode) {
-    const falseHits = checkAddedLines(
-      contentToAdded("f.ts", line),
-      DEFAULT_FORBIDDEN_MARKERS,
-    );
-    check(
-      `no false positive: ${line.substring(0, 40)}`,
-      falseHits.length === 0,
-    );
-  }
-
-  // ranTestRunner — bun/node --test coverage
-  {
-    const evBun = freshEvidence();
-    evBun.bashCommands.push({ cmd: "bun test", isError: false });
-    check("detects bun test", ranTestRunner(evBun));
-    const evNode = freshEvidence();
-    evNode.bashCommands.push({ cmd: "node --test", isError: false });
-    check("detects node --test", ranTestRunner(evNode));
-    const evBunRun = freshEvidence();
-    evBunRun.bashCommands.push({ cmd: "bun run test", isError: false });
-    check("detects bun run test", ranTestRunner(evBunRun));
-  }
-
-  // citation gate — fabricated modification (parent)
-  {
-    const changed = new Set(["src/real.ts"]);
-    const evCite = freshEvidence();
-    const citeFailures = checkCitations(
-      "I modified `src/fake.ts` and updated `src/real.ts`",
-      [],
-      changed,
-      evCite,
-      true,
-    );
-    check(
-      "flags fabricated mod",
-      citeFailures.some(
-        (f) => f.rule === "fabricated_modification" && f.detail.includes("src/fake.ts"),
-      ),
-    );
-    check(
-      "does not flag real mod",
-      !citeFailures.some((f) => f.detail.includes("src/real.ts")),
-    );
-  }
-
-  // citation gate — non-file backtick tokens NOT flagged (bug 1 fix)
-  {
-    const changed = new Set();
-    const evNonFile = freshEvidence();
-    const nonFileFailures = checkCitations(
-      "I replaced `var` with `let` and refactored `handleError`",
-      [],
-      changed,
-      evNonFile,
-      true,
-    );
-    check(
-      "non-file token 'var' not flagged",
-      !nonFileFailures.some((f) => f.detail.includes("var")),
-    );
-    check(
-      "non-file token 'handleError' not flagged",
-      !nonFileFailures.some((f) => f.detail.includes("handleError")),
-    );
-  }
-
-  // citation gate — no git: skip mod claims
-  {
-    const evNoGit = freshEvidence();
-    const noGitFailures = checkCitations(
-      "I modified `src/fake.ts`",
-      [],
-      new Set(),
-      evNoGit,
-      false,
-    );
-    check(
-      "no-git: does not flag mod claims",
-      !noGitFailures.some((f) => f.rule === "fabricated_modification"),
-    );
-  }
-
-  // citation gate — fabricated test result
-  {
-    const evTest = freshEvidence();
-    const testFailures = checkCitations("all tests passed", [], new Set(), evTest, true);
-    check(
-      "flags fabricated test claim",
-      testFailures.some((f) => f.rule === "fabricated_test_result"),
-    );
-  }
-
-  // citation gate — real test result passes
-  {
-    const evReal = freshEvidence();
-    evReal.bashCommands.push({ cmd: "npm test", isError: false });
-    check(
-      "real test claim passes",
-      checkCitations("all tests passed", [], new Set(), evReal, true).length === 0,
-    );
-  }
-
-  // citation gate — subagent fabricated modification
-  {
-    const changed = new Set(["src/real.ts"]);
-    const evSub = freshEvidence();
-    const subFailures = checkCitations(
-      "the reviewer subagent reported its findings",
-      ["I updated `src/fake.ts` and all tests passed"],
-      changed,
-      evSub,
-      true,
-    );
-    check(
-      "flags subagent fabricated mod",
-      subFailures.some((f) => f.rule === "subagent_fabricated_modification"),
-    );
-    check(
-      "flags subagent unverified test",
-      subFailures.some((f) => f.rule === "subagent_unverified_test"),
-    );
-  }
-
-  // citation gate — subagent real claims
-  {
-    const changed = new Set(["src/auth.ts"]);
-    const evSubOk = freshEvidence();
-    evSubOk.bashCommands.push({ cmd: "npm test", isError: false });
-    const subOkFailures = checkCitations(
-      "the reviewer subagent reported its findings",
-      ["I updated `src/auth.ts` and all tests passed"],
-      changed,
-      evSubOk,
-      true,
-    );
-    check(
-      "subagent real mod passes",
-      !subOkFailures.some((f) => f.rule === "subagent_fabricated_modification"),
-    );
-    check(
-      "subagent verified test passes",
-      !subOkFailures.some((f) => f.rule === "subagent_unverified_test"),
-    );
-  }
-
-  // formatFailures
-  const formatted = formatFailures([
-    { gate: "completion", rule: "forbidden_marker", detail: "test detail" },
-  ]);
-  check("formatted output has header", formatted.includes("[GATE CHECKER"));
-  check("formatted output has detail", formatted.includes("test detail"));
-
-  // GATE_NUDGE
-  check("gate nudge is non-empty", GATE_NUDGE.length > 0);
-  check("gate nudge mentions markers", GATE_NUDGE.includes("forbidden markers"));
-  check("gate nudge mentions commit script", GATE_NUDGE.includes("git-pushing"));
-
-  // --- commit routing (addition 5) ---
-
-  // simple commit with message
-  {
-    const result = rewriteGitCommit(
-      'git commit -m "feat: add auth"',
-      "/path/to/smart_commit.sh",
-    );
-    check("rewrites simple commit", result !== null);
-    check("rewrite uses script", result?.includes("smart_commit.sh") ?? false);
-    check("rewrite includes message", result?.includes("feat: add auth") ?? false);
-    check("rewrite uses --no-push", result?.includes("--no-push") ?? false);
-  }
-
-  // git add && git commit → removes git add, keeps script
-  {
-    const result = rewriteGitCommit(
-      'git add . && git commit -m "fix: bug"',
-      "/path/to/smart_commit.sh",
-    );
-    check("compound add+commit rewrites", result !== null && result.includes("smart_commit.sh"));
-    check("compound removes git add", !result?.includes("git add"));
-    check("compound includes message", result?.includes("fix: bug") ?? false);
-  }
-
-  // compound with trailing command → preserves trailing
-  {
-    const result = rewriteGitCommit(
-      'git commit -m "test: add tests" && npm run build',
-      "/path/to/smart_commit.sh",
-    );
-    check("preserves trailing command", result?.includes("npm run build") ?? false);
-    check("rewrites commit portion", result?.includes("smart_commit.sh") ?? false);
-  }
-
-  // commit with single quotes
-  {
-    const result = rewriteGitCommit(
-      "git commit -m 'docs: update readme'",
-      "/path/to/smart_commit.sh",
-    );
-    check("handles single-quoted message", result?.includes("docs: update readme") ?? false);
-  }
-
-  // commit without message → script auto-generates
-  {
-    const result = rewriteGitCommit("git commit", "/path/to/smart_commit.sh");
-    check("no-message commit rewrites", result !== null && result.includes("smart_commit.sh"));
-    check(
-      "no-message rewrite omits message arg",
-      result === "bash '/path/to/smart_commit.sh' --no-push",
-    );
-  }
-
-  // not a git commit → returns null
-  check("non-commit returns null", rewriteGitCommit("npm test", "/p/s.sh") === null);
-  check("git status returns null", rewriteGitCommit("git status", "/p/s.sh") === null);
-
-  // commit-tree and --amend → not matched
-  check("commit-tree not matched", rewriteGitCommit("git commit-tree HEAD", "/p/s.sh") === null);
-  check(
-    "--amend not matched",
-    rewriteGitCommit('git commit --amend -m "fix"', "/p/s.sh") === null,
-  );
-
-  // message with apostrophe → safely escaped
-  {
-    const result = rewriteGitCommit(
-      'git commit -m "fix: handle user\'s input"',
-      "/path/to/smart_commit.sh",
-    );
-    check("apostrophe in message handled", result !== null && result.includes("--no-push"));
-  }
-
-  // bug 2 fix: echo/sed/grep containing 'git commit' → not matched
-  check("echo git commit not matched", rewriteGitCommit('echo "git commit"', "/p/s.sh") === null);
-  check("grep git commit not matched", rewriteGitCommit('grep "git commit" log.txt', "/p/s.sh") === null);
-  check("sed git commit not matched", rewriteGitCommit('sed "s/git commit/x/g"', "/p/s.sh") === null);
-
-  // bug 4 fix: semicolon inside quoted message → handled correctly
-  {
-    const result = rewriteGitCommit(
-      'git commit -m "fix: handle a; b; c"',
-      "/path/to/smart_commit.sh",
-    );
-    check(
-      "semicolon in message: full message preserved",
-      result?.includes("handle a; b; c") ?? false,
-    );
-    check(
-      "semicolon in message: no broken trailing",
-      !result?.includes('c"') || result?.includes("handle a; b; c"),
-    );
-  }
-
-  // bug 1 fix: non-file mod claims not extracted
-  {
-    const nonFile = extractModClaims("I replaced `var` with `let` and changed `MAX_RETRIES`");
-    check("non-file 'var' not extracted", !nonFile.includes("var"));
-    check("non-file 'MAX_RETRIES' not extracted", !nonFile.includes("MAX_RETRIES"));
-    const realFiles = extractModClaims("I updated `src/foo.ts` and `lib/bar.py`");
-    check("real file still extracted", realFiles.includes("src/foo.ts"));
-  }
-
-  // regression: commit rewrite must actually invoke the script. a prior edit
-  // dropped `parts.push(scriptCall)`, so every rewrite returned "" and the
-  // falsy check in the tool_call handler silently disabled commit routing.
-  {
-    const r = rewriteGitCommit('git commit -m "feat: x"', "/s/smart_commit.sh");
-    check("rewrite is non-empty", (r?.length ?? 0) > 0);
-    check("rewrite invokes the script", r?.includes("smart_commit.sh") ?? false);
-  }
-
-  // regression: completion gate must judge only ADDED lines. a pre-existing
-  // marker on an untouched line used to block the agent in a loop it could
-  // not escape without editing unrelated code.
-  {
-    const diff = [
-      "diff --git a/src/legacy.py b/src/legacy.py",
-      "--- a/src/legacy.py",
-      "+++ b/src/legacy.py",
-      "@@ -3,0 +4,2 @@",
-      "+def g():",
-      "+    return 2",
-    ].join("\n");
-    const added = new Map<string, Array<{ line: number; text: string }>>();
-    parseDiffAdditions(diff, added);
-    check("diff parsed to one file", added.size === 1);
-    check("added lines captured", (added.get("src/legacy.py")?.length ?? 0) === 2);
-    check(
-      "added line numbers are new-file numbers",
-      added.get("src/legacy.py")?.[0]?.line === 4,
-    );
-    check(
-      "pre-existing marker not flagged",
-      checkAddedLines(added, DEFAULT_FORBIDDEN_MARKERS).length === 0,
-    );
-
-    const withMarker = new Map<string, Array<{ line: number; text: string }>>();
-    parseDiffAdditions(
-      [
-        "--- a/src/new.py",
-        "+++ b/src/new.py",
-        "@@ -0,0 +1,1 @@",
-        "+    # TODO: implement later",
-      ].join("\n"),
-      withMarker,
-    );
-    check(
-      "newly added marker still flagged",
-      checkAddedLines(withMarker, DEFAULT_FORBIDDEN_MARKERS).length === 1,
-    );
-  }
-
-  // regression: git reports repo-root-relative paths, but the agent writes
-  // cwd-relative ones. running omp from a subdirectory used to mark every
-  // honest claim fabricated.
-  {
-    const changed = new Set(["src/sub/a.txt"]);
-    const fromRoot = makeClaimMatcher(changed, "/repo", "/repo");
-    check("root cwd: claim matches", fromRoot("src/sub/a.txt"));
-    const fromSub = makeClaimMatcher(changed, "/repo", "/repo/src");
-    check("subdir cwd: cwd-relative claim matches", fromSub("sub/a.txt"));
-    check("subdir cwd: root-relative claim still matches", fromSub("src/sub/a.txt"));
-    check("subdir cwd: absolute claim matches", fromSub("/repo/src/sub/a.txt"));
-    check("unrelated claim still rejected", !fromSub("other/z.txt"));
-    // no repo root keeps the plain string comparison
-    check("no repo root: plain compare", makeClaimMatcher(changed, null, "/x")("src/sub/a.txt"));
-  }
-
-  // --- subagent manifest (the anti-reward-hacking contract) -----------------
-  {
-    const ok = extractManifest(
-      `Did the work.\n${MANIFEST_OPEN}\nsrc/a.ts\n- \`src/b.ts\`\n${MANIFEST_CLOSE}\n`,
-    );
-    check("manifest parsed", ok !== null && ok.length === 2);
-    check("manifest strips bullets/backticks", ok?.[1] === "src/b.ts");
-
-    const empty = extractManifest(`Nothing to change.\n${MANIFEST_OPEN}\n${MANIFEST_CLOSE}`);
-    check("empty manifest is valid, not missing", empty !== null && empty.length === 0);
-    check(
-      "'none' is treated as empty",
-      extractManifest(`${MANIFEST_OPEN}\nnone\n${MANIFEST_CLOSE}`)?.length === 0,
-    );
-    check("missing manifest returns null", extractManifest("I updated some files.") === null);
-    check(
-      "unterminated manifest returns null",
-      extractManifest(`${MANIFEST_OPEN}\nsrc/a.ts`) === null,
-    );
-
-    // vague prose used to pass the citation gate entirely — now it fails
-    const ev = freshEvidence();
-    const vague = checkCitations(
-      "per the review, done",
-      ["I updated the relevant files."],
-      new Set(),
-      ev,
-      true,
-    );
-    check(
-      "vague subagent report now fails",
-      vague.some((f) => f.rule === "subagent_missing_manifest"),
-    );
-
-    // a manifest naming a file the diff does not contain is caught
-    const lying = checkCitations(
-      "per the review, done",
-      [`${MANIFEST_OPEN}\nsrc/ghost.ts\n${MANIFEST_CLOSE}`],
-      new Set(["src/real.ts"]),
-      ev,
-      true,
-    );
-    check(
-      "manifest mismatch caught",
-      lying.some((f) => f.rule === "subagent_manifest_mismatch"),
-    );
-
-    // an honest manifest passes clean
-    const honest = checkCitations(
-      "per the review, done",
-      [`${MANIFEST_OPEN}\nsrc/real.ts\n${MANIFEST_CLOSE}`],
-      new Set(["src/real.ts"]),
-      ev,
-      true,
-    );
-    check("honest manifest passes", honest.length === 0);
-
-    // read-only subagent: empty manifest, no changes, no failure
-    const readOnly = checkCitations(
-      "done",
-      [`Found it in the parser.\n${MANIFEST_OPEN}\n${MANIFEST_CLOSE}`],
-      new Set(),
-      ev,
-      true,
-    );
-    check("read-only subagent passes with empty manifest", readOnly.length === 0);
-  }
-
-  // --- inline completion gate (fires at tool_result, not session_stop) ------
-  {
-    // edit: details.diff is a unified diff with no `+++` line
-    const diff = ["@@ -10,0 +11,2 @@", "+def g():", "+    # TODO: implement", ""].join("\n");
-    const added = inlineAdditions("edit", "src/x.py", {}, { diff });
-    check("edit diff parsed with fallback path", added?.has("src/x.py") ?? false);
-    check(
-      "inline gate flags the marker the edit introduced",
-      checkAddedLines(added ?? new Map(), DEFAULT_FORBIDDEN_MARKERS).length === 1,
-    );
-    check(
-      "inline line number comes from the hunk header",
-      checkAddedLines(added ?? new Map(), DEFAULT_FORBIDDEN_MARKERS)[0]?.detail.includes(
-        "line 12",
-      ),
-    );
-
-    // write: whole content is authored now
-    const w = inlineAdditions("write", "src/y.ts", { content: "const a = 1;\n// stub\n" }, {});
-    check(
-      "write content scanned",
-      checkAddedLines(w ?? new Map(), DEFAULT_FORBIDDEN_MARKERS).length === 1,
-    );
-    const clean = inlineAdditions("write", "src/z.ts", { content: "const a = 1;\n" }, {});
-    check(
-      "clean write not flagged",
-      checkAddedLines(clean ?? new Map(), DEFAULT_FORBIDDEN_MARKERS).length === 0,
-    );
-    check("no path yields no additions", inlineAdditions("write", "", {}, {}) === null);
-  }
-
-  // --- no-git mode: content hashing replaces the whole-file scan ------------
-  {
-    const before = "def a():\n    # TODO: implement\n    pass\n";
-    const afterClean = before + "\ndef b():\n    return 1\n";
-    // a pre-existing marker in an untouched line must NOT be reported
-    check(
-      "no git: pre-existing marker not flagged",
-      checkAddedLines(
-        diffByLineSet("m.py", before, afterClean),
-        DEFAULT_FORBIDDEN_MARKERS,
-      ).length === 0,
-    );
-    // but a newly added one is
-    check(
-      "no git: newly added marker flagged",
-      checkAddedLines(
-        diffByLineSet("m.py", before, before + "\n// stub\n"),
-        DEFAULT_FORBIDDEN_MARKERS,
-      ).length === 1,
-    );
-    check(
-      "no git: duplicate marker addition is flagged",
-      checkAddedLines(
-        diffByLineSet("m.py", before, `${before}${before.split("\n")[1]}\n`),
-        DEFAULT_FORBIDDEN_MARKERS,
-      ).length === 1,
-    );
-    check(
-      "no git: identical content yields no additions",
-      diffByLineSet("m.py", before, before).size === 0,
-    );
-    check("hash is stable", hashContent("abc") === hashContent("abc"));
-    check("hash distinguishes content", hashContent("abc") !== hashContent("abd"));
-  }
-
-  const tmpCfg = resolvePath(mkdtempSync(resolvePath(tmpdir(), "gate-cfg-")), "config.json");
-
-  // --- delivery gates (verify + commit) -------------------------------------
-  {
-    // arming, now via the engagement dial
-    check("default level is medium", loadConfig({}, tmpCfg).level === "medium");
-    check(
-      "OMP_GATES_LEVEL selects a level",
-      loadConfig({ OMP_GATES_LEVEL: "low" }, tmpCfg).level === "low",
-    );
-    check(
-      "an unknown OMP_GATES_LEVEL falls back to the default",
-      loadConfig({ OMP_GATES_LEVEL: "paranoid" }, tmpCfg).level === "medium",
-    );
-    // the old env var armed verify + commit, which is exactly what high does
-    check(
-      "legacy OMP_DELIVERY_GATES maps to high",
-      loadConfig({ OMP_DELIVERY_GATES: "1" }, tmpCfg).level === "high",
-    );
-    check(
-      "OMP_DELIVERY_GATES=0 does not arm",
-      loadConfig({ OMP_DELIVERY_GATES: "0" }, tmpCfg).level === "medium",
-    );
-    // an absent verify command must NOT become "npm test" — guessing turns a
-    // repo with no test runner into a permanent retry block
-    check("verify command is null when unset", loadConfig({}, tmpCfg).verifyCmd === null);
-    check(
-      "verify command read from env",
-      loadConfig({ OMP_VERIFY_CMD: "bun test" }, tmpCfg).verifyCmd === "bun test",
-    );
-
-    // predicates, against a real throwaway repo
-    const tmp = mkdtempSync(resolvePath(tmpdir(), "gate-delivery-"));
-    const git = (c: string) =>
-      execSync(c, { cwd: tmp, encoding: "utf-8", stdio: "pipe" });
-    git("git init -q .");
-    git("git config user.email t@t.t && git config user.name t");
-    writeFileSync(resolvePath(tmp, "a.txt"), "one\n");
-    git("git add -A && git commit -q -m init");
-
-    check("commit gate passes on a clean tree", runCommitGate(tmp) === null);
-    writeFileSync(resolvePath(tmp, "a.txt"), "two\n");
-    check("commit gate fails on a dirty tree", runCommitGate(tmp)?.rule === "uncommitted_changes");
-    // untracked files must not block: the diffs the rest of the stack reads do
-    // not report them either, so blocking here would be unfixable-by-committing
-    git("git checkout -- a.txt");
-    writeFileSync(resolvePath(tmp, "scratch.log"), "noise\n");
-    check("commit gate ignores untracked files", runCommitGate(tmp) === null);
-
-    check("verify gate passes on exit 0", runVerifyGate(tmp, "true") === null);
-    const vf = runVerifyGate(tmp, "echo boom >&2; exit 1");
-    check("verify gate fails on non-zero exit", vf?.rule === "verify_failed");
-    check("verify failure carries the output", vf?.detail.includes("boom") ?? false);
-
-    // the cache key must move whenever the tree moves, or a retry could reuse a
-    // stale verdict and the agent would never clear the gate
-    const none = new Map<string, string | null>();
-    const k1 = treeStateKey(tmp, true, none);
-    check("tree state key is stable when nothing changes", treeStateKey(tmp, true, none) === k1);
-    writeFileSync(resolvePath(tmp, "a.txt"), "three\n");
-    check("tree state key moves when a tracked file changes", treeStateKey(tmp, true, none) !== k1);
-    // untracked files count: a test command reads the whole tree, not just the
-    // index, so a new fixture file must invalidate the cached verdict
-    const k2 = treeStateKey(tmp, true, none);
-    writeFileSync(resolvePath(tmp, "fixture.json"), "{}\n");
-    check("tree state key moves when an untracked file appears", treeStateKey(tmp, true, none) !== k2);
-
-    // no repo: the key comes from the touched files, so the verify cache still
-    // works and the suite does not re-run on every continuation
-    const touched = new Map<string, string | null>([["a.txt", null]]);
-    const n1 = treeStateKey(tmp, false, touched);
-    check("no-git key is stable when the file is unchanged", treeStateKey(tmp, false, touched) === n1);
-    writeFileSync(resolvePath(tmp, "a.txt"), "four\n");
-    check("no-git key moves when the file changes", treeStateKey(tmp, false, touched) !== n1);
-    check(
-      "no-git key with nothing touched never caches",
-      treeStateKey(tmp, false, none) !== treeStateKey(tmp, false, none),
-    );
-
-    rmSync(tmp, { recursive: true, force: true });
-  }
-
-  // --- "a process should have run" detector ---------------------------------
-  {
-    const ev = (cmds: string[]): TurnEvidence => {
-      const e = freshEvidence();
-      e.bashCommands = cmds.map((cmd) => ({ cmd, isError: false }));
-      return e;
-    };
-    const withTests = ev(["bun test"]);
-    const noTests = ev(["ls -la"]);
-
-    check("shape matches a bounded verified change", processShape(withTests, 3).matched);
-    check(
-      "shape rejects a request that changed nothing",
-      processShape(withTests, 0).reason === "no-changes",
-    );
-    check(
-      "shape rejects a sweep wider than the process can accept",
-      processShape(withTests, PROCESS_SHAPE_MAX_FILES + 1).reason === "too-broad",
-    );
-    check(
-      "shape accepts exactly the file bound",
-      processShape(withTests, PROCESS_SHAPE_MAX_FILES).matched,
-    );
-    check(
-      "shape rejects an unverified change",
-      processShape(noTests, 3).reason === "no-test-run",
-    );
-    // a failed test run is not a test run — the process verifies, it does not
-    // merely invoke
-    const failedTests = freshEvidence();
-    failedTests.bashCommands = [{ cmd: "bun test", isError: true }];
-    check(
-      "shape rejects a failed test command",
-      processShape(failedTests, 3).reason === "no-test-run",
-    );
-    check("shape reports the change count", processShape(withTests, 5).changed === 5);
-    check("matched shape carries no reason", processShape(withTests, 1).reason === null);
-
-    // aggregation: the rate and the miss breakdown are what drive the phase 3
-    // decision, so they must survive the round trip through the ledger
-    const s = ledger.summarize([
-      { event: "process_shape", matched: true, reason: null },
-      { event: "process_shape", matched: false, reason: "no-changes" },
-      { event: "process_shape", matched: false, reason: "no-changes" },
-      { event: "process_shape", matched: false, reason: "too-broad" },
-    ]);
-    check("ledger counts shape requests", s.shapeRequests === 4);
-    check("ledger counts shape matches", s.shapeMatched === 1);
-    check("ledger computes the match rate", s.shapeMatchRate === 0.25);
-    check("ledger groups misses by reason", s.shapeMissBy["no-changes"] === 2);
-    check("empty ledger yields a zero rate", ledger.summarize([]).shapeMatchRate === 0);
-  }
-
-  // --- fix 3: a manifest must be recoverable from a JSON subagent report ----
-  {
-    check(
-      "json array manifest recovered",
-      JSON.stringify(extractManifest('{"changed": ["src/a.ts"]}')) === '["src/a.ts"]',
-    );
-    check(
-      "json empty array is a valid empty manifest",
-      extractManifest('{"section": {"review": "ok", "changed": []}}')?.length === 0,
-    );
-    check(
-      "json null is a valid empty manifest",
-      extractManifest('{"changed": null}')?.length === 0,
-    );
-    for (const key of MANIFEST_JSON_KEYS) {
-      check(
-        `json key \`${key}\` accepted`,
-        extractManifest(`{"${key}": ["src/a.ts"]}`)?.length === 1,
-      );
-    }
-    // the real shape from the failed run: token embedded in a JSON string value,
-    // arriving with escaped newlines
-    // built with JSON.stringify so the escaping is the harness's, not mine —
-    // this is the exact shape that ended the failed run
-    check(
-      "token embedded in a json string recovered",
-      extractManifest(
-        JSON.stringify({
-          verdict: "correct",
-          manifest: `${MANIFEST_OPEN}\n${MANIFEST_CLOSE}`,
-        }),
-      )?.length === 0,
-    );
-    check(
-      "token embedded in a json string with paths recovered",
-      extractManifest(
-        JSON.stringify({ manifest: `${MANIFEST_OPEN}\nsrc/a.ts\n${MANIFEST_CLOSE}` }),
-      )?.length === 1,
-    );
-    check(
-      "json wrapped in surrounding text still parsed",
-      extractManifest('<output>\n{"changed": ["src/a.ts"]}\n</output>')?.length === 1,
-    );
-    check(
-      "json without any manifest key is still missing",
-      extractManifest('{"verdict": "correct", "notes": "looks fine"}') === null,
-    );
-    check(
-      "prose with the literal block still wins",
-      extractManifest(`report\n${MANIFEST_OPEN}\nsrc/a.ts\n${MANIFEST_CLOSE}`)?.length === 1,
-    );
-  }
-
-  // --- fix 4: a report is judged only when the parent leans on it -----------
-  {
-    const noManifest = ["I reviewed it. Looks correct."];
-    const evA = freshEvidence();
-    check(
-      "parent that cites no subagent is not judged for one",
-      checkCitations("i ran the tests myself and they pass", noManifest, new Set(), evA, true)
-        .filter((f) => f.rule.startsWith("subagent_")).length === 0,
-    );
-    const evB = freshEvidence();
-    check(
-      "parent that cites the reviewer IS judged",
-      checkCitations("the reviewer confirmed it", noManifest, new Set(), evB, true)
-        .some((f) => f.rule === "subagent_missing_manifest"),
-    );
-    check("reliance detector: plain prose", reliesOnSubagents("all done") === false);
-    check("reliance detector: subagent", reliesOnSubagents("the subagent found a bug"));
-    check("reliance detector: review", reliesOnSubagents("per the review, it is correct"));
-  }
-
-  // --- fix 2: retrying must not grow the failure count ----------------------
-  {
-    const ev = freshEvidence();
-    const parent = "the reviewer reported back";
-    const first = checkCitations(parent, ["report one, no manifest"], new Set(), ev, true);
-    check("turn 1 reports the first subagent", first.length === 1);
-    // continuation: evidence survives the latch, and the retry spawned another
-    const second = checkCitations(
-      parent,
-      ["report one, no manifest", "report two, no manifest"],
-      new Set(),
-      ev,
-      true,
-    );
-    check("turn 2 reports only the NEW subagent", second.length === 1);
-    const third = checkCitations(
-      parent,
-      ["report one, no manifest", "report two, no manifest"],
-      new Set(),
-      ev,
-      true,
-    );
-    check("turn 3 with no new subagent reports nothing", third.length === 0);
-  }
-
-  // --- fix 5: severity ------------------------------------------------------
-  {
-    const ev = freshEvidence();
-    // read-only reviewer: no manifest, but claims nothing the diff denies
-    const warn = checkCitations("the reviewer says it is correct", ["looks correct to me"], new Set(), ev, true);
-    check("corroborated missing manifest is a warning", warn[0]?.severity === "warn");
-
-    const ev2 = freshEvidence();
-    // same missing manifest, but the subagent claims a file the diff lacks
-    const block = checkCitations(
-      "the reviewer says it is correct",
-      ["I updated `src/ghost.ts` for you"],
-      new Set(["src/real.ts"]),
-      ev2,
-      true,
-    );
-    check(
-      "contradicted missing manifest blocks",
-      block.find((f) => f.rule === "subagent_missing_manifest")?.severity === "block",
-    );
-    check(
-      "every other rule stays blocking by default",
-      checkAddedLines(contentToAdded("a.ts", "// stub\n"), DEFAULT_FORBIDDEN_MARKERS)[0]
-        ?.severity === undefined,
-    );
-  }
-
-  // --- fix 6: the cap dropped ----------------------------------------------
-  check("continuation cap is 3", MAX_CONTINUATIONS === 3);
-
-  // --- fix 7: direct smart_commit.sh invocations are rewritten --------------
-  {
-    const SP = "/home/niko/.omp/agent/skills/git-pushing/scripts/smart_commit.sh";
-    const rel = rewriteSmartCommit("bash skills/git-pushing/scripts/smart_commit.sh", SP);
-    check("relative script path replaced with the absolute one", rel?.includes(`'${SP}'`) ?? false);
-    check("--no-push appended to a direct call", rel?.endsWith("--no-push") ?? false);
-    const withMsg = rewriteSmartCommit(`bash ./smart_commit.sh "feat: x"`, SP);
-    check("message preserved", withMsg?.includes('"feat: x"') ?? false);
-    check(
-      "existing --no-push not duplicated",
-      (rewriteSmartCommit(`bash ${SP} "m" --no-push`, SP) ?? "").split("--no-push").length <= 2,
-    );
-    check(
-      "already-correct call needs no rewrite",
-      rewriteSmartCommit(`bash '${SP}' 'm' --no-push`, SP) === null,
-    );
-    check("unrelated commands untouched", rewriteSmartCommit("ls -la", SP) === null);
-  }
-
-  // --- engagement dial ------------------------------------------------------
-  {
-    const f = (rule: string, severity?: "block" | "warn"): GateFailure => ({
-      gate: "citation",
-      rule,
-      detail: rule,
-      ...(severity ? { severity } : {}),
-    });
-    const all = [
-      f("forbidden_marker"),
-      f("fabricated_modification"),
-      f("ungrounded_snapshot_tag"),
-      f("subagent_missing_manifest", "warn"),
-      f("subagent_fabricated_modification"),
-      f("verify_failed"),
-      f("uncommitted_changes"),
-    ];
-    const grade = (level: GateLevel) =>
-      new Map(
-        applyPolicy(all, policyFor(level) as GatePolicy).map((x) => [
-          x.rule,
-          x.severity ?? "block",
-        ]),
-      );
-
-    // off — nothing survives
-    check("off drops every failure", applyPolicy(all, policyFor("off") as GatePolicy).length === 0);
-    check("off disables the inline gate", policyFor("off").inline === false);
-
-    // low — intentionally loose: findings are recorded, nothing blocks
-    const low = grade("low");
-    check("low blocks nothing", [...low.values()].every((v) => v === "warn"));
-    check("low still reports markers", low.get("forbidden_marker") === "warn");
-    check("low drops the commit gate", low.has("uncommitted_changes") === false);
-    check("low drops the manifest rule", low.has("subagent_missing_manifest") === false);
-    check("low keeps the inline gate", policyFor("low").inline);
-
-    // medium — the default: real defects block, commit discipline does not
-    const med = grade("medium");
-    check("medium blocks added stubs", med.get("forbidden_marker") === "block");
-    check("medium blocks fabricated claims", med.get("fabricated_modification") === "block");
-    check("medium blocks a failing test suite", med.get("verify_failed") === "block");
-    // the whole point of the dial: no forced commit outside high
-    check("medium does NOT force a commit", med.has("uncommitted_changes") === false);
-    check(
-      "medium keeps the diff-derived manifest severity",
-      med.get("subagent_missing_manifest") === "warn",
-    );
-
-    // high — everything blocks
-    const high = grade("high");
-    check("high blocks every rule", [...high.values()].every((v) => v === "block"));
-    check("high forces a commit", high.get("uncommitted_changes") === "block");
-    check(
-      "high blocks a missing manifest even when corroborated",
-      high.get("subagent_missing_manifest") === "block",
-    );
-
-    // a rule with no policy entry must not vanish
-    check(
-      "an unmapped rule survives at its own severity",
-      applyPolicy([f("brand_new_rule")], policyFor("low") as GatePolicy).length === 1,
-    );
-
-    // runaway protection is never on the dial
-    for (const level of LEVELS) {
-      check(`${level}: continuation cap unchanged`, MAX_CONTINUATIONS === 3);
-    }
-
-    // round trip through a real config file
-    check("save writes the level", saveConfig("high", "bun test", tmpCfg).ok);
-    const back = loadConfig({}, tmpCfg);
-    check("load reads the level back", back.level === "high");
-    check("load reads the verify command back", back.verifyCmd === "bun test");
-    check("config file beats the env var", loadConfig({ OMP_GATES_LEVEL: "low" }, tmpCfg).level === "high");
-    saveConfig("off", undefined, tmpCfg);
-    check("disable round-trips", loadConfig({}, tmpCfg).level === "off");
-    rmSync(resolvePath(tmpCfg, ".."), { recursive: true, force: true });
-
-    // the description must name what actually changes
-    check("describe names the level", describeLevel("high", "bun test").includes("HIGH"));
-    check(
-      "describe warns when high has no verify command",
-      describeLevel("high", null).includes("high expects a verify command"),
-    );
-    check("describe off is unambiguous", describeLevel("off", null).includes("gates: OFF"));
-  }
-
-  // --- review pass: false-positive guards -----------------------------------
-  {
-    // a verify gate that passed IS evidence for a "tests pass" claim. without
-    // this the citation gate flagged a TRUE statement as a fabrication.
-    const evV = freshEvidence();
-    evV.verifyPassed = true;
-    check(
-      "a passing verify run grounds a test claim",
-      checkCitations("all tests passed", [], new Set(), evV, true).length === 0,
-    );
-    const evNo = freshEvidence();
-    check(
-      "an unverified test claim still fails",
-      checkCitations("all tests passed", [], new Set(), evNo, true).some(
-        (f) => f.rule === "fabricated_test_result",
-      ),
-    );
-
-    // a non-path string must not become a manifest entry
-    check(
-      'json `"changed": "yes"` is not a manifest',
-      extractManifest('{"changed": "yes"}') === null,
-    );
-    check(
-      'json `"changed": "done reviewing"` is not a manifest',
-      extractManifest('{"changed": "done reviewing"}') === null,
-    );
-    check(
-      "json string of real paths still counts",
-      extractManifest('{"changed": "src/a.ts\\nsrc/b.ts"}')?.length === 2,
-    );
-    check(
-      "json boolean is not a manifest",
-      extractManifest('{"changed": true}') === null,
-    );
-
-    // a script whose name merely ENDS with the target must not be rewritten
-    {
-      const SP = "/home/niko/.omp/agent/skills/git-pushing/scripts/smart_commit.sh";
-      check(
-        "my_smart_commit.sh is left alone",
-        rewriteSmartCommit("bash my_smart_commit.sh", SP) === null,
-      );
-      check(
-        "a real relative path is still rewritten",
-        rewriteSmartCommit("bash ./scripts/smart_commit.sh", SP)?.includes(SP) ?? false,
-      );
-    }
-
-    // the marker list must stay case-insensitive: the house style is lowercase
-    // code, and an uppercase-only match would miss every marker written in it
-    check(
-      "markers match regardless of case",
-      checkAddedLines(contentToAdded("a.py", "# TODO: IMPLEMENT\n"), DEFAULT_FORBIDDEN_MARKERS)
-        .length === 1,
-    );
-
-    // a rule the policy does not know must not vanish silently
-    check(
-      "policy passes an unknown rule through untouched",
-      applyPolicy(
-        [{ gate: "citation", rule: "future_rule", detail: "x", severity: "warn" }],
-        policyFor("high") as GatePolicy,
-      )[0]?.severity === "warn",
-    );
-  }
-
-  console.log(`\n${pass} passed, ${fail} failed`);
-  if (fail > 0) process.exit(1);
 }

@@ -268,7 +268,7 @@ bun test ask-questionnaire/index.test.ts plugin.test.ts
 bun run test
 ```
 
-`bun run test` also runs the gate-checker unit tests, the embedded policy check, and the wiring probe.
+`bun run test` also runs the gate-checker unit tests and the wiring probe.
 
 sources: [test harness](../ask-questionnaire/index.test.ts#L1-L50), [`package.json` scripts](../package.json#L59-L61)
 

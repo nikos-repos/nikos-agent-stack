@@ -789,7 +789,7 @@ source for the public surface. it declares:
 | `exports` | `./gate-cli`, `./gates`, and <code>./delivery-contract.&#112;rocess</code> for importing processes |
 | `files` | the runtime file allowlist the plugin manager installs |
 
-run every focused test, the package-contract test, the embedded predicate checks, and the end-to-end wiring probe from the repository root:
+run every focused test, the package-contract test, and the end-to-end wiring probe from the repository root:
 
 ```sh
 bun run test

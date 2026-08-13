@@ -162,7 +162,7 @@ terra advisor:
 bun run test
 ```
 
-this runs the gate-checker and questionnaire unit tests, the packaged-surface test, the embedded policy checks in `gate-checker/index.ts`, and the end-to-end wiring probe. the exact command is in [`package.json`](package.json).
+this runs the gate-checker and questionnaire unit tests, the packaged-surface test, and the end-to-end wiring probe. the exact command is in [`package.json`](package.json).
 
 ## repository map
 
