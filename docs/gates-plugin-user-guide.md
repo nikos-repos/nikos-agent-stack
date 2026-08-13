@@ -75,6 +75,22 @@ low keeps inline checks and telemetry, but it does not force a continuation.
 
 level changes apply in the current session and persist for later sessions. no restart is required.
 
+### update the live extension
+
+from the `nikos-agent-stack` repository root:
+
+```sh
+install -d ~/.omp/agent/extensions/gate-checker
+cp gate-checker/*.js gate-checker/index.ts gate-checker/wiring-check.ts \
+  ~/.omp/agent/extensions/gate-checker/
+
+bun run ~/.omp/agent/extensions/gate-checker/index.ts
+bun run ~/.omp/agent/extensions/gate-checker/wiring-check.ts
+```
+
+copy the complete runtime file set from one tested commit. do not copy test
+files. restart omp after the copy because extension discovery occurs at startup.
+
 source: [command registration and live policy updates](../gate-checker/index.ts), [level descriptions](../gate-checker/config.js)
 
 ## engagement levels
@@ -110,11 +126,11 @@ session start
   -> show active gate state
 agent start
   -> capture request baseline
-  -> detect git or enter degraded mode
+  -> detect git or show low: no git
 tool call
+  -> bind the first repository exposed by cwd or path
   -> record touched files
   -> route commit commands
-  -> inject subagent rules
 tool result
   -> collect read and edit snapshot tags
   -> report newly added forbidden markers
@@ -299,11 +315,11 @@ it then excludes files that were already unstaged at the baseline. paths come fr
 
 source: [baseline and diff derivation](../gate-checker/index.ts)
 
-### degraded no-git mode
+### low: no git
 
 when git is unavailable, the extension:
 
-- shows a degraded-mode status.
+- shows `gate: <policy> · low: no git`.
 - snapshots a file before its first `write` or `edit` call.
 - compares the first-touch snapshot with final content.
 - judges only watched paths.
@@ -311,13 +327,24 @@ when git is unavailable, the extension:
 - still runs a configured verification command.
 - does not run the commit gate.
 
+before each tool effect, the extension checks an explicit tool working directory,
+an explicit file path, and the current harness working directory. the first
+repository found becomes authoritative for the request. its commit, dirty paths,
+snapshots, root, lease, verification directory, and commit policy apply as if the
+request started there. earlier no-git evidence stays in the final scope.
+
+a request never binds to a second repository. when later tool activity points to
+another repository, the extension records `omp.gate-checker.repository-limit`
+with the authoritative and ignored roots.
+
 limitations:
 
-- a file changed only through bash or an unobserved external process is not watched.
+- a file changed only through bash or an unobserved external process is not watched unless the tool exposes its repository through `cwd`.
 - a deleted, unreadable, or oversized final file cannot produce an added-line comparison.
 - line-set comparison can identify newly present text but is less exact than a git hunk.
+- one request has one authoritative repository.
 
-source: [degraded diff and request hooks](../gate-checker/index.ts), [snapshot implementation](../gate-checker/predicates.js)
+source: [no-git diff and repository binding](../gate-checker/index.ts), [snapshot implementation](../gate-checker/predicates.js)
 
 ## verification command behavior
 
@@ -465,7 +492,7 @@ bun run ~/.omp/agent/extensions/gate-checker/gate-cli.js stats \
   --ledger /path/to/ledger.jsonl
 ```
 
-stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, degraded runs, process-shape rate, miss reasons, and counts by rule.
+stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, process-shape rate, miss reasons, and counts by rule. the json field is `no_git_runs`.
 
 source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js)
 
@@ -555,7 +582,7 @@ record types:
 | `inline_flag` | records a marker found immediately after a write or edit |
 | `gate_eval` | records warning, blocking, and verification outcomes |
 | `chain_end` | records resolved, stalemate, or cap-reached continuation chains |
-| `degraded` | records no-git operation |
+| `no_git` | records no-git operation |
 | `process_shape` | records whether the request matched the structured-process workload |
 
 ### tuning signals
@@ -563,7 +590,7 @@ record types:
 - **cap-hit rate:** fraction of continuation chains that exhausted the cap.
 - **forced retries:** total blocking continuations.
 - **inline flags:** marker issues found early without a full response retry.
-- **degraded runs:** requests without git evidence.
+- **low: no git runs:** requests that started without git evidence. the reader includes legacy no-git records in `no_git_runs`.
 - **process-shape rate:** bounded changed requests with test evidence.
 - **rule counts:** frequent rules show where users or predicates need attention.
 
@@ -633,11 +660,14 @@ confirm that `~/.omp/agent/skills/git-pushing/scripts/smart_commit.sh` exists. r
 
 source: [commit routing activation](../gate-checker/index.ts)
 
-### the plugin reports degraded mode
+### the plugin reports low: no git
 
-git baseline capture failed or the working directory is not a repository. the plugin can still watch `write` and `edit` paths and run verification, but it cannot prove changes made outside those hooks or enforce commits.
+the current tool context does not identify a git repository. the plugin still
+watches `write` and `edit` paths and runs verification. the first later tool call
+with a repository `cwd` or path binds that repository automatically. until then,
+the plugin cannot prove changes made outside watched hooks or enforce commits.
 
-source: [baseline and degraded mode](../gate-checker/index.ts)
+source: [baseline and automatic repository binding](../gate-checker/index.ts)
 
 ## working repository upgrade
 
