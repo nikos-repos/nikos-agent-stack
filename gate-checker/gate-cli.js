@@ -189,21 +189,21 @@ function stats(args) {
   const s = summarize(records);
   const scratch = readRecords(FRUSTRATION_PATH);
   /** @type {Record<string, number>} */
-  const byType = {};
-  const bySource = { agent: 0, auto: 0, legacy: 0 };
+  const bytype = Object.create(null);
+  const bysource = { agent: 0, auto: 0, legacy: 0 };
   for (const r of scratch) {
-    byType[r.type] = (byType[r.type] ?? 0) + 1;
+    bytype[r.type] = (bytype[r.type] ?? 0) + 1;
     // a record without a source predates the source field: count it as legacy
-    bySource[r.source === "agent" || r.source === "auto" ? r.source : "legacy"]++;
+    bysource[r.source === "agent" || r.source === "auto" ? r.source : "legacy"]++;
   }
-  const cleanUnderErrors = records.filter((r) => r.event === "clean_under_errors").length;
+  const cleanundererrors = records.filter((r) => r.event === "clean_under_errors").length;
   // the scratchpad outlives any one ledger, so its summary prints on both the
   // empty- and nonempty-ledger paths
   const printfrustrations = () => {
     console.log(
-      `  frustrations     ${scratch.length}  (agent ${bySource.agent}, auto ${bySource.auto}, legacy ${bySource.legacy})`,
+      `  frustrations     ${scratch.length}  (agent ${bysource.agent}, auto ${bysource.auto}, legacy ${bysource.legacy})`,
     );
-    const types = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+    const types = Object.entries(bytype).sort((a, b) => b[1] - a[1]);
     if (types.length > 0) {
       console.log("  frustration types:");
       for (const [type, n] of types) console.log(`    ${String(n).padStart(5)}  ${type}`);
@@ -217,8 +217,8 @@ function stats(args) {
           ledger: path,
           records: records.length,
           ...s,
-          clean_under_errors: cleanUnderErrors,
-          frustrations: { records: scratch.length, byType, bySource },
+          clean_under_errors: cleanundererrors,
+          frustrations: { records: scratch.length, byType: bytype, bySource: bysource },
         },
         null,
         2,
@@ -231,6 +231,7 @@ function stats(args) {
   console.log(`  records          ${records.length}`);
   if (records.length === 0) {
     console.log("  (no gate activity recorded yet)");
+    console.log(`  clean under errors ${cleanundererrors}`);
     printfrustrations();
     return 0;
   }
@@ -245,7 +246,7 @@ function stats(args) {
   }
   console.log(`  inline flags     ${s.inlineFlags}  <- caught early, no retry needed`);
   console.log(`  low: no git runs ${s.no_git_runs}`);
-  console.log(`  clean under errors ${cleanUnderErrors}`);
+  console.log(`  clean under errors ${cleanundererrors}`);
 
   if (s.shapeRequests > 0) {
     console.log(
