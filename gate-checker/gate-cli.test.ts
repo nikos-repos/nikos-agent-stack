@@ -75,6 +75,115 @@ test("stats use no-git names and retain historical counts", () => {
   expect(text.stdout).not.toContain("degraded runs");
 });
 
+test("stats report frustration types, sources, and clean-under-errors events", () => {
+  const cwd = mkdtempsync(join(tmpdir(), "gate-cli-stats2-"));
+  repos.push(cwd);
+  const ledger = join(cwd, "ledger.jsonl");
+  writefilesync(
+    ledger,
+    '{"event":"no_git"}\n{"event":"clean_under_errors","rule":"clean_turn"}\n',
+  );
+  const scratch = join(cwd, "frustrations.jsonl");
+  // a repo taxonomy extension admits "none" before it is a fixed type
+  mkdirsync(join(cwd, ".omp"));
+  writefilesync(join(cwd, ".omp", "gates-frustrations.json"), '{"types":["none"]}');
+  const record = (over: Record<string, unknown>) =>
+    JSON.stringify({
+      ts: "2026-08-14T00:00:00.000Z",
+      request_id: "r1",
+      agent_id: "a1",
+      session_file: join(cwd, "session.jsonl"),
+      session_id: "s1",
+      primary_goal: "ship the rework",
+      ...over,
+    });
+  writefilesync(
+    scratch,
+    [
+      record({
+        type: "tooling",
+        severity: "medium",
+        complaint: "slow tool",
+        source: "agent",
+        evidence: [{ kind: "command", command: "make", exit_code: 1, output: "fail" }],
+      }),
+      record({
+        type: "none",
+        severity: "low",
+        complaint: "none",
+        source: "auto",
+        repo_root: cwd,
+        evidence: [{ kind: "gate", event_id: "6f96e5b9-1c2d-4e8a-9f3b-7d5c0a8e2b14", rule: "clean_turn" }],
+      }),
+      record({
+        type: "environment",
+        severity: "low",
+        complaint: "flaky network",
+        evidence: [{ kind: "snapshot", path: "log", line: 1, digest: "d0", claim: "timeout" }],
+      }),
+    ].join("\n") + "\n",
+  );
+  const env = { ...process.env, OMP_GATE_FRUSTRATIONS: scratch };
+
+  const json = spawnsync(
+    "bun",
+    ["run", join(import.meta.dir, "gate-cli.js"), "stats", "--ledger", ledger, "--json"],
+    { encoding: "utf8", env },
+  );
+  expect(json.status).toBe(0);
+  const output = JSON.parse(json.stdout);
+  expect(output.clean_under_errors).toBe(1);
+  expect(output.frustrations.records).toBe(3);
+  expect(output.frustrations.byType).toEqual({ tooling: 1, none: 1, environment: 1 });
+  expect(output.frustrations.bySource).toEqual({ agent: 1, auto: 1, legacy: 1 });
+
+  const text = spawnsync(
+    "bun",
+    ["run", join(import.meta.dir, "gate-cli.js"), "stats", "--ledger", ledger],
+    { encoding: "utf8", env },
+  );
+  expect(text.status).toBe(0);
+  expect(text.stdout).toContain("clean under errors 1");
+  expect(text.stdout).toContain("frustrations     3  (agent 1, auto 1, legacy 1)");
+  expect(text.stdout).toContain("frustration types:");
+  expect(text.stdout).toContain("1  none");
+});
+
+test("stats still print the frustration summary when the ledger is empty", () => {
+  const cwd = mkdtempsync(join(tmpdir(), "gate-cli-stats3-"));
+  repos.push(cwd);
+  const ledger = join(cwd, "ledger.jsonl");
+  writefilesync(ledger, "");
+  const scratch = join(cwd, "frustrations.jsonl");
+  writefilesync(
+    scratch,
+    JSON.stringify({
+      ts: "2026-08-14T00:00:00.000Z",
+      request_id: "r1",
+      agent_id: "a1",
+      session_file: join(cwd, "session.jsonl"),
+      session_id: "s1",
+      primary_goal: "ship the rework",
+      complaint: "none",
+      type: "none",
+      severity: "low",
+      source: "agent",
+      evidence: [{ kind: "gate", event_id: "e1", rule: "clean_turn" }],
+    }) + "\n",
+  );
+  const env = { ...process.env, OMP_GATE_FRUSTRATIONS: scratch };
+
+  const text = spawnsync(
+    "bun",
+    ["run", join(import.meta.dir, "gate-cli.js"), "stats", "--ledger", ledger],
+    { encoding: "utf8", env },
+  );
+  expect(text.status).toBe(0);
+  expect(text.stdout).toContain("no gate activity recorded yet");
+  expect(text.stdout).toContain("frustrations     1  (agent 1, auto 0, legacy 0)");
+  expect(text.stdout).toContain("1  none");
+});
+
 function agentdir() {
   const cwd = mkdtempsync(join(tmpdir(), "gate-cli-advisor-"));
   repos.push(cwd);

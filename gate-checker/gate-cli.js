@@ -16,7 +16,10 @@
  *   stats [--json] [--ledger <path>]
  *       summarize the gate ledger. `capHitRate` is the headline number: a high
  *       rate means the gates are too strict, because the agent could not
- *       satisfy them even given every retry.
+ *       satisfy them even given every retry. also counts `clean_under_errors`
+ *       ledger events and summarizes the frustration scratchpad
+ *       (OMP_GATE_FRUSTRATIONS) by type and by source: agent, auto, or legacy
+ *       when no source is stored.
  */
 
 import { execFileSync } from "child_process";
@@ -27,6 +30,7 @@ import {
   checkAddedLines,
 } from "./predicates.js";
 import { read, summarize, LEDGER_PATH } from "./ledger.js";
+import { FRUSTRATION_PATH, readRecords } from "./frustrations.js";
 import { resolvescope } from "./scope.js";
 import { auditscope } from "./risks.js";
 import { installadvisor } from "../advisor/install.js";
@@ -183,9 +187,43 @@ function stats(args) {
   const path = typeof args.ledger === "string" ? args.ledger : LEDGER_PATH;
   const records = read(path);
   const s = summarize(records);
+  const scratch = readRecords(FRUSTRATION_PATH);
+  /** @type {Record<string, number>} */
+  const byType = {};
+  const bySource = { agent: 0, auto: 0, legacy: 0 };
+  for (const r of scratch) {
+    byType[r.type] = (byType[r.type] ?? 0) + 1;
+    // a record without a source predates the source field: count it as legacy
+    bySource[r.source === "agent" || r.source === "auto" ? r.source : "legacy"]++;
+  }
+  const cleanUnderErrors = records.filter((r) => r.event === "clean_under_errors").length;
+  // the scratchpad outlives any one ledger, so its summary prints on both the
+  // empty- and nonempty-ledger paths
+  const printfrustrations = () => {
+    console.log(
+      `  frustrations     ${scratch.length}  (agent ${bySource.agent}, auto ${bySource.auto}, legacy ${bySource.legacy})`,
+    );
+    const types = Object.entries(byType).sort((a, b) => b[1] - a[1]);
+    if (types.length > 0) {
+      console.log("  frustration types:");
+      for (const [type, n] of types) console.log(`    ${String(n).padStart(5)}  ${type}`);
+    }
+  };
 
   if (args.json) {
-    console.log(JSON.stringify({ ledger: path, records: records.length, ...s }, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          ledger: path,
+          records: records.length,
+          ...s,
+          clean_under_errors: cleanUnderErrors,
+          frustrations: { records: scratch.length, byType, bySource },
+        },
+        null,
+        2,
+      ),
+    );
     return 0;
   }
 
@@ -193,6 +231,7 @@ function stats(args) {
   console.log(`  records          ${records.length}`);
   if (records.length === 0) {
     console.log("  (no gate activity recorded yet)");
+    printfrustrations();
     return 0;
   }
   console.log(
@@ -206,6 +245,7 @@ function stats(args) {
   }
   console.log(`  inline flags     ${s.inlineFlags}  <- caught early, no retry needed`);
   console.log(`  low: no git runs ${s.no_git_runs}`);
+  console.log(`  clean under errors ${cleanUnderErrors}`);
 
   if (s.shapeRequests > 0) {
     console.log(
@@ -228,6 +268,8 @@ function stats(args) {
     console.log("  inline flags by rule:");
     for (const [rule, n] of inline) console.log(`    ${String(n).padStart(5)}  ${rule}`);
   }
+
+  printfrustrations();
   return 0;
 }
 
