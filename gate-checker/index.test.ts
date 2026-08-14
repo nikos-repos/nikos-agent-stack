@@ -449,6 +449,12 @@ test("the subagent nudge states the manifest, frustration tool, markers, and com
 	expect(GATE_NUDGE.includes("goal")).toBe(true);
 	expect(GATE_NUDGE.includes("forbidden markers")).toBe(true);
 	expect(GATE_NUDGE.includes("git-pushing")).toBe(true);
+	// papercut philosophy: friction counts even when nothing failed, and
+	// type "none" is reserved for a friction-free session
+	expect(GATE_NUDGE.includes("papercuts")).toBe(true);
+	expect(GATE_NUDGE.includes("confusing docs")).toBe(true);
+	expect(GATE_NUDGE.includes('type "none"')).toBe(true);
+	expect(GATE_NUDGE.includes("friction-free")).toBe(true);
 });
 
 test("task inputs receive only the generic gate nudge", async () => {

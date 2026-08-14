@@ -909,10 +909,13 @@ export const GATE_NUDGE =
   "git commit.\n\n" +
   // every active session and subagent needs a frustration record tied to its
   // server session file. the tool is the identity gate: without it the session
-  // has no record of what blocked it.
+  // has no record of what blocked it. papercuts count even when nothing
+  // failed, so "none" stays reserved for a genuinely friction-free session.
   "(4) call record_frustration with your assigned id and goal to log any " +
-  "friction you hit — every active identity needs one record for its " +
-  "session.\n\n";
+  "friction — papercuts count even when nothing failed: confusing docs, " +
+  "dead ends, awkward tool output. use type \"none\" only when the whole " +
+  "session was friction-free. every active identity needs one record for " +
+  "its session.\n\n";
 
 // --- factory ----------------------------------------------------------------
 
@@ -1235,15 +1238,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
     name: "record_frustration",
     label: "record frustration",
     description:
-      "log a frustration encountered during the current session. every active " +
-      "identity (main session and each subagent) needs one record for that " +
-      "session. append-only jsonl.",
+      "log friction from the current session. papercuts count even when " +
+      "nothing failed: confusing docs, dead ends, awkward tool output. " +
+      "use type \"none\" only when the whole session was friction-free. " +
+      "every active identity (main session and each subagent) needs one " +
+      "record for that session. append-only jsonl.",
     approval: "write",
     parameters: pi.zod.object({
       agent_id: pi.zod.string().describe("your assigned id (e.g. \"main\" or the subagent id)"),
       primary_goal: pi.zod.string().describe("the goal you were assigned for this request"),
       complaint: pi.zod.string().describe("what went wrong or what blocked you"),
-      type: pi.zod.string().describe("frustration category: tooling, environment, requirements, workflow, test, dependency, performance, other"),
+      type: pi.zod.string().describe("frustration category: tooling, environment, requirements, workflow, test, dependency, performance, other, or none for a friction-free session"),
       severity: pi.zod.string().describe("low, medium, high, or blocker"),
       evidence: pi.zod.array(pi.zod.union([
         pi.zod.object({
