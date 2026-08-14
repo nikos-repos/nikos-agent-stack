@@ -688,6 +688,110 @@ console.log("@@" + JSON.stringify({
 	expect(result.cleanTurnEvidence).toBe(true);
 });
 
+// non-bash tool errors must count as machine-visible friction, and the
+// missing-record gate's own continuation must not: a clean "none" filed right
+// after that continuation is the gate working, not an optimistic claim.
+test("any tool error flags the turn; a missing-record continuation alone does not", () => {
+	const dir = tempdir("gate-clean-under-errors-2-");
+	const ledgerPath = resolvePath(dir, "ledger.jsonl");
+	const scratchPath = resolvePath(dir, "frustrations.jsonl");
+	const script = `
+const root = process.env.PROBE_ROOT!;
+const mod = await import(root + "/gate-checker/index.ts");
+const ledger = await import(root + "/gate-checker/ledger.js");
+const handlers: Record<string, (e: unknown, c: unknown) => unknown> = {};
+const tools: Record<string, { name: string; execute: (...a: unknown[]) => Promise<unknown> }> = {};
+const schema = { describe() { return schema; }, min() { return schema; } };
+const zod = {
+	object: () => schema,
+	string: () => schema,
+	array: () => schema,
+	union: () => schema,
+	number: () => schema,
+	literal: () => schema,
+};
+mod.default({
+	zod,
+	on: (name: string, handler: (e: unknown, c: unknown) => unknown) => { handlers[name] = handler; },
+	registerCommand: () => {},
+	registerTool: (tool: { name: string }) => { tools[tool.name] = tool as never; },
+	events: { on: () => {} },
+	appendEntry: () => {},
+} as never);
+const ctx = {
+	cwd: process.env.PROBE_CWD!,
+	ui: { setStatus: () => {} },
+	sessionManager: {
+		getSessionFile: () => "/sessions/probe.json",
+		getSessionId: () => "probe-session",
+		getBranch: () => [{ type: "message", message: { role: "assistant", content: "done" } }],
+	},
+};
+await handlers.agent_start!({}, ctx);
+const record = {
+	agent_id: "probe",
+	primary_goal: "probe goal",
+	complaint: "none",
+	type: "none",
+	severity: "low",
+	evidence: [],
+};
+const tool = tools.record_frustration!;
+// no record exists yet, so this continuation is the coverage gate alone.
+const stop = (await handlers.session_stop!({}, ctx)) as
+	| { continue?: boolean; additionalContext?: string }
+	| undefined;
+const after = await tool.execute("call-1", record, undefined, undefined, ctx) as { isError?: boolean };
+// a failed non-bash tool result is machine-visible friction.
+await handlers.tool_result!({
+	toolName: "read",
+	content: [{ type: "text", text: "not found" }],
+	isError: true,
+	input: { path: "missing.txt" },
+	details: undefined,
+	toolCallId: "read-1",
+}, ctx);
+const flagged = await tool.execute("call-2", record, undefined, undefined, ctx) as { isError?: boolean };
+const events = (ledger.read(process.env.OMP_GATE_LEDGER!) as Array<Record<string, unknown>>)
+	.filter((e) => e.event === "clean_under_errors");
+console.log("@@" + JSON.stringify({
+	stopForced: stop?.continue === true,
+	stopMissingRecord: stop?.additionalContext?.includes("missing_frustration_record") ?? false,
+	afterError: after.isError === true,
+	flaggedError: flagged.isError === true,
+	eventCount: events.length,
+}));
+`;
+	writeFileSync(resolvePath(dir, "probe.ts"), script);
+	const out = execSync("bun run probe.ts", {
+		cwd: dir,
+		encoding: "utf-8",
+		stdio: "pipe",
+		env: {
+			...process.env,
+			OMP_GATE_LEDGER: ledgerPath,
+			OMP_GATE_FRUSTRATIONS: scratchPath,
+			PROBE_ROOT: resolvePath(import.meta.dir, ".."),
+			PROBE_CWD: dir,
+		},
+	});
+	const line = out.split("\n").find((l) => l.startsWith("@@"));
+	if (!line) throw new Error(`probe produced no result line: ${out}`);
+	const result = JSON.parse(line.slice(2)) as {
+		flaggedError: boolean;
+		stopForced: boolean;
+		stopMissingRecord: boolean;
+		afterError: boolean;
+		eventCount: number;
+	};
+	expect(result.flaggedError).toBe(false);
+	expect(result.stopForced).toBe(true);
+	expect(result.stopMissingRecord).toBe(true);
+	expect(result.afterError).toBe(false);
+	// one event: the read error. the missing-record continuation adds none.
+	expect(result.eventCount).toBe(1);
+});
+
 // --- commit routing ---------------------------------------------------------
 
 test("a raw git commit is rewritten to the commit script", () => {

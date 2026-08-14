@@ -227,6 +227,13 @@ export interface TurnEvidence {
   // markers already reported inline at tool_result, so session_stop does not
   // bill the agent twice for the same line.
   flaggedInline: Set<string>;
+  // any tool result errored during this request, bash or otherwise. a clean
+  // "none" claim against an errored request is a stats signal, not a failure.
+  hadtoolerror: boolean;
+  // a continuation was forced by a blocking failure other than the
+  // missing-record rule itself, so the gate's own coverage loop cannot
+  // masquerade as agent friction.
+  hadblockingfailure: boolean;
 }
 
 export function freshEvidence(): TurnEvidence {
@@ -246,6 +253,8 @@ export function freshEvidence(): TurnEvidence {
     judgedSubagents: new Set(),
     verifyPassed: false,
     flaggedInline: new Set(),
+    hadtoolerror: false,
+    hadblockingfailure: false,
   };
 }
 
@@ -1303,12 +1312,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
           isError: true,
         };
       }
-      // a clean-turn claim against a turn with machine-visible errors is a
+      // a clean-turn claim against a request with machine-visible errors is a
       // signal, not a failure: the record stands and the agent is never
       // re-prompted — the ledger note lets stats measure optimistic "none".
+      // any failed tool result counts, and so does a continuation forced by a
+      // real gate failure; the missing-record rule alone never does.
       if (
         params.type === "none" &&
-        (evidence.bashCommands.some((c) => c.isError) || continuationCount > 0)
+        (evidence.hadtoolerror || evidence.hadblockingfailure)
       ) {
         ledger.append("clean_under_errors", {
           agent_id: params.agent_id,
@@ -1464,6 +1475,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx: ExtensionContext): Promise<ToolResultEventResult | void> => {
     const { toolName, content, isError, input, details } = event;
+    if (isError) evidence.hadtoolerror = true;
 
     // capture snapshot tags from read/edit results
     if (toolName === "read" || toolName === "edit") {
@@ -1912,8 +1924,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return;
     }
 
-    continuationCount++;
+    // latch real friction only: a continuation forced by anything other than
+    // the missing-record rule. the record rule is the gate's own coverage loop,
+    // not agent friction, so it must not contaminate clean_under_errors.
+    if (blocking.some((f) => f.rule !== "missing_frustration_record")) {
+      evidence.hadblockingfailure = true;
+    }
     const rules = blocking.map((f) => f.rule);
+    continuationCount++;
     ledger.append("gate_eval", {
       rules,
       failures: blocking.map((f) => ({ rule: f.rule, detail: f.detail })),
