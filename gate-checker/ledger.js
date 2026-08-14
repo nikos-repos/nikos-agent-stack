@@ -9,7 +9,7 @@
  *
  * never throws. a broken ledger must not break the agent.
  *
- * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"no_git"|"process_shape"|"frustration"} LedgerEvent
+ * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"no_git"|"process_shape"|"frustration"|"clean_under_errors"} LedgerEvent
  */
 
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from "fs";
