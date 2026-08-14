@@ -572,6 +572,116 @@ test("nonempty read-only replies and user questions cannot bypass a missing reco
 	expect(canskipuserquestion(true, 0, null, false)).toBe(true);
 });
 
+
+// the record_frustration handler closes over the factory state and writes
+// through ledger.js/frustrations.js module-level paths, which bind their env
+// redirect at import time. this file imports index.ts statically, so the
+// env cannot be set before those paths resolve — a child bun process gets a
+// fresh registry and keeps the real scratchpad and ledger untouched.
+test("a clean record under machine-visible errors logs a non-blocking ledger event", () => {
+	const dir = tempdir("gate-clean-under-errors-");
+	const ledgerPath = resolvePath(dir, "ledger.jsonl");
+	const scratchPath = resolvePath(dir, "frustrations.jsonl");
+	const script = `
+const root = process.env.PROBE_ROOT!;
+const mod = await import(root + "/gate-checker/index.ts");
+const ledger = await import(root + "/gate-checker/ledger.js");
+const frustrations = await import(root + "/gate-checker/frustrations.js");
+const handlers: Record<string, (e: unknown, c: unknown) => unknown> = {};
+const tools: Record<string, { name: string; execute: (...a: unknown[]) => Promise<unknown> }> = {};
+const schema = { describe() { return schema; }, min() { return schema; } };
+const zod = {
+	object: () => schema,
+	string: () => schema,
+	array: () => schema,
+	union: () => schema,
+	number: () => schema,
+	literal: () => schema,
+};
+mod.default({
+	zod,
+	on: (name: string, handler: (e: unknown, c: unknown) => unknown) => { handlers[name] = handler; },
+	registerCommand: () => {},
+	registerTool: (tool: { name: string }) => { tools[tool.name] = tool as never; },
+	events: { on: () => {} },
+	appendEntry: () => {},
+} as never);
+const ctx = {
+	cwd: process.env.PROBE_CWD!,
+	ui: { setStatus: () => {} },
+	sessionManager: {
+		getSessionFile: () => "/sessions/probe.json",
+		getSessionId: () => "probe-session",
+	},
+};
+await handlers.agent_start!({}, ctx);
+const record = {
+	agent_id: "probe",
+	primary_goal: "probe goal",
+	complaint: "none",
+	type: "none",
+	severity: "low",
+	evidence: [{ kind: "command", command: "false", exit_code: 1, output: "" }],
+};
+const tool = tools.record_frustration!;
+const quiet = await tool.execute("call-quiet", record, undefined, undefined, ctx) as { isError?: boolean };
+await handlers.tool_result!({
+	toolName: "bash",
+	content: [{ type: "text", text: "boom" }],
+	isError: true,
+	input: { command: "false" },
+	details: undefined,
+	toolCallId: "bash-1",
+}, ctx);
+const flagged = await tool.execute("call-flagged", record, undefined, undefined, ctx) as { isError?: boolean };
+const events = (ledger.read(process.env.OMP_GATE_LEDGER!) as Array<Record<string, unknown>>)
+	.filter((e) => e.event === "clean_under_errors");
+const stored = frustrations.readRecords(process.env.OMP_GATE_FRUSTRATIONS!) as Array<Record<string, unknown>>;
+console.log("@@" + JSON.stringify({
+	quietError: quiet.isError === true,
+	flaggedError: flagged.isError === true,
+	events: events.map((e) => ({ agent_id: e.agent_id, request_id: typeof e.request_id })),
+	sources: stored.map((r) => r.source),
+	cleanTurnEvidence: stored.every((r) =>
+		Array.isArray(r.evidence) && r.evidence.length === 1 &&
+		(r.evidence[0] as { rule?: string }).rule === "clean_turn"
+	),
+}));
+`;
+	writeFileSync(resolvePath(dir, "probe.ts"), script);
+	const out = execSync("bun run probe.ts", {
+		cwd: dir,
+		encoding: "utf-8",
+		stdio: "pipe",
+		env: {
+			...process.env,
+			OMP_GATE_LEDGER: ledgerPath,
+			OMP_GATE_FRUSTRATIONS: scratchPath,
+			PROBE_ROOT: resolvePath(import.meta.dir, ".."),
+			PROBE_CWD: dir,
+		},
+	});
+	const line = out.split("\n").find((l) => l.startsWith("@@"));
+	if (!line) throw new Error(`probe produced no result line: ${out}`);
+	const result = JSON.parse(line.slice(2)) as {
+		quietError: boolean;
+		flaggedError: boolean;
+		events: Array<{ agent_id: string; request_id: string }>;
+		sources: string[];
+		cleanTurnEvidence: boolean;
+	};
+	// both calls succeed: a clean record stays valid and never re-prompts
+	expect(result.quietError).toBe(false);
+	expect(result.flaggedError).toBe(false);
+	// the event fires only for the call made after a machine-visible error
+	expect(result.events).toHaveLength(1);
+	expect(result.events[0]?.agent_id).toBe("probe");
+	expect(result.events[0]?.request_id).toBe("string");
+	// the extension stamps source "agent" and the injected clean_turn entry
+	expect(result.sources).toEqual(["agent", "agent"]);
+	expect(result.cleanTurnEvidence).toBe(true);
+});
+
 // --- commit routing ---------------------------------------------------------
 
 test("a raw git commit is rewritten to the commit script", () => {

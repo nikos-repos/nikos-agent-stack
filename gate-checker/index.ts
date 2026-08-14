@@ -1281,6 +1281,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         cwd,
         sessionFile: ctx?.sessionManager?.getSessionFile?.(),
         sessionId: ctx?.sessionManager?.getSessionId?.(),
+        source: "agent",
       });
       if (!result.ok) {
         return {
@@ -1296,6 +1297,18 @@ export default function gateChecker(pi: ExtensionAPI): void {
           content: [{ type: "text" as const, text: `append error: ${appended.error}` }],
           isError: true,
         };
+      }
+      // a clean-turn claim against a turn with machine-visible errors is a
+      // signal, not a failure: the record stands and the agent is never
+      // re-prompted — the ledger note lets stats measure optimistic "none".
+      if (
+        params.type === "none" &&
+        (evidence.bashCommands.some((c) => c.isError) || continuationCount > 0)
+      ) {
+        ledger.append("clean_under_errors", {
+          agent_id: params.agent_id,
+          request_id: requestId,
+        });
       }
       return {
         content: [{ type: "text" as const, text: `recorded frustration for ${params.agent_id}: ${params.complaint}` }],
