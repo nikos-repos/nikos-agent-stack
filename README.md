@@ -114,11 +114,13 @@ a repository can add its own forbidden markers in `.omp/gates-markers.txt`, one 
 
 ### frustration scratchpad
 
-enabled sessions append records to `~/.omp/gate-checker/frustrations.jsonl`, or the path in `OMP_GATE_FRUSTRATIONS`. call the native `record_frustration` tool with `agent_id`, `primary_goal`, `complaint`, `type`, `severity`, and nonempty `evidence`.
+enabled sessions append records to `~/.omp/gate-checker/frustrations.jsonl`, or the path in `OMP_GATE_FRUSTRATIONS`. call the native `record_frustration` tool with `agent_id`, `primary_goal`, `complaint`, `type`, `severity`, and `evidence`.
 
-the server derives `session_file` and `session_id` from the active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and each child session file comes from native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields. fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, and `other`; fixed severities are `low`, `medium`, `high`, and `blocker`. a project can extend both lists in `.omp/gates-frustrations.json`.
+the server derives `session_file` and `session_id` from the active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and each child session file comes from native task provenance. caller input cannot override these fields or the server-controlled `source`: tool records use `agent`, automatic gate records use `auto`, and older records without the field appear as `legacy` in stats.
 
-the extension writes machine-authored scratchpad records for warning and blocking gate outcomes. those records satisfy main-session coverage in the same stop, never a child session. a missing active agent session blocks at every enabled level.
+fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, `other`, and `none`; fixed severities are `low`, `medium`, `high`, and `blocker`. a project can extend both lists in `.omp/gates-frustrations.json`. real friction needs nonempty `gate`, `snapshot`, or `command` evidence. a friction-free session uses `type: "none"`, `complaint: "none"`, `severity: "low"`, and may send an empty evidence array; the extension discards caller evidence and injects one trusted `clean_turn` gate entry.
+
+the extension writes machine-authored scratchpad records for warning and blocking gate outcomes. those records satisfy main-session coverage in the same stop, never a child session. an agent may append its own perspective. a missing active agent session blocks at every enabled level. if an agent files `none` after a failed tool result or a continuation forced by another blocking rule, the extension writes the non-blocking `clean_under_errors` telemetry event. the missing-record continuation itself does not count as friction.
 
 command-line audits use the same predicates as the extension:
 
@@ -127,6 +129,8 @@ bun run gate-checker/gate-cli.js audit --kind uncommitted --cwd . --json
 bun run gate-checker/gate-cli.js cutover --base HEAD~1 --cwd .
 bun run gate-checker/gate-cli.js stats --json
 ```
+
+`stats` reports frustration counts by type and source (`agent`, `auto`, or `legacy`) and the number of `clean_under_errors` events, in both text and json output.
 
 audit scopes:
 
