@@ -86,7 +86,7 @@ each terra note must include source evidence in its note text:
 
 terra does not invent or recompute a digest. when no inspected source grounds advice, terra emits no note.
 
-omp machine-enforces only `note` and `severity`. the prior evidence-object schema is no longer machine-enforced. `path`, `line`, `claim`, and the read-snapshot digest are required by terra's watchdog instructions inside the note text, so they are prompt-enforced rather than schema-enforced. verify cited evidence against a current read result before acting on it.
+omp machine-enforces the native `note` and `severity` fields. terra's watchdog instructions require `path`, `line`, `claim`, and the read-snapshot digest inside the note text. verify cited evidence against a current read result before acting on it.
 
 source: [watchdog source](../advisor/WATCHDOG.yml)
 
@@ -105,7 +105,7 @@ source: [watchdog source](../advisor/WATCHDOG.yml), [gate checker guide](gates-p
 omp plugin uninstall nikos-agent-stack
 ```
 
-plugin uninstall does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file or the terra entry that `/advisor-install` added. `/advisor on` and `/advisor status` only control or report the native advisor; neither removes configuration. manually remove terra from the user watchdog configuration if it is no longer wanted, while preserving top-level instructions and other advisors. start a new omp session after that manual change.
+plugin uninstall does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file or the terra entry that `/advisor-install` added. `/advisor on` and `/advisor status` only control or report the native advisor; neither removes configuration. to remove terra, delete its entry from the user watchdog configuration while preserving top-level instructions and other advisors, then start a new omp session.
 
 source: [advisor setup command](../advisor/install.js)
 

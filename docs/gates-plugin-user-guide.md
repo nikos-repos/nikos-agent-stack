@@ -96,9 +96,8 @@ as `/gates-disable`, which keeps the extension loaded and turns off its rules.
 omp plugin uninstall nikos-agent-stack
 ```
 
-removal deletes the installed package. it does not delete the persisted
-configuration, ledger, or scratchpad, so a later install keeps the previous
-policy and history.
+removal deletes the installed package. persisted configuration, ledger, and
+scratchpad data remain available to later installations.
 
 ### after any install, link, update, or removal
 
@@ -292,13 +291,13 @@ format:
 }
 ```
 
-`bun test` was only this bun repository's example, never a required token or special gate keyword. set `verifyCmd` to the verification command your project uses.
+set `verifyCmd` to the verification command your project uses.
 
 ### configuration precedence
 
 1. the persisted configuration file.
 2. `OMP_GATES_LEVEL`.
-3. legacy `OMP_DELIVERY_GATES`, which maps any enabled value to high.
+3. `OMP_DELIVERY_GATES`, which maps any enabled value to high.
 4. the default level, medium.
 
 `OMP_VERIFY_CMD` supplies a verification command when the persisted configuration does not contain one.
@@ -309,7 +308,7 @@ format:
 |---|---|
 | `OMP_GATES_LEVEL` | selects `off`, `low`, `medium`, or `high` when no persisted config takes precedence |
 | `OMP_VERIFY_CMD` | sets the verification command when the config file does not set one |
-| `OMP_DELIVERY_GATES` | legacy switch; an enabled value maps to high |
+| `OMP_DELIVERY_GATES` | maps an enabled value to high |
 | `OMP_GATE_CONFIG` | redirects the persisted configuration file |
 | `OMP_GATE_LEDGER` | redirects the telemetry ledger |
 | `OMP_GATE_FRUSTRATIONS` | redirects the scratchpad record file |
@@ -666,7 +665,7 @@ record types:
 - **cap-hit rate:** fraction of continuation chains that exhausted the cap.
 - **forced retries:** total blocking continuations.
 - **inline flags:** marker issues found early without a full response retry.
-- **low: no git runs:** requests that started without git evidence. the reader includes legacy no-git records in `no_git_runs`.
+- **low: no git runs:** requests that started without git evidence, recorded as `no_git_runs`.
 - **process-shape rate:** bounded changed requests with test evidence.
 - **rule counts:** frequent rules show where users or predicates need attention.
 
@@ -732,9 +731,9 @@ check all of these conditions:
 
 source: [manifest and subagent claim checks](../gate-checker/index.ts), [manifest parser](../gate-checker/predicates.js)
 
-### an old marker blocks delivery
+### a pre-existing marker blocks delivery
 
-normal git mode checks added lines only. if an untouched old marker appears in a finding, confirm that the baseline was captured before the request and that the file was not rewritten wholesale. `write` treats the complete replacement body as authored by that call for inline feedback.
+normal git mode checks added lines only. if an untouched pre-existing marker appears in a finding, confirm that the baseline was captured before the request and that the file was not rewritten wholesale. `write` treats the complete replacement body as authored by that call for inline feedback.
 
 source: [added-line derivation](../gate-checker/index.ts), [whole-file write handling](../gate-checker/predicates.js)
 

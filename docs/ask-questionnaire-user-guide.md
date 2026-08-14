@@ -222,20 +222,19 @@ omp plugin link .
 
 requirements:
 
-- no omp source checkout.
-- no `git am`, no patch file, and no pinned omp base commit.
-- one restart, because omp discovers extensions at startup ([gates plugin user guide](gates-plugin-user-guide.md)).
+- install or link the package.
+- restart omp after installation because omp discovers extensions at startup ([gates plugin user guide](gates-plugin-user-guide.md)).
 
 the package manifest declares what omp loads:
 
 | manifest field | effect |
 |---|---|
 | `omp.extensions` | omp loads `./gate-checker/index.ts` and `./ask-questionnaire/index.ts` |
-| `files` | the published package ships the extension entries, the gate-checker modules, `agents/terra.md`, and the readme |
+| `files` | the published package ships both extension entries, the gate-checker modules, advisor setup and watchdog files, and the readme |
 
-`agents/terra.md` installs through the plugin agent-discovery convention, so the terra advisor profile appears as an installed task agent. the gate checker keeps its existing behavior; see the [gates plugin user guide](gates-plugin-user-guide.md).
+run `/advisor-install` to configure the native terra advisor; see the [terra advisor user guide](advisor-role-user-guide.md). see the [gates plugin user guide](gates-plugin-user-guide.md) for gate behavior.
 
-sources: [`package.json`](../package.json#L35-L58), [manifest test](../plugin.test.ts#L101-L126), [conversion plan](official-extension-plan.html)
+sources: [`package.json`](../package.json#L32-L56), [manifest test](../plugin.test.ts)
 
 ## updates and removal
 
@@ -246,7 +245,7 @@ omp plugin uninstall nikos-agent-stack
 
 notes:
 
-- an update replaces the whole plugin, so the gate checker, the questionnaire policy, and the terra profile move together.
+- the gate checker, questionnaire policy, and advisor setup use the same installed package version.
 - removal stops the policy at the next start. an open request never survives a restart, because the state is in memory only.
 - omp records the installed version and the enabled state in its own plugin manager state; that record is omp behavior, not package behavior.
 
@@ -259,7 +258,7 @@ the repository holds two focused test files. `package.json#files` does not publi
 | file | coverage |
 |---|---|
 | [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | detector matches and non-matches, arming from direct input, extension-source rejection, ask-only allowance, guidance injection, success and failure transitions, stop continuation, and the three lifecycle resets |
-| [`plugin.test.ts`](../plugin.test.ts) | manifest surface, declared extension entries, file allowlist, absence of the old patch artifacts, and a runtime import that proves each declared entry exports a factory function |
+| [`plugin.test.ts`](../plugin.test.ts) | manifest surface, declared extension entries, file allowlist, and a runtime import that proves each declared entry exports a factory function |
 
 the tests drive the extension through a fake extension api. they observe handler return values only, never internal state.
 
@@ -296,7 +295,7 @@ the request closes only on a successful ask result or a lifecycle reset. inspect
 
 - each ask call returns an error, which keeps the request open by design.
 
-a request can no longer open while `ask` is inactive, so that combination cannot strand a session.
+a request opens only while `ask` is active, so an inactive `ask` cannot strand a session.
 
 ### the session keeps continuing at stop
 
@@ -338,4 +337,3 @@ sources: [extension scope comment](../ask-questionnaire/index.ts#L1-L16), [handl
 | [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | focused behavior tests |
 | [`package.json`](../package.json) | extension entries, publish allowlist, and test script |
 | [`plugin.test.ts`](../plugin.test.ts) | manifest and load-surface tests |
-| [`docs/official-extension-plan.html`](official-extension-plan.html) | plugin conversion scope and public-api boundary |
