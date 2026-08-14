@@ -531,16 +531,16 @@ set `OMP_GATE_FRUSTRATIONS` before the session to relocate it. call the native `
 |---|---|
 | `agent_id` | nonempty assigned main or subagent id |
 | `primary_goal` | nonempty assigned goal |
-| `complaint` | nonempty description of friction or blockage |
+| `complaint` | nonempty description of friction, or exactly `none` for type `none` |
 | `type` | one accepted taxonomy type |
-| `severity` | one accepted taxonomy severity |
-| `evidence` | nonempty array of valid `gate`, `snapshot`, or `command` evidence |
+| `severity` | one accepted taxonomy severity; type `none` requires `low` |
+| `evidence` | valid `gate`, `snapshot`, or `command` evidence for real friction; may be empty for type `none` |
 
-the server derives `session_file` and `session_id` from each active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and child session files arrive through native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields.
+the server derives `session_file` and `session_id` from each active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and child session files arrive through native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields or `source`. the extension stores tool records with `source: "agent"` and automatic gate records with `source: "auto"`. records created before this field appear as `legacy` in stats.
 
 ### taxonomy
 
-fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, and `other`. fixed severities are `low`, `medium`, `high`, and `blocker`.
+fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, `other`, and `none`. fixed severities are `low`, `medium`, `high`, and `blocker`.
 
 a project can add, but cannot remove, values in `.omp/gates-frustrations.json`:
 
@@ -553,9 +553,28 @@ a project can add, but cannot remove, values in `.omp/gates-frustrations.json`:
 
 the extension loads this file from the git repository root. without a git root, it resolves it from `ctx.cwd`, the active request working directory.
 
+### clean self-certification
+
+a friction-free session still needs coverage. submit:
+
+```json
+{
+  "agent_id": "main",
+  "primary_goal": "complete the active request",
+  "complaint": "none",
+  "type": "none",
+  "severity": "low",
+  "evidence": []
+}
+```
+
+for type `none`, the extension ignores caller evidence and injects exactly one trusted `clean_turn` gate entry. stored validation enforces complaint `none`, severity `low`, and that trusted evidence shape.
+
+if a `none` record follows any failed tool result or a continuation forced by another blocking rule, the record remains valid and the ledger receives `clean_under_errors`. this event is telemetry only; it never re-prompts the agent. a continuation caused only by `missing_frustration_record` does not count as friction.
+
 ### automatic gate records
 
-the extension writes a machine-authored scratchpad record for every warning or blocking gate outcome. its gate evidence names the exact rule and event. it satisfies main-session coverage in that same `session_stop`, but never a child session because each child has a different server session identity.
+the extension writes a machine-authored scratchpad record for every warning or blocking gate outcome. its gate evidence names the exact rule and event, and `source` is `auto`. it satisfies main-session coverage in that same `session_stop`, but never a child session because each child has a different server session identity. an agent can append a separate `source: "agent"` record with its own perspective.
 
 source: [scratchpad tool and identity coverage](../gate-checker/index.ts), [record validation and taxonomy](../gate-checker/frustrations.js), [level policy](../gate-checker/config.js)
 
@@ -634,9 +653,9 @@ nikos-gates stats \
   --ledger /path/to/ledger.jsonl
 ```
 
-stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, process-shape rate, miss reasons, and counts by rule. the json field is `no_git_runs`.
+stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, process-shape rate, miss reasons, counts by rule, `clean_under_errors`, and frustration counts by type and source (`agent`, `auto`, or `legacy`). the json fields are `no_git_runs`, `clean_under_errors`, and `frustrations`.
 
-source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js)
+source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js), [scratchpad reader](../gate-checker/frustrations.js)
 
 ## telemetry and tuning
 
@@ -656,6 +675,7 @@ record types:
 |---|---|
 | `inline_flag` | records a marker found immediately after a write or edit |
 | `gate_eval` | records warning, blocking, and verification outcomes |
+| `clean_under_errors` | records a valid `none` claim after machine-visible friction; never blocks |
 | `chain_end` | records resolved, stalemate, or cap-reached continuation chains |
 | `no_git` | records no-git operation |
 | `process_shape` | records whether the request matched the structured-process workload |
@@ -665,6 +685,7 @@ record types:
 - **cap-hit rate:** fraction of continuation chains that exhausted the cap.
 - **forced retries:** total blocking continuations.
 - **inline flags:** marker issues found early without a full response retry.
+- **clean under errors:** valid `none` records filed after failed tools or non-record blocking continuations.
 - **low: no git runs:** requests that started without git evidence, recorded as `no_git_runs`.
 - **process-shape rate:** bounded changed requests with test evidence.
 - **rule counts:** frequent rules show where users or predicates need attention.
