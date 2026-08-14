@@ -132,7 +132,7 @@ test("records require trusted server session file and id options", () => {
 test("the fixed taxonomy accepts only the documented defaults", () => {
   const reporoot = repo();
   expect(loadTaxonomy(reporoot)).toEqual({
-    types: ["tooling", "environment", "requirements", "workflow", "test", "dependency", "performance", "other"],
+    types: ["tooling", "environment", "requirements", "workflow", "test", "dependency", "performance", "other", "none"],
     severities: ["low", "medium", "high", "blocker"],
   });
   expect(validrecord(reporoot, "request-1", "main", "invented").ok).toBe(false);
@@ -268,6 +268,7 @@ test("automatic gate records contain valid gate evidence", () => {
     type: "workflow",
     severity: "high",
     evidence: [{ kind: "gate", event_id: "gate-event-1", rule: "forbidden_marker" }],
+    source: "auto",
     session_file: "/sessions/main.jsonl",
     session_id: "session-main",
   }));
@@ -289,4 +290,90 @@ test("automatic gate records contain valid gate evidence", () => {
       event_id: "gate-event-2",
     }).severity,
   ).toBe("medium");
+});
+
+test("none records inject trusted gate evidence and keep the agent source", () => {
+  const reporoot = repo();
+  const result = validateRecord(
+    {
+      agent_id: "main",
+      primary_goal: "close the assigned slice",
+      complaint: "none",
+      type: "none",
+      severity: "low",
+      source: "auto",
+      evidence: [{ kind: "command", command: "forge evidence", exit_code: 0, output: "forged" }],
+    },
+    {
+      repoRoot: reporoot,
+      requestId: "request-1",
+      cwd: reporoot,
+      sessionFile: "/sessions/main.jsonl",
+      sessionId: "session-main",
+    },
+  );
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  expect(result.record.source).toBe("agent");
+  expect(result.record.evidence).toEqual([
+    expect.objectContaining({ kind: "gate", rule: "clean_turn", event_id: expect.any(String) }),
+  ]);
+});
+
+test("none records reject a complaint other than none", () => {
+  const reporoot = repo();
+  const result = validateRecord(
+    {
+      agent_id: "main",
+      primary_goal: "close the assigned slice",
+      complaint: "the provider denied the assigned task",
+      type: "none",
+      severity: "low",
+      evidence: [{ kind: "command", command: "record frustration", exit_code: 1, output: "quota exceeded" }],
+    },
+    {
+      repoRoot: reporoot,
+      requestId: "request-1",
+      cwd: reporoot,
+      sessionFile: "/sessions/main.jsonl",
+      sessionId: "session-main",
+    },
+  );
+  expect(result).toEqual({ ok: false, error: 'type "none" requires complaint "none"' });
+});
+
+test("none records reject a severity other than low", () => {
+  const reporoot = repo();
+  const result = validateRecord(
+    {
+      agent_id: "main",
+      primary_goal: "close the assigned slice",
+      complaint: "none",
+      type: "none",
+      severity: "high",
+      evidence: [{ kind: "command", command: "record frustration", exit_code: 1, output: "quota exceeded" }],
+    },
+    {
+      repoRoot: reporoot,
+      requestId: "request-1",
+      cwd: reporoot,
+      sessionFile: "/sessions/main.jsonl",
+      sessionId: "session-main",
+    },
+  );
+  expect(result).toEqual({ ok: false, error: 'type "none" requires severity "low"' });
+});
+
+test("stored records accept a missing source and reject unknown sources", () => {
+  const reporoot = repo();
+  const path = join(reporoot, "frustrations.jsonl");
+  const result = validrecord(reporoot);
+  expect(result.ok).toBe(true);
+  if (!result.ok) return;
+  const legacy = { ...result.record };
+  delete legacy.source;
+  expect(appendRecord(legacy, path)).toEqual({ ok: true });
+  expect(readRecords(path)).toEqual([legacy]);
+  expect(appendRecord({ ...legacy, source: "client" }, path).ok).toBe(false);
+  expect(readRecords(path)).toEqual([legacy]);
 });

@@ -9,7 +9,7 @@
  * ledger.js.
  *
  * record shape:
- *   { ts, request_id, session_file, session_id, agent_id, primary_goal, complaint, type, severity, evidence[] }
+ *   { ts, request_id, session_file, session_id, agent_id, primary_goal, complaint, type, severity, evidence[], source }
  *
  * evidence variants:
  *   { kind: "gate", event_id, rule }
@@ -37,6 +37,7 @@ const FIXED_TYPES = [
   "dependency",
   "performance",
   "other",
+  "none",
 ];
 
 const FIXED_SEVERITIES = ["low", "medium", "high", "blocker"];
@@ -124,6 +125,8 @@ function validstoredrecord(record, repoRoot) {
     record.evidence.length === 0
   )
     return false;
+  if (record.source !== undefined && record.source !== "agent" && record.source !== "auto")
+    return false;
   const { types, severities } = loadTaxonomy(repoRoot);
   return (
     types.includes(record.type) &&
@@ -135,10 +138,12 @@ function validstoredrecord(record, repoRoot) {
 /**
  * validates and normalises a record. injects trusted request and session
  * identity values. invalid input returns
- * { ok: false, error }, never throws.
+ * { ok: false, error }, never throws. type "none" is the clean-turn signal:
+ * it forces complaint "none" and severity "low", drops agent evidence, and
+ * injects one trusted gate entry.
  *
  * @param {Record<string, unknown>} input
- * @param {{repoRoot?: string, requestId?: string, cwd?: string, sessionFile?: string, sessionId?: string}} [options]
+ * @param {{repoRoot?: string, requestId?: string, cwd?: string, sessionFile?: string, sessionId?: string, source?: string}} [options]
  * @returns {{ok: true, record: Record<string, unknown>} | {ok: false, error: string}}
  */
 export function validateRecord(input, options = {}) {
@@ -155,13 +160,21 @@ export function validateRecord(input, options = {}) {
       : null;
     if (!session_id)
       return { ok: false, error: "session_id is required" };
+    // source is extension-controlled; a client-sent input.source never
+    // reaches the stored record
+    const source = options.source === "auto" ? "auto" : "agent";
 
     const agent_id = input.agent_id;
     const primary_goal = input.primary_goal;
     const complaint = input.complaint;
     const type = input.type;
     const severity = input.severity;
-    const evidence = input.evidence;
+    // a clean turn carries no agent evidence: drop what was sent and inject
+    // the one trusted entry
+    const evidence =
+      type === "none"
+        ? [{ kind: "gate", event_id: randomUUID(), rule: "clean_turn" }]
+        : input.evidence;
 
     if (!nonemptystring(agent_id))
       return { ok: false, error: "agent_id is required" };
@@ -180,6 +193,10 @@ export function validateRecord(input, options = {}) {
       return { ok: false, error: `type "${type}" is not in the taxonomy` };
     if (!severities.includes(severity))
       return { ok: false, error: `severity "${severity}" is not in the taxonomy` };
+    if (type === "none" && complaint !== "none")
+      return { ok: false, error: 'type "none" requires complaint "none"' };
+    if (type === "none" && severity !== "low")
+      return { ok: false, error: 'type "none" requires severity "low"' };
 
     if (!Array.isArray(evidence) || evidence.length === 0)
       return { ok: false, error: "at least one evidence entry is required" };
@@ -209,6 +226,7 @@ export function validateRecord(input, options = {}) {
       type,
       severity,
       evidence,
+      source,
     };
     if (nonemptystring(repoRoot)) {
       record.repo_root = repoRoot;
@@ -314,7 +332,7 @@ export function missingIdentities(records, identities, repoRoot) {
 /**
  * builds a machine-authored record for an automatic failed gate. fills
  * complaint from detail, type is always workflow, and severity tracks the
- * blocking flag.
+ * blocking flag. the record is marked source "auto".
  *
  * @param {{request_id: string, rule: string, detail: string, blocking: boolean, event_id?: string, agent_id?: string, primary_goal?: string, repo_root?: string|null, cwd?: string, session_file?: string, session_id?: string}} fields
  * @returns {Record<string, unknown>}
@@ -338,6 +356,7 @@ export function automaticGateRecord(fields) {
     type: "workflow",
     severity: fields.blocking ? "high" : "medium",
     evidence: [{ kind: "gate", event_id, rule: fields.rule }],
+    source: "auto",
     ...(typeof fields.repo_root === "string" ? { repo_root: fields.repo_root } : {}),
     ...(typeof fields.cwd === "string" ? { cwd: fields.cwd } : {}),
   };
