@@ -84,9 +84,9 @@ test("stats report frustration types, sources, and clean-under-errors events", (
     '{"event":"no_git"}\n{"event":"clean_under_errors","rule":"clean_turn"}\n',
   );
   const scratch = join(cwd, "frustrations.jsonl");
-  // a repo taxonomy extension admits "none" before it is a fixed type
+  // exercise a valid taxonomy type that is also an object prototype key
   mkdirsync(join(cwd, ".omp"));
-  writefilesync(join(cwd, ".omp", "gates-frustrations.json"), '{"types":["none"]}');
+  writefilesync(join(cwd, ".omp", "gates-frustrations.json"), '{"types":["__proto__"]}');
   const record = (over: Record<string, unknown>) =>
     JSON.stringify({
       ts: "2026-08-14T00:00:00.000Z",
@@ -121,6 +121,14 @@ test("stats report frustration types, sources, and clean-under-errors events", (
         complaint: "flaky network",
         evidence: [{ kind: "snapshot", path: "log", line: 1, digest: "d0", claim: "timeout" }],
       }),
+      record({
+        type: "__proto__",
+        severity: "low",
+        complaint: "prototype-like taxonomy key",
+        source: "agent",
+        repo_root: cwd,
+        evidence: [{ kind: "command", command: "true", exit_code: 0, output: "" }],
+      }),
     ].join("\n") + "\n",
   );
   const env = { ...process.env, OMP_GATE_FRUSTRATIONS: scratch };
@@ -133,9 +141,11 @@ test("stats report frustration types, sources, and clean-under-errors events", (
   expect(json.status).toBe(0);
   const output = JSON.parse(json.stdout);
   expect(output.clean_under_errors).toBe(1);
-  expect(output.frustrations.records).toBe(3);
-  expect(output.frustrations.byType).toEqual({ tooling: 1, none: 1, environment: 1 });
-  expect(output.frustrations.bySource).toEqual({ agent: 1, auto: 1, legacy: 1 });
+  expect(output.frustrations.records).toBe(4);
+  expect(output.frustrations.byType).toEqual(
+    JSON.parse('{"tooling":1,"none":1,"environment":1,"__proto__":1}'),
+  );
+  expect(output.frustrations.bySource).toEqual({ agent: 2, auto: 1, legacy: 1 });
 
   const text = spawnsync(
     "bun",
@@ -144,7 +154,7 @@ test("stats report frustration types, sources, and clean-under-errors events", (
   );
   expect(text.status).toBe(0);
   expect(text.stdout).toContain("clean under errors 1");
-  expect(text.stdout).toContain("frustrations     3  (agent 1, auto 1, legacy 1)");
+  expect(text.stdout).toContain("frustrations     4  (agent 2, auto 1, legacy 1)");
   expect(text.stdout).toContain("frustration types:");
   expect(text.stdout).toContain("1  none");
 });
@@ -180,6 +190,7 @@ test("stats still print the frustration summary when the ledger is empty", () =>
   );
   expect(text.status).toBe(0);
   expect(text.stdout).toContain("no gate activity recorded yet");
+  expect(text.stdout).toContain("clean under errors 0");
   expect(text.stdout).toContain("frustrations     1  (agent 1, auto 0, legacy 0)");
   expect(text.stdout).toContain("1  none");
 });
