@@ -918,13 +918,13 @@ export const GATE_NUDGE =
   "git commit.\n\n" +
   // every active session and subagent needs a frustration record tied to its
   // server session file. the tool is the identity gate: without it the session
-  // has no record of what blocked it. papercuts count even when nothing
-  // failed, so "none" stays reserved for a genuinely friction-free session.
+  // has no friction record. papercuts count even when nothing failed, so
+  // "none" stays reserved for a genuinely friction-free session.
   "(4) call record_frustration with your assigned id and goal to log any " +
   "friction — papercuts count even when nothing failed: confusing docs, " +
   "dead ends, awkward tool output. use type \"none\" only when the whole " +
-  "session was friction-free. every active identity needs one record for " +
-  "its session.\n\n";
+  "session was friction-free; it requires complaint \"none\" and severity " +
+  "\"low\". every active identity needs one record for its session.\n\n";
 
 // --- factory ----------------------------------------------------------------
 
@@ -1249,16 +1249,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
     description:
       "log friction from the current session. papercuts count even when " +
       "nothing failed: confusing docs, dead ends, awkward tool output. " +
-      "use type \"none\" only when the whole session was friction-free. " +
-      "every active identity (main session and each subagent) needs one " +
-      "record for that session. append-only jsonl.",
+      "use type \"none\" only when the whole session was friction-free; it " +
+      "requires complaint \"none\" and severity \"low\". every active identity " +
+      "(main session and each subagent) needs one record for that session. " +
+      "append-only jsonl.",
     approval: "write",
     parameters: pi.zod.object({
       agent_id: pi.zod.string().describe("your assigned id (e.g. \"main\" or the subagent id)"),
       primary_goal: pi.zod.string().describe("the goal you were assigned for this request"),
-      complaint: pi.zod.string().describe("what went wrong or what blocked you"),
-      type: pi.zod.string().describe("frustration category: tooling, environment, requirements, workflow, test, dependency, performance, other, or none for a friction-free session"),
-      severity: pi.zod.string().describe("low, medium, high, or blocker"),
+      complaint: pi.zod.string().describe("what went wrong or what blocked you; use \"none\" with type \"none\""),
+      type: pi.zod.string().describe("friction category, or none for a friction-free session"),
+      severity: pi.zod.string().describe("low, medium, high, or blocker; type \"none\" requires low"),
       evidence: pi.zod.array(pi.zod.union([
         pi.zod.object({
           kind: pi.zod.literal("gate"),
@@ -1278,7 +1279,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           exit_code: pi.zod.number(),
           output: pi.zod.string(),
         }),
-      ])).min(1),
+      ])).describe("evidence for real friction; ignored for type \"none\""),
     }),
     execute: async (
       _toolCallId: string,

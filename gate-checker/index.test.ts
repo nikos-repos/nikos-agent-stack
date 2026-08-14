@@ -449,19 +449,22 @@ test("the subagent nudge states the manifest, frustration tool, markers, and com
 	expect(GATE_NUDGE.includes("goal")).toBe(true);
 	expect(GATE_NUDGE.includes("forbidden markers")).toBe(true);
 	expect(GATE_NUDGE.includes("git-pushing")).toBe(true);
-	// papercut philosophy: friction counts even when nothing failed, and
-	// type "none" is reserved for a friction-free session
+	// papercut philosophy: friction counts even when nothing failed, the
+	// clean payload is explicit, and coverage stays mandatory.
 	expect(GATE_NUDGE.includes("papercuts")).toBe(true);
 	expect(GATE_NUDGE.includes("confusing docs")).toBe(true);
 	expect(GATE_NUDGE.includes('type "none"')).toBe(true);
-	expect(GATE_NUDGE.includes("friction-free")).toBe(true);
+	expect(GATE_NUDGE.includes('complaint "none"')).toBe(true);
+	expect(GATE_NUDGE.includes('severity "low"')).toBe(true);
+	expect(GATE_NUDGE.includes("every active identity needs one record")).toBe(true);
 });
 
-test("task inputs receive only the generic gate nudge", async () => {
+test("task inputs and the frustration tool expose the gate contract", async () => {
 	const handlers: Record<string, (event: unknown, context: unknown) => unknown> = {};
+	let frustrationtool: { description?: string } | undefined;
 	const schema = {
 		describe() { return schema; },
-		min() { return schema; },
+		min() { throw new Error("the tool schema must allow empty evidence for type none"); },
 	};
 	const zod = {
 		object: (_shape: unknown) => schema,
@@ -477,7 +480,9 @@ test("task inputs receive only the generic gate nudge", async () => {
 			handlers[name] = handler;
 		},
 		registerCommand: () => {},
-		registerTool: () => {},
+		registerTool: (tool: { name: string; description?: string }) => {
+			if (tool.name === "record_frustration") frustrationtool = tool;
+		},
 		events: { on: () => {} },
 		appendEntry: () => {},
 	} as never);
@@ -505,6 +510,8 @@ test("task inputs receive only the generic gate nudge", async () => {
 
 	expect(single.input?.task).toBe(`${GATE_NUDGE}single child task`);
 	expect(batch.input?.context).toBe(`${GATE_NUDGE}batched child tasks`);
+	expect(frustrationtool?.description).toContain('complaint "none"');
+	expect(frustrationtool?.description).toContain('severity "low"');
 });
 
 test("a missing main frustration record blocks the request", () => {
