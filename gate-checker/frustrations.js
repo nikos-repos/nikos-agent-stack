@@ -133,8 +133,8 @@ function validstoredrecord(record, repoRoot) {
       record.complaint !== "none" ||
       record.severity !== "low" ||
       record.evidence.length !== 1 ||
-      evidence.kind !== "gate" ||
-      evidence.rule !== "clean_turn"
+      evidence?.kind !== "gate" ||
+      evidence?.rule !== "clean_turn"
     )
       return false;
   }

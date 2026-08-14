@@ -137,6 +137,10 @@ test("stored none records require the clean-turn payload", () => {
 
   for (const record of invalid) expect(appendRecord(record, path).ok).toBe(false);
   expect(appendRecord(clean, path)).toEqual({ ok: true });
+  writefilesync(
+    path,
+    `${JSON.stringify(clean)}\n${JSON.stringify({ ...clean, evidence: [null] })}\n`,
+  );
   expect(readRecords(path)).toEqual([clean]);
 });
 
