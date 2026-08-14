@@ -50,7 +50,7 @@ omp plugin install nikos-agent-stack
 
 ### link a local checkout
 
-use a link when you develop the stack or run an unpublished revision:
+use a link when you develop the stack or run a local revision:
 
 ```sh
 omp plugin link .
