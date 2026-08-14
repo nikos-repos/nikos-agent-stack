@@ -272,15 +272,16 @@ test("automatic gate records contain valid gate evidence", () => {
     session_file: "/sessions/main.jsonl",
     session_id: "session-main",
   }));
-  expect(
-    validateRecord(record, {
-      repoRoot: reporoot,
-      requestId: "request-1",
-      cwd: reporoot,
-      sessionFile: "/sessions/main.jsonl",
-      sessionId: "session-main",
-    }).ok,
-  ).toBe(true);
+  const validated = validateRecord(record, {
+    repoRoot: reporoot,
+    requestId: "request-1",
+    cwd: reporoot,
+    sessionFile: "/sessions/main.jsonl",
+    sessionId: "session-main",
+    source: "auto",
+  });
+  expect(validated.ok).toBe(true);
+  if (validated.ok) expect(validated.record.source).toBe("auto");
   expect(
     automaticGateRecord({
       request_id: "request-1",

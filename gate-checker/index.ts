@@ -1768,6 +1768,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
             cwd,
             sessionFile,
             sessionId,
+            source: "auto",
           },
         );
         if (!validated.ok) continue;
