@@ -6,6 +6,9 @@
  *              of a parallel `grep '^+'` pipeline that drifts from it.
  *
  * commands:
+ *   advisor install
+ *       merge the packaged terra profile into the user watchdog configuration.
+ *
  *   cutover [--base <ref>] [--cwd <dir>] [--markers <file>]
  *       exit 0 when no forbidden marker appears in lines added since <ref>.
  *       exit 1 (with the offending lines on stdout) otherwise.
@@ -17,7 +20,7 @@
  */
 
 import { execFileSync } from "child_process";
-import { readFileSync, existsSync } from "fs";
+import { existsSync, readFileSync } from "node:fs";
 import {
   DEFAULT_FORBIDDEN_MARKERS,
   loadForbiddenMarkers,
@@ -26,6 +29,7 @@ import {
 import { read, summarize, LEDGER_PATH } from "./ledger.js";
 import { resolvescope } from "./scope.js";
 import { auditscope } from "./risks.js";
+import { installadvisor } from "../advisor/install.js";
 
 /**
  * @param {string[]} argv
@@ -227,18 +231,46 @@ function stats(args) {
   return 0;
 }
 
+
+/** @param {string[]} argv */
+function advisor(argv) {
+  if (argv[0] !== "install") {
+    console.error(`advisor: unknown subcommand "${argv[0] ?? ""}"`);
+    console.error("usage: gate-cli.js advisor install");
+    return 2;
+  }
+  if (argv.length !== 1) {
+    console.error("advisor install: unexpected arguments");
+    return 2;
+  }
+  try {
+    const file = installadvisor();
+    console.log(`advisor install: installed terra at ${file}`);
+    console.log("start a new omp session to activate terra");
+    return 0;
+  } catch (error) {
+    console.error(
+      `advisor install: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return 2;
+  }
+}
+
 const [, , command, ...rest] = process.argv;
 const args = parseArgs(rest);
 
 let code = 0;
-if (command === "cutover") {
+if (command === "advisor") {
+  code = advisor(rest);
+} else if (command === "cutover") {
   code = cutover(args);
 } else if (command === "audit") {
   code = audit(args);
 } else if (command === "stats") {
   code = stats(args);
 } else {
-  console.log("usage: gate-cli.js <audit|cutover|stats> [options]");
+  console.log("usage: gate-cli.js <advisor|audit|cutover|stats> [options]");
+  console.log("  advisor install");
   console.log("  audit   [--kind uncommitted|request|base|commit] [--base <ref>]");
   console.log("          [--commit <ref>] [--folder <path>] [--cwd <dir>] [--json]");
   console.log("  cutover [--base <ref>] [--cwd <dir>] [--markers <file>]");

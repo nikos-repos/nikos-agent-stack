@@ -9,7 +9,7 @@
  *
  * never throws. a broken ledger must not break the agent.
  *
- * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"no_git"|"process_shape"} LedgerEvent
+ * @typedef {"inline_flag"|"gate_eval"|"chain_end"|"no_git"|"process_shape"|"frustration"} LedgerEvent
  */
 
 import { appendFileSync, mkdirSync, existsSync, readFileSync } from "fs";
@@ -23,6 +23,11 @@ export const LEDGER_PATH =
   process.env.OMP_GATE_LEDGER ||
   resolvePath(homedir(), ".omp/gate-checker/ledger.jsonl");
 
+// OMP_GATE_FRUSTRATIONS redirects the frustration scratchpad, same rationale
+// as the ledger: a test run must not pollute real session data.
+export const FRUSTRATION_PATH =
+  process.env.OMP_GATE_FRUSTRATIONS ||
+  resolvePath(homedir(), ".omp/gate-checker/frustrations.jsonl");
 /**
  * @param {LedgerEvent} event
  * @param {Record<string, unknown>} fields

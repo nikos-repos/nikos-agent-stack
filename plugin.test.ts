@@ -20,6 +20,7 @@ const expectedFiles = [
 	"gate-checker/gate-cli.js",
 	"gate-checker/predicates.js",
 	"gate-checker/ledger.js",
+	"gate-checker/frustrations.js",
 	"gate-checker/config.js",
 	"gate-checker/scope.js",
 	"gate-checker/lease.js",
@@ -27,7 +28,8 @@ const expectedFiles = [
 	"gate-checker/provenance.js",
 	"gate-checker/journal.js",
 	"ask-questionnaire/index.ts",
-	"agents/terra.md",
+	"advisor/install.js",
+	"advisor/WATCHDOG.yml",
 	"README.md",
 ];
 
@@ -36,15 +38,11 @@ const oldArtifacts = [
 	"advisor-role/UPSTREAM_BASE",
 ];
 
-function parseFrontmatter(source: string): any {
-	const match = source.match(/^---\n([\s\S]*?)\n---/);
-	expect(match).not.toBeNull();
-	return Bun.YAML.parse(match![1]);
-}
 
 test("the package exposes only the declared public surface", async () => {
 	expect(pkg.name).toBe("nikos-agent-stack");
 	expect(pkg.version).toBe("1.0.0");
+	expect(pkg.engines).toEqual({ bun: ">=1.2.22" });
 	expect(pkg.omp.extensions).toEqual(expectedExtensions);
 	expect(pkg.bin).toEqual({ "nikos-gates": "gate-checker/gate-cli.js" });
 	expect(pkg.exports).toEqual(expectedExports);
@@ -61,6 +59,9 @@ test("the package exposes only the declared public surface", async () => {
 	]) {
 		expect(existsSync(resolve(root, entry))).toBe(true);
 	}
+	for (const entry of pkg.files) {
+		expect(existsSync(resolve(root, entry))).toBe(true);
+	}
 
 	// imports manifest-selected entries because static imports cannot exercise runtime loading.
 	for (const entry of pkg.omp.extensions) {
@@ -69,30 +70,22 @@ test("the package exposes only the declared public surface", async () => {
 	}
 });
 
-test("terra remains a read-only advisor with source-backed evidence", () => {
-	const terra = parseFrontmatter(readFileSync(resolve(root, "agents/terra.md"), "utf8"));
+test("terra is a native passive advisor with source-backed notes", () => {
+	const watchdog = Bun.YAML.parse(
+		readFileSync(resolve(root, "advisor/WATCHDOG.yml"), "utf8"),
+	);
 
-	expect(Object.keys(terra)).toEqual(["name", "description", "model", "thinking", "tools", "output"]);
-	expect(terra.name).toBe("terra-advisor");
-	expect(terra.model).toBe("openai-codex/gpt-5.6-terra");
-	expect(terra.thinking).toBe("high");
+	expect(Object.keys(watchdog)).toEqual(["advisors"]);
+	expect(watchdog.advisors).toHaveLength(1);
+
+	const [terra] = watchdog.advisors;
+	expect(terra.name).toBe("terra");
+	expect(terra.enabled).toBe(true);
+	expect(terra.model).toBe("openai-codex/gpt-5.6-terra:high");
 	expect(terra.tools).toEqual(["read", "grep", "glob"]);
-
-	const output = terra.output;
-	const evidence = output.properties.evidence;
-	expect(output.type).toBe("object");
-	// a closed schema is the contract, so the value must be the boolean false —
-	// the string "false" would be a truthy, open schema anywhere it is consumed.
-	expect(output.additionalProperties).toBe(false);
-	expect(output.required).toEqual(["advice", "evidence"]);
-	expect(evidence.type).toBe("object");
-	expect(evidence.additionalProperties).toBe(false);
-	expect(evidence.required).toEqual(["path", "line", "claim", "digest"]);
-
-	const fields = evidence.properties;
-	expect(Object.keys(fields)).toEqual(["path", "line", "claim", "digest"]);
-	expect(fields.path.type).toBe("string");
-	expect(fields.line.type).toBe("integer");
-	expect(fields.claim.type).toBe("string");
-	expect(fields.digest.type).toBe("string");
+	expect(terra.instructions).toContain("path");
+	expect(terra.instructions).toContain("line");
+	expect(terra.instructions).toContain("claim");
+	expect(terra.instructions).toContain("read-snapshot digest");
+	expect(terra.instructions).toContain("omp validates only note and severity");
 });

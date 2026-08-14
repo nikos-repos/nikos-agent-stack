@@ -79,6 +79,14 @@ import {
 import { journal_type, journalfrombranch, journal_version } from "./journal.js";
 import { auditscope } from "./risks.js";
 import { acquirelease, releaselease } from "./lease.js";
+import {
+  validateRecord as validateFrustration,
+  appendRecord as appendFrustration,
+  readRecords as readFrustrations,
+  missingIdentities,
+  automaticGateRecord,
+} from "./frustrations.js";
+import { installadvisor } from "../advisor/install.js";
 
 export type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -93,6 +101,7 @@ export interface GatePolicy {
   subagentClaim: RuleMode;
   verify: RuleMode;
   commit: RuleMode;
+  scratchpad: RuleMode;
   runtime: RuleMode;
 }
 
@@ -130,6 +139,8 @@ interface ExtensionContext {
   hasUI: boolean;
   sessionManager?: {
     getBranch?(): unknown[];
+    getSessionFile?(): string | undefined;
+    getSessionId?(): string;
   };
   ui?: {
     notify?(message: string, type?: string): void;
@@ -651,6 +662,23 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
   return null;
 }
 
+export function shouldskipnotools(
+  hadtoolcalls: boolean,
+  assistanttext: string,
+  journalrecovery: string | null,
+): boolean {
+  return !hadtoolcalls && !assistanttext && !journalrecovery;
+}
+
+export function canskipuserquestion(
+  askeduser: boolean,
+  changedcount: number,
+  journalrecovery: string | null,
+  missingfrustration: boolean,
+): boolean {
+  return askeduser && changedcount === 0 && !journalrecovery && !missingfrustration;
+}
+
 // --- delivery gates (verify + commit), armed by env var ---------------------
 //
 // the citation and completion gates answer "did the work happen and is it
@@ -662,7 +690,7 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
 // the omp-dev session — no heuristic decides whether the regime applies.
 //
 //   OMP_DELIVERY_GATES=1        arm both gates
-//   OMP_VERIFY_CMD="bun test"   test command; UNSET = verify gate stays off
+//   OMP_VERIFY_CMD               test command; unset = verify gate stays off
 //
 // deliberately not defaulted to "npm test": guessing a test command in a repo
 // that has none turns every session into a retry loop on a command that was
@@ -829,6 +857,32 @@ export function formatFailures(failures: GateFailure[]): string {
   );
 }
 
+// --- frustration identity coverage -----------------------------------------
+
+
+/**
+ * maps each missing identity to a blocking gate failure. a record counts only
+ * when its server-derived session file matches the active session. records
+ * remain valid for later requests in the same session. used in session_stop.
+ *
+ * @param records every record in the shared scratchpad
+ * @param identities readable agent labels and their required session files
+ * @param repoRoot project taxonomy root
+ * @returns {GateFailure[]}
+ */
+export function checkFrustrations(
+  records: Array<Record<string, unknown>>,
+  identities: Array<{ agent_id: string; session_file: string | null }>,
+  repoRoot?: string,
+): GateFailure[] {
+  const missing = missingIdentities(records, identities, repoRoot);
+  return missing.map((id) => ({
+    gate: "journal",
+    rule: "missing_frustration_record",
+    detail: `identity "${id}" has no frustration record for this session. call record_frustration with your assigned id and goal.`,
+  }));
+}
+
 // --- task-input injection nudge ---------------------------------------------
 
 // the manifest requirement is stated first and in full, because it is the only
@@ -852,7 +906,13 @@ export const GATE_NUDGE =
   "NotImplementedError, stub/placeholder comments) in lines you add; " +
   "(2) do not claim test results you did not produce — the bash log is " +
   "checked; (3) if you commit, use the git-pushing skill script, not raw " +
-  "git commit.\n\n";
+  "git commit.\n\n" +
+  // every active session and subagent needs a frustration record tied to its
+  // server session file. the tool is the identity gate: without it the session
+  // has no record of what blocked it.
+  "(4) call record_frustration with your assigned id and goal to log any " +
+  "friction you hit — every active identity needs one record for its " +
+  "session.\n\n";
 
 // --- factory ----------------------------------------------------------------
 
@@ -1101,7 +1161,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("gates-engage", {
-    description: "set the gate engagement level: low | medium | high [verify command]",
+    description: "show gate status or set engagement level: low | medium | high",
     getArgumentCompletions: (prefix: string) =>
       ["low", "medium", "high"]
         .filter((l) => l.startsWith(prefix.trim().toLowerCase()))
@@ -1109,8 +1169,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
       const parts = args.trim().split(/\s+/).filter(Boolean);
       const level = String(parts[0] ?? "").toLowerCase() as GateLevel;
-      // a verify command may contain spaces, so everything after the level is it.
-      const cmd = parts.slice(1).join(" ").trim() || config.verifyCmd;
 
       if (!parts.length) {
         // no argument is a question, not a mistake — report the current state.
@@ -1129,7 +1187,15 @@ export default function gateChecker(pi: ExtensionAPI): void {
         );
         return;
       }
-      ctx?.ui?.notify?.(applyLevel(level, cmd, ctx), "info");
+      if (parts.length > 1) {
+        ctx?.ui?.notify?.(
+          "/gates-engage accepts no arguments for status or exactly one level: low, medium, or high. " +
+            "trailing text cannot set a verification command; set OMP_VERIFY_CMD or the persisted config instead.",
+          "error",
+        );
+        return;
+      }
+      ctx?.ui?.notify?.(applyLevel(level, config.verifyCmd, ctx), "info");
     },
   });
 
@@ -1139,7 +1205,103 @@ export default function gateChecker(pi: ExtensionAPI): void {
       ctx?.ui?.notify?.(applyLevel("off", config.verifyCmd, ctx), "warning");
     },
   });
+  pi.registerCommand("advisor-install", {
+    description: "install or update the bundled terra advisor",
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      if (args.trim()) {
+        ctx?.ui?.notify?.("/advisor-install accepts no arguments", "error");
+        return;
+      }
+      try {
+        const file = installadvisor();
+        ctx?.ui?.notify?.(
+          `advisor install: installed terra at ${file}\nstart a new omp session to activate terra`,
+          "info",
+        );
+      } catch (error) {
+        ctx?.ui?.notify?.(
+          `advisor install: ${error instanceof Error ? error.message : String(error)}`,
+          "error",
+        );
+      }
+    },
+  });
 
+
+  // --- record_frustration tool ----------------------------------------------
+  // the native essential write-tier tool the agent calls to log friction.
+  // returns success or a validation error; never throws.
+  pi.registerTool({
+    name: "record_frustration",
+    label: "record frustration",
+    description:
+      "log a frustration encountered during the current session. every active " +
+      "identity (main session and each subagent) needs one record for that " +
+      "session. append-only jsonl.",
+    approval: "write",
+    parameters: pi.zod.object({
+      agent_id: pi.zod.string().describe("your assigned id (e.g. \"main\" or the subagent id)"),
+      primary_goal: pi.zod.string().describe("the goal you were assigned for this request"),
+      complaint: pi.zod.string().describe("what went wrong or what blocked you"),
+      type: pi.zod.string().describe("frustration category: tooling, environment, requirements, workflow, test, dependency, performance, other"),
+      severity: pi.zod.string().describe("low, medium, high, or blocker"),
+      evidence: pi.zod.array(pi.zod.union([
+        pi.zod.object({
+          kind: pi.zod.literal("gate"),
+          event_id: pi.zod.string(),
+          rule: pi.zod.string(),
+        }),
+        pi.zod.object({
+          kind: pi.zod.literal("snapshot"),
+          path: pi.zod.string(),
+          line: pi.zod.number(),
+          digest: pi.zod.string(),
+          claim: pi.zod.string(),
+        }),
+        pi.zod.object({
+          kind: pi.zod.literal("command"),
+          command: pi.zod.string(),
+          exit_code: pi.zod.number(),
+          output: pi.zod.string(),
+        }),
+      ])).min(1),
+    }),
+    execute: async (
+      _toolCallId: string,
+      params: Record<string, unknown>,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
+      const cwd = String(ctx?.cwd ?? ".");
+      const taxonomyRoot = evidence.repoRoot ?? cwd;
+      const result = validateFrustration(params, {
+        repoRoot: taxonomyRoot,
+        requestId: requestId ?? undefined,
+        cwd,
+        sessionFile: ctx?.sessionManager?.getSessionFile?.(),
+        sessionId: ctx?.sessionManager?.getSessionId?.(),
+      });
+      if (!result.ok) {
+        return {
+          content: [{ type: "text" as const, text: `validation error: ${result.error}` }],
+          isError: true,
+        };
+      }
+      const appended = appendFrustration(result.record, undefined, {
+        repoRoot: taxonomyRoot,
+      });
+      if (!appended.ok) {
+        return {
+          content: [{ type: "text" as const, text: `append error: ${appended.error}` }],
+          isError: true,
+        };
+      }
+      return {
+        content: [{ type: "text" as const, text: `recorded frustration for ${params.agent_id}: ${params.complaint}` }],
+      };
+    },
+  });
   // reset the ledger + capture the git baseline once per user request.
   //
   // `agent_start` (not `turn_start`) is the right seam: `turn_start` fires for
@@ -1272,12 +1434,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     // task-input injection: prepend gate instructions to every spawned subagent
     if (toolName === "task") {
+      const nudge = GATE_NUDGE;
       if (input.tasks && Array.isArray(input.tasks)) {
         const context = String(input.context ?? "");
-        return { input: { ...input, context: GATE_NUDGE + context } };
+        return { input: { ...input, context: nudge + context } };
       }
       const task = String(input.task ?? "");
-      return { input: { ...input, task: GATE_NUDGE + task } };
+      return { input: { ...input, task: nudge + task } };
     }
   });
 
@@ -1386,20 +1549,23 @@ export default function gateChecker(pi: ExtensionAPI): void {
       terminaljournal("skipped_disabled");
       return void (continuationCount = 0);
     }
-    if (!evidence.hadToolCalls && !journalRecovery) {
+    const assistantText = getLastAssistantText(ctx) ?? "";
+    if (shouldskipnotools(evidence.hadToolCalls, assistantText, journalRecovery)) {
       terminaljournal("skipped_no_tools");
       return void (continuationCount = 0);
     }
 
     const cwd = String(ctx?.cwd ?? ".");
-    const assistantText = getLastAssistantText(ctx) ?? "";
-    if (!assistantText && !journalRecovery) {
+    const sessionFile = ctx?.sessionManager?.getSessionFile?.();
+    const sessionId = ctx?.sessionManager?.getSessionId?.();
+    const taxonomyRoot = evidence.repoRoot ?? cwd;
+    if (!assistantText && !evidence.askedUser && !journalRecovery) {
       terminaljournal("skipped_no_assistant_text");
       return void (continuationCount = 0);
     }
 
     const hasGit = evidence.baselineSha !== null;
-    const markers = loadForbiddenMarkers(evidence.repoRoot ?? cwd);
+    const markers = loadForbiddenMarkers(taxonomyRoot);
 
     const failures: GateFailure[] = [];
     const gitCwd = evidence.repoRoot ?? cwd;
@@ -1482,15 +1648,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
     const changedCount = canAdjudicate ? changedFiles.size : 0;
 
-    // a user question releases the request only when it changed nothing.
-    // judged here, after the diff is known, not on arrival: the questionnaire
-    // extension forces an `ask` before any other tool on a new-project request,
-    // so treating every ask as "the agent stopped to ask the user" skipped every
-    // gate on exactly the requests that scaffold new code.
-    if (evidence.askedUser && changedCount === 0 && !journalRecovery) {
-      terminaljournal("skipped_user_question");
-      return void (continuationCount = 0);
-    }
 
     // --- delivery gates: verify + commit -------------------------------------
     // change-gated, so a read-only or exploratory request is never asked to
@@ -1554,6 +1711,73 @@ export default function gateChecker(pi: ExtensionAPI): void {
       );
     }
 
+    // record every applied warning or blocking outcome before identity coverage,
+    // so an automatic main record satisfies this stop without a retry.
+    const records = readFrustrations(undefined, { repoRoot: taxonomyRoot });
+    if (requestId) {
+      for (const failure of applyPolicy(failures, policy)) {
+        const severity = failure.severity ?? "block";
+        if (
+          failure.rule === "missing_frustration_record" ||
+          (severity !== "warn" && severity !== "block")
+        ) continue;
+        const validated = validateFrustration(
+          automaticGateRecord({
+            request_id: requestId,
+            rule: failure.rule,
+            detail: failure.detail,
+            blocking: severity === "block",
+            repo_root: taxonomyRoot,
+            cwd,
+            session_file: sessionFile,
+            session_id: sessionId,
+          }),
+          {
+            repoRoot: taxonomyRoot,
+            requestId,
+            cwd,
+            sessionFile,
+            sessionId,
+          },
+        );
+        if (!validated.ok) continue;
+        if (
+          appendFrustration(validated.record, undefined, {
+            repoRoot: taxonomyRoot,
+          }).ok
+        ) records.push(validated.record);
+      }
+
+    }
+
+    // every active session and observed subagent needs a complete record whose
+    // server-derived session file matches its native session provenance.
+    const identities: Array<{ agent_id: string; session_file: string | null }> = [
+      { agent_id: "main", session_file: sessionFile ?? null },
+    ];
+    for (const sub of evidence.subagents) {
+      identities.push({
+        agent_id: sub.id || "subagent",
+        session_file: sub.session_file,
+      });
+    }
+    failures.push(
+      ...checkFrustrations(records, identities, taxonomyRoot),
+    );
+
+    // a user question releases only after it changed nothing and every active
+    // identity has a frustration record.
+    if (
+      canskipuserquestion(
+        evidence.askedUser,
+        changedCount,
+        journalRecovery,
+        failures.some((failure) => failure.rule === "missing_frustration_record"),
+      )
+    ) {
+      terminaljournal("skipped_user_question");
+      return void (continuationCount = 0);
+    }
     // --- "a process should have run" -----------------------------------------
     // record process shape only when a request ends, never on a continuation.
     const shape = processShape(evidence, changedCount);

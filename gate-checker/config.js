@@ -4,6 +4,7 @@
  *              so a level change cannot leave one rule out of step with the rest.
  *
  * set it with `/gates-engage low|medium|high`, clear it with `/gates-disable`.
+ * configure verification with `OMP_VERIFY_CMD` or `verifyCmd` in persisted config.
  *
  * why a dial exists at all: the gates were built assuming a git repo and a
  * commit at the end of every unit of work. a lot of real work is neither —
@@ -45,8 +46,8 @@ export const CONFIG_PATH =
  * @property {RuleMode} subagentClaim subagent claims checked against the diff.
  * @property {RuleMode} verify        test command must pass. needs a configured command.
  * @property {RuleMode} commit        working tree must be committed. needs git.
+ * @property {RuleMode} scratchpad    active sessions must record frustrations.
  * @property {RuleMode} runtime       gate integrity itself: lease conflict, journal recovery, unreadable scope.
- */
 
 /**
  * the dial.
@@ -75,21 +76,21 @@ export function policyFor(level) {
         level, enabled: false, inline: false,
         completion: "off", citation: "off", snapshot: "off",
         manifest: "off", subagentClaim: "off", verify: "off", commit: "off",
-        runtime: "off",
+        scratchpad: "off", runtime: "off",
       };
     case "low":
       return {
         level, enabled: true, inline: true,
         completion: "warn", citation: "warn", snapshot: "off",
         manifest: "off", subagentClaim: "warn", verify: "warn", commit: "off",
-        runtime: "warn",
+        scratchpad: "block", runtime: "warn",
       };
     case "high":
       return {
         level, enabled: true, inline: true,
         completion: "block", citation: "block", snapshot: "block",
         manifest: "block", subagentClaim: "block", verify: "block", commit: "block",
-        runtime: "block",
+        scratchpad: "block", runtime: "block",
       };
     case "medium":
     default:
@@ -97,7 +98,7 @@ export function policyFor(level) {
         level: "medium", enabled: true, inline: true,
         completion: "block", citation: "block", snapshot: "warn",
         manifest: "auto", subagentClaim: "block", verify: "block", commit: "off",
-        runtime: "block",
+        scratchpad: "block", runtime: "block",
       };
   }
 }
@@ -117,6 +118,7 @@ export const RULE_FAMILY = {
   mutation_lease_conflict: "runtime",
   recovery_required: "runtime",
   scope_unavailable: "runtime",
+  missing_frustration_record: "scratchpad",
 };
 
 /**
@@ -210,8 +212,8 @@ export function describeLevel(level, verifyCmd) {
     "  runaway protection              always on (stalemate abort + cap 3)",
   ];
   if (level === "high" && !verifyCmd) {
-    lines.push("", "  note: high expects a verify command. set one with:");
-    lines.push("        /gates-engage high <test command>");
+    lines.push("", "  note: high expects a verify command. set OMP_VERIFY_CMD or");
+    lines.push("        verifyCmd in the persisted config.");
   }
   return lines.join("\n");
 }

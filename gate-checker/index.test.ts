@@ -3,9 +3,11 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
-import {
+import gateChecker, {
 	applyPolicy,
+	canskipuserquestion,
 	checkCitations,
+	checkFrustrations,
 	claimsTestSuccess,
 	extractModClaims,
 	extractSnapshotRefs,
@@ -20,6 +22,7 @@ import {
 	runCommitGate,
 	runVerifyGate,
 	treeStateKey,
+	shouldskipnotools,
 	GATE_NUDGE,
 	MAX_CONTINUATIONS,
 	PROCESS_SHAPE_MAX_FILES,
@@ -28,6 +31,7 @@ import {
 	type GatePolicy,
 	type TurnEvidence,
 } from "./index.ts";
+import { automaticGateRecord } from "./frustrations.js";
 import {
 	checkAddedLines,
 	contentToAdded,
@@ -438,10 +442,134 @@ test("formatted failures carry the header and the detail", () => {
 	expect(formatted.includes("test detail")).toBe(true);
 });
 
-test("the subagent nudge states the manifest, markers, and commit rules", () => {
+test("the subagent nudge states the manifest, frustration tool, markers, and commit rules", () => {
 	expect(GATE_NUDGE.length > 0).toBe(true);
+	expect(GATE_NUDGE.includes("record_frustration")).toBe(true);
+	expect(GATE_NUDGE.includes("assigned id")).toBe(true);
+	expect(GATE_NUDGE.includes("goal")).toBe(true);
 	expect(GATE_NUDGE.includes("forbidden markers")).toBe(true);
 	expect(GATE_NUDGE.includes("git-pushing")).toBe(true);
+});
+
+test("task inputs receive only the generic gate nudge", async () => {
+	const handlers: Record<string, (event: unknown, context: unknown) => unknown> = {};
+	const schema = {
+		describe() { return schema; },
+		min() { return schema; },
+	};
+	const zod = {
+		object: (_shape: unknown) => schema,
+		string: () => schema,
+		array: (_item: unknown) => schema,
+		union: (_items: unknown[]) => schema,
+		number: () => schema,
+		literal: (_value: string) => schema,
+	};
+	gateChecker({
+		zod,
+		on: (name: string, handler: (event: unknown, context: unknown) => unknown) => {
+			handlers[name] = handler;
+		},
+		registerCommand: () => {},
+		registerTool: () => {},
+		events: { on: () => {} },
+		appendEntry: () => {},
+	} as never);
+
+	const context = {
+		cwd: tempdir("gate-task-input-"),
+		ui: { setStatus: () => {} },
+		sessionManager: {
+			getSessionFile: () => "/sessions/parent.json",
+			getSessionId: () => "parent-session",
+		},
+	};
+	const start = handlers.agent_start;
+	const taskCall = handlers.tool_call;
+	if (!start || !taskCall) throw new Error("missing gate lifecycle handlers");
+	await start({}, context);
+
+	const single = await taskCall({ toolName: "task", input: { task: "single child task" } }, context) as {
+		input?: { task?: string };
+	};
+	const batch = await taskCall(
+		{ toolName: "task", input: { tasks: [{ task: "first" }], context: "batched child tasks" } },
+		context,
+	) as { input?: { context?: string } };
+
+	expect(single.input?.task).toBe(`${GATE_NUDGE}single child task`);
+	expect(batch.input?.context).toBe(`${GATE_NUDGE}batched child tasks`);
+});
+
+test("a missing main frustration record blocks the request", () => {
+	const failures = checkFrustrations([], [
+		{ agent_id: "main", session_file: "/sessions/main.jsonl" },
+	]);
+	expect(failures).toHaveLength(1);
+	expect(failures[0]).toEqual(
+		expect.objectContaining({ gate: "journal", rule: "missing_frustration_record" }),
+	);
+	expect(failures[0]?.severity ?? "block").toBe("block");
+	expect(failures[0]?.detail.includes("main") ?? false).toBe(true);
+});
+
+test("records satisfy active server sessions despite local request ids", () => {
+	const mainidentity = { agent_id: "main", session_file: "/sessions/main.jsonl" };
+	const subagentidentity = { agent_id: "subagent-1", session_file: "/sessions/subagent-1.jsonl" };
+	const main = automaticGateRecord({
+		request_id: "parent-local-request",
+		rule: "forbidden_marker",
+		detail: "a forbidden marker blocked delivery",
+		blocking: true,
+		event_id: "gate-event-1",
+		session_file: mainidentity.session_file,
+		session_id: "session-main",
+	});
+	expect(checkFrustrations([main], [mainidentity])).toEqual([]);
+	const missing = checkFrustrations([main], [mainidentity, subagentidentity]);
+	expect(missing).toHaveLength(1);
+	expect(missing[0]).toEqual(
+		expect.objectContaining({ gate: "journal", rule: "missing_frustration_record" }),
+	);
+	expect(missing[0]?.severity ?? "block").toBe("block");
+	expect(missing[0]?.detail.includes("subagent-1") ?? false).toBe(true);
+
+	const subagent = automaticGateRecord({
+		request_id: "child-local-request",
+		agent_id: "subagent-1",
+		primary_goal: "check the assigned change",
+		rule: "subagent_missing_manifest",
+		detail: "the subagent report is incomplete",
+		blocking: true,
+		event_id: "gate-event-2",
+		session_file: subagentidentity.session_file,
+		session_id: "session-subagent-1",
+	});
+	expect(checkFrustrations([main, subagent], [mainidentity, subagentidentity])).toEqual([]);
+});
+
+test("the scratchpad identity gate blocks at low and drops at off", () => {
+	const failures = checkFrustrations([], [
+		{ agent_id: "main", session_file: null },
+	]);
+	const low = applyPolicy(failures, policyFor("low") as GatePolicy);
+	expect(low).toHaveLength(1);
+	expect(low[0]?.severity ?? "block").toBe("block");
+	expect(applyPolicy(failures, policyFor("off") as GatePolicy)).toEqual([]);
+});
+
+test("nonempty read-only replies and user questions cannot bypass a missing record", () => {
+	const failures = checkFrustrations([], [
+		{ agent_id: "main", session_file: "/sessions/main.jsonl" },
+	]);
+	const blocking = applyPolicy(failures, policyFor("low") as GatePolicy).some(
+		(failure) => (failure.severity ?? "block") === "block",
+	);
+	expect(blocking).toBe(true);
+	expect(shouldskipnotools(false, "i reviewed the active request.", null)).toBe(false);
+	expect(shouldskipnotools(false, "", null)).toBe(true);
+	expect(canskipuserquestion(true, 0, null, blocking)).toBe(false);
+	expect(canskipuserquestion(true, 0, null, false)).toBe(true);
 });
 
 // --- commit routing ---------------------------------------------------------
@@ -709,10 +837,11 @@ test("every emitted rule has a policy family", () => {
 	}
 });
 
-test("no emitted rule blocks at low", () => {
+test("only the mandatory scratchpad rule blocks at low", () => {
 	for (const rule of emittedRuleIds().graded) {
 		const graded = applyPolicy([asEmitted(rule)], policyFor("low") as GatePolicy);
-		expect(graded.every((f) => (f.severity ?? "block") !== "block")).toBe(true);
+		const blocks = graded.some((failure) => (failure.severity ?? "block") === "block");
+		expect(blocks).toBe(rule === "missing_frustration_record");
 	}
 });
 

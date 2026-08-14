@@ -11,11 +11,22 @@ import { resolve } from "path";
 
 const home = mkdtempSync(resolve(tmpdir(), "probe-home-"));
 process.env.OMP_GATE_LEDGER = resolve(home, "ledger.jsonl"); // keep the real tuning data untouched
+process.env.OMP_GATE_FRUSTRATIONS = resolve(home, "frustrations.jsonl"); // keep the real scratchpad untouched
 // isolate the dial too: a real /gates-engage config must not change what this
 // check measures, and this check must not overwrite the real one
 process.env.OMP_GATE_CONFIG = resolve(home, "config.json");
 process.env.OMP_DELIVERY_GATES = "1";
-process.env.OMP_VERIFY_CMD = "test -f verified.txt";
+const probeVerifyCmd = "test -f verified.txt";
+process.env.OMP_VERIFY_CMD = probeVerifyCmd;
+
+const writeProbeConfig = (level: string, verifyCmd?: string) => {
+  const config: { level: string; verifyCmd?: string } = { level };
+  if (verifyCmd) config.verifyCmd = verifyCmd;
+  writeFileSync(
+    process.env.OMP_GATE_CONFIG!,
+    JSON.stringify(config, null, 2) + "\n",
+  );
+};
 
 const gateChecker = (await import("./index.ts")).default;
 const askQuestionnaire = (await import("../ask-questionnaire/index.ts")).default;
@@ -30,13 +41,56 @@ git("git add -A && git commit -q -m init");
 
 type H = (e: unknown, c: unknown) => unknown;
 type Cmd = (args: string, c: unknown) => Promise<void>;
+type RegisteredTool = {
+  execute: (
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal: undefined,
+    onUpdate: unknown,
+    context: unknown,
+  ) => Promise<unknown>;
+};
+type Harness = {
+  recordFrustration?: RegisteredTool;
+  events: Record<string, (payload: unknown) => void>;
+};
+const harnesses = new WeakMap<Record<string, H>, Harness>();
 const commands: Record<string, Cmd> = {};
 const sessionEntries: Array<{ customType: string; data: Record<string, unknown> }> = [];
+const schema = { describe() { return this; }, min() { return this; }, optional() { return this; } };
+const zod = {
+  object: (_shape: unknown) => schema,
+  string: () => schema,
+  array: (_item: unknown) => schema,
+  union: (_items: unknown[]) => schema,
+  number: () => schema,
+  literal: (_value: string) => schema,
+};
 const mkHandlers = () => {
   const h: Record<string, H> = {};
+  const harness: Harness = { events: {} };
+  harnesses.set(h, harness);
   gateChecker({
+    zod,
     on: (n: string, f: H) => { h[n] = f; },
     registerCommand: (n: string, o: { handler: Cmd }) => { commands[n] = o.handler; },
+    registerTool: (tool: unknown) => {
+      if (
+        tool &&
+        typeof tool === "object" &&
+        "name" in tool &&
+        tool.name === "record_frustration" &&
+        "execute" in tool &&
+        typeof tool.execute === "function"
+      ) {
+        harness.recordFrustration = tool as RegisteredTool;
+      }
+    },
+    events: {
+      on: (channel: string, handler: (payload: unknown) => void) => {
+        harness.events[channel] = handler;
+      },
+    },
     appendEntry: (customType: string, data: Record<string, unknown>) => {
       sessionEntries.push({ customType, data });
     },
@@ -45,20 +99,86 @@ const mkHandlers = () => {
 };
 const handlers = mkHandlers();
 
+const mainSessionFile = resolve(home, "main-session.json");
+const mainSessionId = "main-session";
+const mainSession = {
+  getSessionFile: () => mainSessionFile,
+  getSessionId: () => mainSessionId,
+};
 let assistantText = "updated `src/a.txt` as requested.";
 const ctx = {
   cwd: repo,
   hasUI: false,
   sessionManager: {
     getBranch: () => [{ type: "message", message: { role: "assistant", content: assistantText } }],
+    ...mainSession,
   },
   ui: { setStatus: () => {}, notify: () => {} },
 };
 
+const subagentContext = (sessionFile: string, sessionId: string) => ({
+  ...ctx,
+  sessionManager: {
+    ...ctx.sessionManager,
+    getSessionFile: () => sessionFile,
+    getSessionId: () => sessionId,
+  },
+});
+let frustrationCalls = 0;
+const recordFrustration = async (
+  h: Record<string, H>,
+  context: unknown,
+  agentId: string,
+  suppliedRecord: Record<string, unknown> = {},
+) => {
+  const tool = harnesses.get(h)?.recordFrustration;
+  if (!tool) throw new Error("record_frustration was not registered");
+  const result = await tool.execute(
+    `frustration-${++frustrationCalls}`,
+    {
+      ...suppliedRecord,
+      agent_id: agentId,
+      primary_goal: "exercise the gate wiring",
+      complaint: "simulated request completed",
+      type: "workflow",
+      severity: "low",
+      evidence: [{
+        kind: "command",
+        command: "wiring-check",
+        exit_code: 0,
+        output: "simulated",
+      }],
+    },
+    undefined,
+    undefined,
+    context,
+  );
+  if (
+    result !== null &&
+    typeof result === "object" &&
+    "isError" in result &&
+    result.isError === true
+  ) {
+    throw new Error(`record_frustration failed for ${agentId}`);
+  }
+};
+const start = async (
+  h: Record<string, H>,
+  context: unknown,
+  record = true,
+) => {
+  await h.agent_start!({}, context);
+  if (record) await recordFrustration(h, context, "main");
+};
+const emit = (h: Record<string, H>, channel: string, payload: unknown) => {
+  const listener = harnesses.get(h)?.events[channel];
+  if (!listener) throw new Error(`missing ${channel} listener`);
+  listener(payload);
+};
 let n = 0;
 let lastNotice = "";
 const run = async (h: Record<string, H>, label: string, work: () => void) => {
-  await h.agent_start!({}, ctx);
+  await start(h, ctx);
   work();
   await h.tool_call!({ toolName: "write", input: { path: "src/a.txt" } }, ctx);
   const r = (await h.session_stop!({}, ctx)) as
@@ -96,26 +216,27 @@ expect(journalKinds.includes("request_start"), "journal captured the request bas
 expect(journalKinds.includes("verify"), "journal captured verification");
 expect(journalKinds.includes("terminal"), "journal captured the terminal outcome");
 
-// case 4: read-only session -> never asked to test or commit
+// case 4: a compliant read-only session is never asked to test or commit
 const h4 = mkHandlers();
 assistantText = "i read the file. no changes needed.";
-await h4.agent_start!({}, ctx);
+await start(h4, ctx);
 await h4.tool_call!({ toolName: "read", input: { path: "src/a.txt" } }, ctx);
 const c4 = await h4.session_stop!({}, ctx);
 console.log("4. read-only session");
-expect(c4 === undefined, "read-only session not blocked");
+expect(c4 === undefined, "compliant read-only session is not blocked");
 
-// case 5: disarmed -> the same dirty state passes untouched
-// "low" is the disarmed equivalent under the dial: nothing blocks
+// case 5: low leaves delivery findings advisory once scratchpad coverage exists
+// the mandatory scratchpad record remains blocking at low
 delete process.env.OMP_DELIVERY_GATES;
 process.env.OMP_GATES_LEVEL = "low";
 const h5 = mkHandlers();
 assistantText = "updated `src/a.txt`.";
-const c5 = await run(h5, "5. disarmed + dirty + failing verify", () => {
+const c5 = await run(h5, "5. low + dirty + failing verify", () => {
   rmSync(resolve(repo, "verified.txt"));
   writeFileSync(resolve(repo, "src/a.txt"), "three\n");
 });
-expect(c5 === undefined, "disarmed gates do not block: " + JSON.stringify(c5));
+expect(c5 === undefined, "low leaves compliant dirty delivery work unblocked: " + JSON.stringify(c5));
+
 
 // case 6: the "a process should have run" record reaches the ledger.
 // the detector is pure and unit-checked; what this covers is that session_stop
@@ -152,20 +273,62 @@ writeFileSync(resolve(repo, "verified.txt"), "ok\n");
 
 const MO = "<changed-files>";
 const MC = "</changed-files>";
+let subagentSequence = 0;
+// load after env setup so frustrations.js uses the isolated scratchpad path.
+const { readRecords } = await import("./frustrations.js");
 
 // drives one full request: agent_start -> subagent reports -> session_stop.
 const runSub = async (
   h: Record<string, H>,
   parentText: string,
   reports: string[],
+  reportIds: string[] = [],
+  recordSubagents = true,
+  childSetups: Array<{
+    serverSessionFile?: string;
+    serverSessionId?: string;
+    suppliedRecord?: Record<string, unknown>;
+  }> = [],
 ) => {
   assistantText = parentText;
-  await h.agent_start!({}, ctx);
+  await start(h, ctx);
+  await h.tool_call!(
+    { toolName: "task", input: { task: "review the change" } },
+    ctx,
+  );
   await h.tool_call!({ toolName: "write", input: { path: "src/a.txt" } }, ctx);
   writeFileSync(resolve(repo, "src/a.txt"), `sub ${Math.random()}\n`);
-  for (const text of reports) {
+  for (const [index, text] of reports.entries()) {
+    const id = reportIds[index] ?? `subagent-${++subagentSequence}`;
+    const sessionFile = resolve(home, `${id}.json`);
+    const sessionId = `${id}-session`;
+    const setup = childSetups[index];
+    const childSessionFile = setup?.serverSessionFile ?? sessionFile;
+    const childSessionId = setup?.serverSessionId ?? sessionId;
+    const toolCallId = `task-${id}`;
+    const child = mkHandlers();
+    const childContext = subagentContext(childSessionFile, childSessionId);
+    await child.agent_start!({}, childContext);
+    if (recordSubagents)
+      await recordFrustration(child, childContext, id, setup?.suppliedRecord);
+    emit(h, "task:subagent:lifecycle", {
+      id,
+      agent: "subagent",
+      status: "completed",
+      sessionFile,
+      parentToolCallId: toolCallId,
+    });
     await h.tool_result!(
-      { toolName: "task", input: {}, content: [{ type: "text", text }], isError: false },
+      {
+        toolName: "task",
+        toolCallId,
+        input: {},
+        content: [{ type: "text", text }],
+        details: {
+          results: [{ id, agent: "subagent", exitCode: 0, output: text, sessionFile }],
+        },
+        isError: false,
+      },
       ctx,
     );
   }
@@ -177,6 +340,97 @@ const runSub = async (
     rules: [...(r?.additionalContext ?? "").matchAll(/\d+\. \S+\/(\w+)/g)].map((m) => m[1]),
   };
 };
+
+// a parent record cannot cover a child: the child has its own server session identity.
+{
+  process.env.OMP_GATES_LEVEL = "low";
+  const h = mkHandlers();
+  const { r, rules } = await runSub(
+    h,
+    "the reviewer subagent reported back",
+    [JSON.stringify({ review: "ok", changed: [] })],
+    ["unrecorded-child"],
+    false,
+  );
+  process.env.OMP_GATES_LEVEL = "medium";
+  console.log("5b. missing child frustration record");
+  expect(
+    r?.continue === true && rules.includes("missing_frustration_record"),
+    "low blocks a missing child frustration record",
+  );
+}
+
+// child records have child-local request ids, but coverage binds to session_file.
+{
+  process.env.OMP_GATES_LEVEL = "low";
+  const h = mkHandlers();
+  const id = "child-local-session";
+  const { r } = await runSub(
+    h,
+    "the reviewer subagent reported back",
+    [JSON.stringify({ review: "ok", changed: [] })],
+    [id],
+  );
+  const records = readRecords(process.env.OMP_GATE_FRUSTRATIONS!);
+  const child = records.find((record) => record.agent_id === id);
+  const main = records.filter((record) => record.session_file === mainSessionFile).pop();
+  process.env.OMP_GATES_LEVEL = "medium";
+  console.log("5c. child session coverage");
+  expect(r === undefined, "parent accepts a record from the child server session");
+  expect(
+    child?.session_file === resolve(home, `${id}.json`) &&
+      child?.session_id === `${id}-session`,
+    "child record keeps its server session identity",
+  );
+  expect(
+    typeof child?.request_id === "string" &&
+      typeof main?.request_id === "string" &&
+      child.request_id !== main.request_id,
+    "child-local request id does not affect parent coverage",
+  );
+}
+
+// native task provenance must match the trusted child session, not the agent id.
+{
+  process.env.OMP_GATES_LEVEL = "low";
+  const h = mkHandlers();
+  const id = "identity-bound-child";
+  const expectedSessionFile = resolve(home, `${id}.json`);
+  const serverSessionFile = resolve(home, `${id}-server.json`);
+  const serverSessionId = `${id}-server-session`;
+  const { r, rules } = await runSub(
+    h,
+    "the reviewer subagent reported back",
+    [JSON.stringify({ review: "ok", changed: [] })],
+    [id],
+    true,
+    [{
+      serverSessionFile,
+      serverSessionId,
+      suppliedRecord: {
+        request_id: "agent-selected-request",
+        session_file: expectedSessionFile,
+        session_id: `${id}-session`,
+      },
+    }],
+  );
+  const child = readRecords(process.env.OMP_GATE_FRUSTRATIONS!).find((record) => record.agent_id === id);
+  process.env.OMP_GATES_LEVEL = "medium";
+  console.log("5d. server-bound child identity");
+  expect(
+    child?.session_file === serverSessionFile &&
+      child?.session_id === serverSessionId,
+    "server ignores caller-supplied child session identity",
+  );
+  expect(
+    child?.request_id !== "agent-selected-request",
+    "server ignores caller-supplied child request id",
+  );
+  expect(
+    r?.continue === true && rules.includes("missing_frustration_record"),
+    "parent rejects a record outside native task session provenance",
+  );
+}
 
 // manifest fixtures: only the last report is a real failure.
 console.log("7. subagent manifest fixtures");
@@ -219,8 +473,8 @@ for (const [label, report, shouldBlock] of [
   const h = mkHandlers();
   const parent = "the reviewer subagent claimed `src/ghost.ts` was updated";
   const bad = "I updated `src/ghost.ts` for you";
-  const a = await runSub(h, parent, [bad]);
-  const b = await runSub(h, parent, [bad, "I updated `src/ghost2.ts` too"]);
+  const a = await runSub(h, parent, [bad], ["retry-subagent"]);
+  const b = await runSub(h, parent, [bad, "I updated `src/ghost2.ts` too"], ["retry-subagent", "new-subagent"]);
   console.log("10. retry does not grow the failure count");
   expect(a.r?.continue === true, `turn 1 blocks (rules=${a.rules.join(",")})`);
   expect(
@@ -254,12 +508,30 @@ for (const [label, report, shouldBlock] of [
   console.log("12. /gates-engage and /gates-disable");
   const notify = (m: string) => { lastNotice = m; };
   const cmdCtx = { cwd: repo, hasUI: true, ui: { notify, setStatus: () => {} } };
-  const h = mkHandlers();
-  await commands["gates-engage"]!("high bun test", cmdCtx);
-  expect(lastNotice.includes("HIGH"), "engage high");
+  mkHandlers();
+
+  await commands["gates-engage"]!("", cmdCtx);
+  expect(lastNotice.includes("gates:"), "no argument reports the current level");
+  for (const level of ["low", "medium", "high"]) {
+    await commands["gates-engage"]!(level, cmdCtx);
+    expect(lastNotice.includes(level.toUpperCase()), `${level} accepts one argument`);
+    expect(
+      JSON.parse(readFileSync(process.env.OMP_GATE_CONFIG!, "utf-8")).verifyCmd === probeVerifyCmd,
+      `${level} preserves the configured verification command`,
+    );
+  }
+
+  const beforeTrailing = readFileSync(process.env.OMP_GATE_CONFIG!, "utf-8");
+  await commands["gates-engage"]!("high trailing text", cmdCtx);
   expect(
-    JSON.parse(readFileSync(process.env.OMP_GATE_CONFIG!, "utf-8")).verifyCmd === "bun test",
-    "a multi-word verify command persists",
+    lastNotice.includes("trailing text") &&
+      lastNotice.includes("OMP_VERIFY_CMD") &&
+      lastNotice.includes("persisted config"),
+    "trailing text names the verification command sources",
+  );
+  expect(
+    readFileSync(process.env.OMP_GATE_CONFIG!, "utf-8") === beforeTrailing,
+    "trailing text changes no config",
   );
   await commands["gates-engage"]!("paranoid", cmdCtx);
   expect(lastNotice.includes("unknown level"), "an unknown level is rejected");
@@ -268,14 +540,24 @@ for (const [label, report, shouldBlock] of [
     "a rejected level changes nothing",
   );
 
+  delete process.env.OMP_VERIFY_CMD;
+  writeProbeConfig("high");
+  mkHandlers();
+  await commands["gates-engage"]!("", cmdCtx);
+  expect(lastNotice.includes("no verify command set"), "high reports no configured verifier");
+
+  process.env.OMP_VERIFY_CMD = probeVerifyCmd;
+  writeProbeConfig("high", probeVerifyCmd);
+  const rearmed = mkHandlers();
+
   // the level must take effect in THIS session, with no restart
   await commands["gates-disable"]!("", cmdCtx);
   expect(lastNotice.includes("gates: OFF"), "disable reports off");
-  const off = await runSub(h, "i modified `src/ghost.ts` as requested", []);
+  const off = await runSub(rearmed, "i modified `src/ghost.ts` as requested", []);
   expect(off.r === undefined, "a disabled gate does not block a fabricated claim");
 
   await commands["gates-engage"]!("medium", cmdCtx);
-  const on = await runSub(h, "i modified `src/ghost.ts` as requested", []);
+  const on = await runSub(rearmed, "i modified `src/ghost.ts` as requested", []);
   expect(on.r?.continue === true, "re-engaging restores blocking in the same session");
 }
 
@@ -290,6 +572,7 @@ for (const [label, report, shouldBlock] of [
       getBranch: () => [
         { type: "message", message: { role: "assistant", content: "wrote the script." } },
       ],
+      ...mainSession,
     },
     ui: { setStatus: () => {}, notify: () => {} },
   };
@@ -297,7 +580,7 @@ for (const [label, report, shouldBlock] of [
   // file, which outranks the env var — a fresh handler set picks it up.
   await commands["gates-engage"]!("low", { cwd: loose, hasUI: true, ui: { notify: () => {}, setStatus: () => {} } });
   const h = mkHandlers();
-  await h.agent_start!({}, looseCtx);
+  await start(h, looseCtx);
   // tool_call fires BEFORE the write in a real session — that ordering is what
   // lets no-git mode snapshot the pre-write state
   await h.tool_call!({ toolName: "write", input: { path: "s.sh" } }, looseCtx);
@@ -307,7 +590,7 @@ for (const [label, report, shouldBlock] of [
 
   await commands["gates-engage"]!("medium", { cwd: loose, hasUI: true, ui: { notify: () => {}, setStatus: () => {} } });
   const h2 = mkHandlers();
-  await h2.agent_start!({}, looseCtx);
+  await start(h2, looseCtx);
   await h2.tool_call!({ toolName: "write", input: { path: "s2.sh" } }, looseCtx);
   writeFileSync(resolve(loose, "s2.sh"), "#!/bin/sh\n# TODO: implement\n");
   const r2 = (await h2.session_stop!({}, looseCtx)) as { additionalContext?: string } | undefined;
@@ -319,13 +602,11 @@ for (const [label, report, shouldBlock] of [
     !(r2?.additionalContext?.includes("uncommitted_changes") ?? true),
     "no repo means no commit demand, at any level",
   );
-  // the verify gate needs a test command, not a repo — a lot of real work has
-  // one and not the other
-  await commands["gates-engage"]!("medium test -f " + resolve(loose, "built.txt"), {
-    cwd: loose, hasUI: true, ui: { notify: () => {}, setStatus: () => {} },
-  });
+  // the verify gate needs a configured command, not a repo — a lot of real work
+  // has one and not the other. this probe config is isolated from user settings.
+  writeProbeConfig("medium", `test -f ${resolve(loose, "built.txt")}`);
   const h3 = mkHandlers();
-  await h3.agent_start!({}, looseCtx);
+  await start(h3, looseCtx);
   await h3.tool_call!({ toolName: "write", input: { path: "s3.sh" } }, looseCtx);
   writeFileSync(resolve(loose, "s3.sh"), "#!/bin/sh\necho ok\n");
   const r3 = (await h3.session_stop!({}, looseCtx)) as { additionalContext?: string } | undefined;
@@ -335,7 +616,7 @@ for (const [label, report, shouldBlock] of [
   );
   writeFileSync(resolve(loose, "built.txt"), "ok\n");
   const h4b = mkHandlers();
-  await h4b.agent_start!({}, looseCtx);
+  await start(h4b, looseCtx);
   await h4b.tool_call!({ toolName: "write", input: { path: "s4.sh" } }, looseCtx);
   writeFileSync(resolve(loose, "s4.sh"), "#!/bin/sh\necho ok\n");
   const r4 = await h4b.session_stop!({}, looseCtx);
@@ -350,12 +631,13 @@ for (const [label, report, shouldBlock] of [
           message: { role: "assistant", content: "i modified `src/claimed.ts`." },
         },
       ],
+      ...mainSession,
     },
   };
   execSync("mkdir -p src", { cwd: loose });
   writeFileSync(resolve(loose, "src/claimed.ts"), "unchanged\n");
   const claimHandlers = mkHandlers();
-  await claimHandlers.agent_start!({}, claimCtx);
+  await start(claimHandlers, claimCtx);
   await claimHandlers.tool_call!(
     { toolName: "write", input: { path: "src/claimed.ts" } },
     claimCtx,
@@ -376,11 +658,12 @@ for (const [label, report, shouldBlock] of [
           message: { role: "assistant", content: "i modified `src/honest.ts`." },
         },
       ],
+      ...mainSession,
     },
   };
   writeFileSync(resolve(loose, "src/honest.ts"), "before\n");
   const honestHandlers = mkHandlers();
-  await honestHandlers.agent_start!({}, honestCtx);
+  await start(honestHandlers, honestCtx);
   await honestHandlers.tool_call!(
     { toolName: "write", input: { path: "src/honest.ts" } },
     honestCtx,
@@ -423,6 +706,7 @@ for (const [label, report, shouldBlock] of [
         getBranch: () => [
           { type: "message", message: { role: "assistant", content: assistant } },
         ],
+        ...mainSession,
       },
       ui: { setStatus: (_key: string, text: string) => statuses.push(text), notify: () => {} },
     };
@@ -431,11 +715,7 @@ for (const [label, report, shouldBlock] of [
   const cwdRepo = makeRepo();
   const cwdStatuses: string[] = [];
   const cwdCtx = makeLoose("updated `tracked.txt`.", cwdStatuses);
-  await commands["gates-engage"]!(`high test "$(pwd)" = ${cwdRepo.target}`, {
-    cwd: cwdCtx.cwd,
-    hasUI: true,
-    ui: { notify: () => {}, setStatus: () => {} },
-  });
+  writeProbeConfig("high", `test "$(pwd)" = ${cwdRepo.target}`);
   const cwdHandlers = mkHandlers();
   const journalStart = sessionEntries.length;
   await cwdHandlers.session_start!({}, cwdCtx);
@@ -443,7 +723,7 @@ for (const [label, report, shouldBlock] of [
     cwdStatuses.at(-1)?.includes("low: no git") ?? false,
     "session startup shows the no-git capability label",
   );
-  await cwdHandlers.agent_start!({}, cwdCtx);
+  await start(cwdHandlers, cwdCtx);
   expect(
     cwdStatuses.at(-1)?.includes("low: no git") ?? false,
     "no-git status uses the low capability label",
@@ -477,13 +757,9 @@ for (const [label, report, shouldBlock] of [
   const pathRepo = makeRepo();
   writeFileSync(resolve(pathRepo.target, "ignored.txt"), "// TODO: implement\n");
   const pathCtx = makeLoose("wrote `new.ts`.");
-  await commands["gates-engage"]!("medium true", {
-    cwd: pathCtx.cwd,
-    hasUI: true,
-    ui: { notify: () => {}, setStatus: () => {} },
-  });
+  writeProbeConfig("medium", "true");
   const pathHandlers = mkHandlers();
-  await pathHandlers.agent_start!({}, pathCtx);
+  await start(pathHandlers, pathCtx);
   const newPath = resolve(pathRepo.target, "new.ts");
   await pathHandlers.tool_call!({ toolName: "write", input: { path: newPath } }, pathCtx);
   writeFileSync(newPath, "// TODO: implement\n");
@@ -503,7 +779,7 @@ for (const [label, report, shouldBlock] of [
   paths.push(mixedExternal);
   const mixedCtx = makeLoose("wrote `loose.ts`.");
   const mixedHandlers = mkHandlers();
-  await mixedHandlers.agent_start!({}, mixedCtx);
+  await start(mixedHandlers, mixedCtx);
   await mixedHandlers.tool_call!(
     { toolName: "write", input: { cwd: mixedExternal, path: "loose.ts" } },
     mixedCtx,
@@ -526,7 +802,7 @@ for (const [label, report, shouldBlock] of [
   const singleCtx = makeLoose("read repository files.");
   const singleHandlers = mkHandlers();
   const warningStart = sessionEntries.length;
-  await singleHandlers.agent_start!({}, singleCtx);
+  await start(singleHandlers, singleCtx);
   await singleHandlers.tool_call!(
     { toolName: "read", input: { path: resolve(firstRepo.target, "tracked.txt") } },
     singleCtx,
@@ -552,8 +828,8 @@ console.log("14. cooperative mutation lease");
 process.env.OMP_GATE_MUTATION_LEASE = "1";
 const leaseOwner = mkHandlers();
 const leaseWaiter = mkHandlers();
-await leaseOwner.agent_start!({}, ctx);
-await leaseWaiter.agent_start!({}, ctx);
+await start(leaseOwner, ctx);
+await start(leaseWaiter, ctx);
 const blockedLease = (await leaseWaiter.tool_call!(
   { toolName: "write", input: { path: "src/leased.txt" } },
   ctx,
@@ -576,7 +852,7 @@ const isolatedTask = (await leaseWaiter.tool_call!(
 )) as { block?: boolean } | undefined;
 expect(isolatedTask?.block !== true, "isolated task work does not need the shared lease");
 await leaseOwner.session_tree!({}, ctx);
-await leaseWaiter.agent_start!({}, ctx);
+await start(leaseWaiter, ctx);
 const retriedLease = (await leaseWaiter.tool_call!(
   { toolName: "write", input: { path: "src/leased.txt" } },
   ctx,
@@ -586,10 +862,7 @@ await leaseWaiter.session_shutdown!({}, ctx);
 delete process.env.OMP_GATE_MUTATION_LEASE;
 
 console.log("15. journal recovery");
-await commands["gates-engage"]!(
-  "medium true",
-  { cwd: repo, hasUI: true, ui: { notify: () => {}, setStatus: () => {} } },
-);
+writeProbeConfig("medium", "true");
 const recovery = mkHandlers();
 const recoveryCtx = {
   ...ctx,
@@ -602,10 +875,11 @@ const recoveryCtx = {
       },
       { type: "message", message: { role: "assistant", content: "need input." } },
     ],
+    ...mainSession,
   },
 };
 await recovery.session_start!({}, recoveryCtx);
-await recovery.agent_start!({}, recoveryCtx);
+await start(recovery, recoveryCtx);
 await recovery.tool_call!({ toolName: "ask", input: {} }, recoveryCtx);
 const recoveryResult = (await recovery.session_stop!({}, recoveryCtx)) as
   | { continue?: boolean; additionalContext?: string }
@@ -637,6 +911,7 @@ expect(
 		hasUI: false,
 		sessionManager: {
 			getBranch: () => [{ type: "message", message: { role: "assistant", content: "done." } }],
+			...mainSession,
 		},
 		ui: { setStatus: () => {}, notify: () => {} },
 	};
@@ -647,7 +922,7 @@ expect(
 	});
 	const off = mkHandlers();
 	const offStart = sessionEntries.length;
-	await off.agent_start!({}, offCtx);
+	await start(off, offCtx, false);
 
 	const offTask = (await off.tool_call!(
 		{ toolName: "task", input: { task: "review the change" } },
@@ -670,6 +945,9 @@ expect(
 		"a disabled gate does not bind a repository from tool context",
 	);
 
+	const offResult = await off.session_stop!({}, offCtx);
+	expect(offResult === undefined, "a disabled gate does not enforce the scratchpad");
+
 	rmSync(loose, { recursive: true, force: true });
 	rmSync(bound, { recursive: true, force: true });
 }
@@ -682,11 +960,7 @@ expect(
 // scaffold new code were exactly the ones that went unchecked.
 {
 	console.log("17. questionnaire and gate checker together");
-	await commands["gates-engage"]!("medium true", {
-		cwd: repo,
-		hasUI: true,
-		ui: { notify: () => {}, setStatus: () => {} },
-	});
+	writeProbeConfig("medium", "true");
 	const quizHandlers = () => {
 		const h: Record<string, H> = {};
 		askQuestionnaire({
@@ -709,7 +983,7 @@ expect(
 	)) as { block?: boolean } | undefined;
 	expect(blockedWrite?.block === true, "the questionnaire blocks work before the ask");
 
-	await gate.agent_start!({}, ctx);
+	await start(gate, ctx);
 	await gate.tool_call!({ toolName: "ask", input: {} }, ctx);
 	await quiz.tool_result!({ toolName: "ask", toolCallId: "1", isError: false }, ctx);
 
@@ -728,7 +1002,7 @@ expect(
 	console.log("18. a user question still releases a request that changed nothing");
 	const gate = mkHandlers();
 	assistantText = "answered the question. no changes needed.";
-	await gate.agent_start!({}, ctx);
+	await start(gate, ctx);
 	await gate.tool_call!({ toolName: "ask", input: {} }, ctx);
 	const askOnly = await gate.session_stop!({}, ctx);
 	expect(askOnly === undefined, "an ask with no file changes still skips the gates");

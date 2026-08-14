@@ -1,196 +1,69 @@
 # terra advisor user guide
 
-> a read-only omp task agent that returns one source-backed advisory record
+> a native passive, read-only omp advisor configured by nikos agent stack.
 
-## contents
+## install and start
 
-- [what the agent does](#what-the-agent-does)
-- [what changed from the earlier advisor role](#what-changed-from-the-earlier-advisor-role)
-- [installation](#installation)
-- [invocation](#invocation)
-- [fixed profile](#fixed-profile)
-- [output schema](#output-schema)
-- [when terra advises](#when-terra-advises)
-- [authority boundary](#authority-boundary)
-- [verification](#verification)
-- [troubleshooting](#troubleshooting)
-- [limitations](#limitations)
-- [source map](#source-map)
-
-## what the agent does
-
-the `nikos-agent-stack` plugin installs one agent profile, `agents/terra.md`. the
-agent name is `terra-advisor`. sol calls it through the native `task` tool. terra
-reads source with read-only tools, and returns one structured record that holds
-one recommendation and one evidence object.
-
-terra is an explicit task agent. it starts only when sol calls it. it does not
-watch the session, it does not interrupt a turn, and it produces no output
-between calls.
-
-the plugin changes no omp source file. it declares two extensions in
-`package.json#omp.extensions`, and it ships the agent profile in the packaged
-`agents/` directory. omp finds the profile through plugin agent discovery.
-
-sources: [agent profile](../agents/terra.md), [packaged agent file](../package.json#L35-L57), [discovery decision](official-extension-plan.html)
-
-## what changed from the earlier advisor role
-
-this package no longer contains a passive advisor. read this table before you
-use the agent.
-
-| earlier behavior | current fact |
-|---|---|
-| passive advisor mode, started with `/advisor on` and inspected with `/advisor status` | removed. no passive advisor exists. sol must make one explicit `task` call for each advisory record. |
-| `WATCHDOG.yml` profile copied to `~/.omp/agent/` | removed. a plugin cannot register a passive native advisor and cannot write `watchdog.yml`. |
-| omp core patch that extended the native `advise` tool schema, advisor routing, agent-facing xml, and the visible advisor card | removed. evidence now travels in the agent's own output object only. |
-| a pinned upstream base revision, plus patch application into an omp source checkout | removed. installation uses the omp plugin manager only, and no step touches omp source. |
-| advisor card, transcript advisor details, and native note deduplication | not available. the record is a normal task result. |
-
-**the passive `/advisor` behavior is gone. no part of this package restores it.**
-terra now speaks only when sol calls it, and terra advice reaches the transcript
-as a task result, not as an advisory interrupt.
-
-sources: [scope and compatibility rule](official-extension-plan.html), [terra advisor summary](../README.md#L126-L135)
-
-## installation
-
-terra installs with the rest of the stack. the plugin name is
-`nikos-agent-stack`. all actions use `omp plugin <action> [target]`.
-
-### install
+run the setup flow in this order:
 
 ```sh
 omp plugin install nikos-agent-stack
 ```
 
-`--scope user` is the default and installs for every project. use
-`--scope project` to bind the plugin to the current project only.
-
-### link a local checkout
-
-```sh
-omp plugin link .
-```
-
-run this from the repository root when you develop the profile. the link points
-omp at the working tree, so a later edit of `agents/terra.md` needs no reinstall.
-
-### update
-
-```sh
-omp plugin install nikos-agent-stack@latest
-```
-
-a linked checkout does not need this command. update its source instead.
-
-### remove
-
-```sh
-omp plugin uninstall nikos-agent-stack
-```
-
-removal deletes the packaged profile, so `terra-advisor` leaves the agent list.
-terra keeps no state on disk, so removal leaves no advisor files behind. the gate
-checker state at `~/.omp/gate-checker/` belongs to a different part of the stack.
-
-### after any install, link, update, or removal
-
-restart omp. agent discovery occurs at startup.
-
-source: [packaged files and extension entries](../package.json#L35-L58)
-
-## invocation
-
-sol calls terra through the native `task` tool, and selects the agent by name:
+start an omp session and run the installed plugin setup command:
 
 ```text
-task
-  agent: terra-advisor
-  task: one candidate decision, its acceptance criterion, and the paths to inspect
+/advisor-install
 ```
 
-rules for each call:
+restart the session, then use the native advisor commands:
 
-- one call returns one record. ask about one candidate only.
-- name the acceptance criterion or the observable contract in the call. terra
-  stays silent when the call supplies no criterion to test against.
-- name the files or the search scope. terra reads source; it does not receive
-  your working context.
-- terra does not delegate, so a call never starts a further agent.
-
-source: [scope, silence, and delegation rules](../agents/terra.md#L48-L64)
-
-## fixed profile
-
-the profile fixes the model, the thinking level, and the tool set:
-
-| field | value | effect |
-|---|---|---|
-| `name` | `terra-advisor` | the name that selects the agent in a `task` call |
-| `model` | `openai-codex/gpt-5.6-terra` | every call uses this model |
-| `thinking` | `high` | every call uses high reasoning effort |
-| `tools` | `read`, `grep`, `glob` | terra cannot edit, write, or run a command |
-
-these values live in the profile frontmatter. no runtime flag changes them. to
-change one, edit `agents/terra.md`, then relink or reinstall the plugin, then
-restart omp. `plugin.test.ts` asserts all four values, so a change to the profile
-without a matching change to the test fails `bun run test`.
-
-sources: [profile frontmatter](../agents/terra.md#L1-L9), [asserted profile contract](../plugin.test.ts#L128-L146)
-
-## output schema
-
-the profile declares a closed output object. `advice` and `evidence` are both
-required, and `additionalProperties` is `false` on the record and on the evidence
-object.
-
-```json
-{
-  "advice": "the expired-token branch reaches the success path, which the stated criterion forbids",
-  "evidence": {
-    "path": "src/auth.ts",
-    "line": 42,
-    "claim": "the expired-token check returns before the guard runs",
-    "digest": "a1b2"
-  }
-}
+```text
+/advisor on
+/advisor status
 ```
 
-| field | type | rule |
-|---|---|---|
-| `advice` | string | one candidate recommendation, grounded in inspected source |
-| `evidence.path` | string | exact repository-relative path of the read file |
-| `evidence.line` | integer | one-indexed line that establishes the claim |
-| `evidence.claim` | string | concrete claim that the cited line proves |
-| `evidence.digest` | string | digest copied word for word from the read result file snapshot header |
+`/advisor-install` installs or updates terra in the user watchdog configuration. `/advisor on` enables passive monitoring, and `/advisor status` reports native advisor state. for a linked local checkout, run `omp plugin link .`, then use `/advisor-install` in an omp session. `nikos-gates advisor install` remains available for direct package use outside omp.
 
-evidence is required on every record. terra copies the digest from the read
-result. terra never invents a digest and never recomputes one. when no inspected
-source grounds the advice, terra returns no advice instead of a guess.
+source: [package command](../package.json), [advisor setup command](../advisor/install.js), [shell setup command](../gate-checker/gate-cli.js), [watchdog source](../advisor/WATCHDOG.yml)
 
-sources: [output schema](../agents/terra.md#L10-L41), [evidence rules](../agents/terra.md#L66-L75)
+## setup behavior
 
-## when terra advises
+`/advisor-install` and `nikos-gates advisor install` read the existing user `WATCHDOG.yml`, or an existing `WATCHDOG.yaml` when no `.yml` file exists, from the directory named by `PI_CODING_AGENT_DIR`, or from `~/.omp/agent` when that environment variable is unset.
 
-terra advises only when inspected evidence establishes all three links at once:
+the setup command:
 
-1. a current sol decision or candidate;
-2. an explicit acceptance criterion, or an existing observable contract that the
-   candidate must satisfy;
-3. a concrete path by which the candidate breaks that criterion, or leaves it
-   materially unverified.
+- preserves top-level instructions and every non-terra advisor;
+- normalizes advisor names, then replaces or adds terra;
+- validates the native watchdog schema before writing;
+- writes atomically to `WATCHDOG.yml`, or to an existing `WATCHDOG.yaml` when no `.yml` file exists; and
+- is idempotent: a repeated setup leaves the same terra configuration.
 
-when one link is hypothetical or unobserved, terra stays silent.
+the user owns this configuration after setup. run `/advisor-install` again after a plugin update when the shipped terra instructions change, then restart omp. use `nikos-gates advisor install` only when invoking the package directly outside omp.
 
-terra keeps each recommendation to one candidate, its acceptance criteria, the
-relevant existing tests, and any supplied proposals. terra does not propose a
-broader plan, does not invent an edge case, and does not reopen a settled design.
+source: [advisor setup command](../advisor/install.js), [shell setup command](../gate-checker/gate-cli.js), [watchdog source](../advisor/WATCHDOG.yml)
 
-### classification of a failed test
+## passive advisor behavior
 
-when a proposed or speculative test fails, terra classifies the failure before it
-advises:
+terra is a native passive advisor. after `/advisor on`, omp monitors the session and routes terra notes through the native advisor flow.
+
+omp owns the native `/advisor on` and `/advisor status` commands, advisor routing, concern and blocker interruption, and the advisor ui. the plugin supplies terra configuration only; it does not replace those native surfaces.
+
+terra has `read`, `grep`, and `glob` only. it cannot edit, write, or run commands.
+
+source: [watchdog source](../advisor/WATCHDOG.yml)
+
+## advisory standard
+
+terra advises only when inspected source establishes all three links:
+
+1. a current decision or candidate;
+2. an explicit acceptance criterion or existing observable contract; and
+3. a concrete path by which the candidate violates that criterion or remains materially unverified.
+
+when a link is hypothetical or unobserved, terra stays silent. each recommendation stays focused on one candidate, its acceptance criteria, relevant existing tests, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen a settled design.
+
+when a failed test is involved, terra classifies it before advising:
 
 | class | condition | recommendation |
 |---|---|---|
@@ -198,144 +71,71 @@ advises:
 | `bad_oracle` | the expectation is unsupported or wrong | advise correction or removal of the test |
 | `low_value` | the difference protects no distinct, important, stable observable contract | advise correction or removal of the test |
 
-terra advises a production change only for a `bug`.
+terra advises a production change only for a `bug`. it advises but never claims approval, gate, or handoff authority.
 
-sources: [advice conditions](../agents/terra.md#L54-L64), [failure classification](../agents/terra.md#L77-L86)
+source: [watchdog source](../advisor/WATCHDOG.yml)
+
+## evidence in notes
+
+each terra note must include source evidence in its note text:
+
+- the exact repository-relative `path`;
+- the one-indexed `line` that establishes the claim;
+- a concrete `claim` that the cited line proves; and
+- the read-snapshot `digest`, copied verbatim from the read result header.
+
+terra does not invent or recompute a digest. when no inspected source grounds advice, terra emits no note.
+
+omp machine-enforces only `note` and `severity`. the prior evidence-object schema is no longer machine-enforced. `path`, `line`, `claim`, and the read-snapshot digest are required by terra's watchdog instructions inside the note text, so they are prompt-enforced rather than schema-enforced. verify cited evidence against a current read result before acting on it.
+
+source: [watchdog source](../advisor/WATCHDOG.yml)
 
 ## authority boundary
 
-- sol is the sole writer, integrator, and validator, and sol owns the final
-  decision.
-- terra advises. terra never claims approval, gate, or handoff authority.
-- terra never delegates and never hands work to another agent.
-- the tool set makes the boundary structural: with `read`, `grep`, and `glob`
-  only, terra produces no diff, runs no command, and creates no commit.
+- the primary agent remains the sole writer, integrator, and validator.
+- terra advises from read-only source inspection.
+- native advisor notes are not approvals or gate results.
+- gate results remain the responsibility of the separate gate checker extension.
 
-a terra record is an input to sol's decision. it is not an approval, and it is
-not a gate result. gate results come from the gate checker extension, which is a
-different part of this plugin.
+source: [watchdog source](../advisor/WATCHDOG.yml), [gate checker guide](gates-plugin-user-guide.md)
 
-sources: [authority statement](../agents/terra.md#L44-L52), [gate checker scope](gates-plugin-user-guide.md)
-
-## verification
-
-### the plugin is installed
+## uninstall
 
 ```sh
-omp plugin list
-omp plugin doctor
+omp plugin uninstall nikos-agent-stack
 ```
 
-`list` must show `nikos-agent-stack` as installed and enabled. `doctor` must
-report no unresolved entry point.
+plugin uninstall does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file or the terra entry that `/advisor-install` added. `/advisor on` and `/advisor status` only control or report the native advisor; neither removes configuration. manually remove terra from the user watchdog configuration if it is no longer wanted, while preserving top-level instructions and other advisors. start a new omp session after that manual change.
 
-### the agent is discovered
-
-start omp and open the agent list. `terra-advisor` must appear with the
-description from the profile.
-
-### the profile contract holds
-
-```sh
-bun run test
-```
-
-this suite includes `plugin.test.ts`, which reads `agents/terra.md` and asserts:
-
-- the frontmatter keys, the agent name, the model, and the thinking level;
-- the exact tool list `read`, `grep`, `glob`;
-- `additionalProperties: false` on the record and on the evidence object;
-- required `advice` and `evidence`;
-- required `path`, `line`, `claim`, and `digest` in that order.
-
-that test checks the profile file only. it does not run the model and does not
-check a live record.
-
-### one smoke call
-
-call terra about a file that you have read yourself. then check the returned
-`path`, `line`, and `digest` against your own read result. a digest that does not
-match your read result means stale or invented evidence.
-
-source: [terra profile test](../plugin.test.ts#L128-L146)
+source: [advisor setup command](../advisor/install.js)
 
 ## troubleshooting
 
-### `terra-advisor` does not appear in the agent list
+### `/advisor status` does not show terra
 
-run `omp plugin list` and confirm that the plugin is installed and enabled. run
-`omp plugin doctor`. restart omp, because discovery occurs at startup. for a
-linked checkout, confirm that `agents/terra.md` exists in the linked working
-tree.
+run `/advisor-install`, then start a new omp session before checking status again. confirm that the user watchdog configuration still contains the terra entry and that `PI_CODING_AGENT_DIR` points to the intended agent directory when it is set.
 
-### `/advisor on` reports nothing about terra
+### a terra note has incomplete evidence
 
-this is expected. this package installs no passive advisor and no watchdog
-profile. use a `task` call. see
-[what changed from the earlier advisor role](#what-changed-from-the-earlier-advisor-role).
-
-### terra returns no advice
-
-this is a designed result. terra stays silent when the call supplies no explicit
-criterion, or when no inspected source proves a concrete violation. supply the
-criterion and the paths, then call again.
-
-### the record has no evidence object
-
-evidence is required by the profile schema. a record without evidence means that
-the model did not follow the schema, or that the installed profile is not this
-profile. compare the installed `agents/terra.md` with the repository copy, and
-run `bun run test`.
-
-### the digest does not match the current file
-
-treat the evidence as stale. read the cited file again, and call terra again. do
-not act on a record whose digest disagrees with a current read result.
-
-### the gate checker reports a missing subagent manifest
-
-terra cannot supply a manifest. its output object is closed, so it can hold no
-`changed_files` key and no `<changed-files>` block. the gate checker adjudicates
-a subagent report only when the parent response refers to that delegated work. at
-`medium` engagement this produces a warning. at `high` engagement the missing
-manifest blocks. use terra at `medium` or lower, or state in your response that
-terra changed no file, so the gate checker does not need to adjudicate it.
-
-sources: [manifest rule and `auto` behavior](gates-plugin-user-guide.md), [closed output schema](../agents/terra.md#L10-L41)
+the native schema accepts the note because it machine-enforces only `note` and `severity`. treat absent or unverifiable `path`, `line`, `claim`, or read-snapshot digest as an instruction violation and do not act on that note until source inspection supports it.
 
 ### the model is unavailable
 
-the profile fixes `openai-codex/gpt-5.6-terra`. the call fails when your omp
-installation cannot reach that model. change the `model` field in
-`agents/terra.md`, update `plugin.test.ts`, relink, and restart omp.
+terra uses `openai-codex/gpt-5.6-terra:high`. make the model available to omp, then start a new session and enable the advisor again.
 
 ## limitations
 
-- **no passive advice.** terra sees nothing that sol does not send in a `task`
-  call. terra cannot interrupt a turn, cannot watch tool calls, and cannot react
-  to a decision on its own.
-- **no advisor user interface.** there is no advisor card, no advisor transcript
-  detail, and no native note deduplication. two calls with the same input can
-  return the same advice twice.
-- **one record for each call.** terra returns one recommendation with one
-  evidence object. a review of several candidates needs several calls.
-- **the digest is not machine-checked.** the schema requires a digest string.
-  nothing in this package compares that string with the current file. verify it
-  yourself, as described in [verification](#verification).
-- **the schema check is static.** `plugin.test.ts` validates the profile file
-  only. it runs no model call and checks no live record.
-- **read-only by design.** terra proposes no diff and runs no verification. sol
-  performs every change and every check.
+- **user-owned watchdog configuration.** plugin uninstall leaves the user `WATCHDOG.yml` or `WATCHDOG.yaml` file and terra entry in place until the user removes terra manually.
+- **prompt-enforced evidence.** omp validates only `note` and `severity`; it does not machine-enforce the evidence fields inside terra's note text.
+- **native surface ownership.** omp, not this plugin, owns advisor commands, routing, concern and blocker interruption, and the advisor ui.
+- **read-only operation.** terra cannot edit files, run commands, approve work, or produce a gate result.
 
 ## source map
 
 | path | purpose |
 |---|---|
-| [`agents/terra.md`](../agents/terra.md) | installed agent profile: name, model, thinking level, read-only tools, output schema, advice conditions, and authority boundary |
-| [`package.json`](../package.json) | plugin manifest: extension entries and the packaged file list that ships the profile |
-| [`plugin.test.ts`](../plugin.test.ts) | asserts the packaged surface and the terra profile contract |
-| [`README.md`](../README.md) | stack overview, install, and the terra advisor summary |
-| [`docs/gates-plugin-user-guide.md`](gates-plugin-user-guide.md) | gate checker behavior, engagement levels, and the subagent manifest rule |
-| [`docs/official-extension-plan.html`](official-extension-plan.html) | the decision to package terra as a task agent, and the surfaces that stay out of scope |
-</content>
-</invoke>
+| [`advisor/WATCHDOG.yml`](../advisor/WATCHDOG.yml) | terra model, tools, native passive advisor configuration, and source-backed note instructions |
+| [`advisor/install.js`](../advisor/install.js) | `/advisor-install` setup and atomic watchdog merge behavior |
+| [`gate-checker/gate-cli.js`](../gate-checker/gate-cli.js) | `nikos-gates advisor install` shell setup command |
+| [`package.json`](../package.json) | plugin package, native setup extension, and `nikos-gates` command registration |
+| [`docs/gates-plugin-user-guide.md`](gates-plugin-user-guide.md) | separate gate checker behavior and authority |

@@ -15,6 +15,7 @@
 - [git and no-git behavior](#git-and-no-git-behavior)
 - [commit routing](#commit-routing)
 - [subagent contract](#subagent-contract)
+- [scratchpad records](#scratchpad-records)
 - [command-line tools](#command-line-tools)
 - [telemetry and tuning](#telemetry-and-tuning)
 - [troubleshooting](#troubleshooting)
@@ -35,6 +36,8 @@ sources: [package manifest](../package.json), [extension entry point](../gate-ch
 
 the stack installs through the native omp plugin manager. the plugin name is
 `nikos-agent-stack`. all actions use `omp plugin <action> [target]`.
+
+bun `>=1.2.22` is required. the extensions run as typescript through bun, and the command-line interface uses the bun shebang.
 
 ### install
 
@@ -94,8 +97,8 @@ omp plugin uninstall nikos-agent-stack
 ```
 
 removal deletes the installed package. it does not delete the persisted
-configuration or the ledger, so a later install keeps the previous policy and
-history.
+configuration, ledger, or scratchpad, so a later install keeps the previous
+policy and history.
 
 ### after any install, link, update, or removal
 
@@ -124,15 +127,15 @@ this command shows the active level, each rule mode, the configured verification
 /gates-engage medium
 ```
 
-medium blocks unfinished added lines, unsupported file or test claims, contradicted subagent reports, and a failing configured verification command. it does not require a commit.
+medium blocks unfinished added lines, unsupported file or test claims, contradicted subagent reports, a failing configured verification command, and missing scratchpad coverage. it does not require a commit.
 
 ### use strict delivery checks
 
 ```text
-/gates-engage high bun test
+/gates-engage high
 ```
 
-high blocks every rule family. the text after `high` becomes the complete verification command, so commands can contain spaces.
+high blocks every rule family. it blocks a failing configured verification command, but it does not invent a verifier. configure verification with `OMP_VERIFY_CMD` before a session or with `verifyCmd` in persisted configuration; trailing command text is rejected.
 
 ### use warnings only
 
@@ -140,7 +143,7 @@ high blocks every rule family. the text after `high` becomes the complete verifi
 /gates-engage low
 ```
 
-low keeps inline checks and telemetry, but it does not force a continuation.
+low keeps delivery findings advisory, but a missing scratchpad record still forces a continuation.
 
 ### disable all checks and recording
 
@@ -148,7 +151,7 @@ low keeps inline checks and telemetry, but it does not force a continuation.
 /gates-disable
 ```
 
-level changes apply in the current session and persist for later sessions. no restart is required.
+slash level changes apply in the current session and persist for later sessions. direct edits to persisted configuration are not reloaded by a live slash call: restart omp before a slash level change after an edit, or set the relevant `OMP_*` environment before the session.
 
 ### update the running plugin
 
@@ -175,6 +178,7 @@ source: [command registration and live policy updates](../gate-checker/index.ts)
 | subagent claims against the diff | off | warn | block | block |
 | configured verification command | off | warn | block | block |
 | clean tracked working tree | off | off | off | block |
+| scratchpad record for every active identity | off | block | block | block |
 | gate integrity (lease conflict, journal recovery, unreadable scope) | off | warn | block | block |
 | telemetry | off | on | on | on |
 | stalemate release and continuation cap | on | on | on | on |
@@ -210,6 +214,7 @@ session stop
   -> derive changed files and added lines
   -> run configured verification and commit gates
   -> check claims, manifests, snapshots, and markers
+  -> check scratchpad identity coverage and write automatic gate records
   -> warn, release, or force a continuation
 ```
 
@@ -237,9 +242,9 @@ source: [session-stop enforcement and runaway protection](../gate-checker/index.
 final checks do not run when:
 
 - the active level is off.
-- the request made no tool calls.
-- no final assistant text exists.
-- the request used the user-question tool **and** changed no file. a request that asked the user and then changed files is checked normally.
+- the request made no tool calls, has no final assistant text, and has no journal recovery.
+- no final assistant text exists, the request did not use the user-question tool, and no journal recovery exists.
+- the request used the user-question tool, changed no file, has no journal recovery, and every active agent session has a valid scratchpad record.
 
 verification and commit checks also require at least one observed changed file. read-only work is not required to run tests or create a commit.
 
@@ -259,13 +264,14 @@ source: [session-stop early returns and change gate](../gate-checker/index.ts)
 | `subagent_unverified_test` | a subagent claims tests passed without parent-session test evidence | run the tests in the parent session |
 | `verify_failed` | the configured verification command exits nonzero or times out | fix the failure; do not weaken the check |
 | `uncommitted_changes` | high mode finds tracked unstaged or staged changes | commit the logical unit or lower the engagement level |
+| `missing_frustration_record` | an active main or subagent server session has no valid scratchpad record | call `record_frustration` for that session |
 | `mutation_lease_conflict` | another gate-aware session holds the worktree mutation lease | wait for that session to finish, then retry |
 | `recovery_required` | the request journal is malformed, stale, or policy-incompatible | start a fresh request |
 | `scope_unavailable` | git is present but the repository scope could not be resolved | repair the repository, then retry |
 
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 
-sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](../gate-checker/index.ts), [marker predicate](../gate-checker/predicates.js)
+sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](../gate-checker/index.ts), [marker predicate](../gate-checker/predicates.js), [scratchpad validation](../gate-checker/frustrations.js)
 
 ## configuration
 
@@ -286,6 +292,8 @@ format:
 }
 ```
 
+`bun test` was only this bun repository's example, never a required token or special gate keyword. set `verifyCmd` to the verification command your project uses.
+
 ### configuration precedence
 
 1. the persisted configuration file.
@@ -304,6 +312,7 @@ format:
 | `OMP_DELIVERY_GATES` | legacy switch; an enabled value maps to high |
 | `OMP_GATE_CONFIG` | redirects the persisted configuration file |
 | `OMP_GATE_LEDGER` | redirects the telemetry ledger |
+| `OMP_GATE_FRUSTRATIONS` | redirects the scratchpad record file |
 
 shell examples:
 
@@ -313,7 +322,7 @@ export OMP_VERIFY_CMD='bun test'
 omp
 ```
 
-because the persisted file has higher precedence, remove or edit it before an environment-only override can change the level. a slash command without a new verification command preserves the existing command. `/gates-disable` also preserves it for later re-engagement.
+because the persisted file has higher precedence, remove or edit it before an environment-only override can change the level. slash commands preserve the in-memory verification command. after editing the persisted file, restart omp before any slash level change; a live slash call does not reload disk and can rewrite the stale verifier. alternatively, set the relevant `OMP_*` environment before the session, subject to persisted-config precedence. `/gates-disable` also preserves the verifier for later re-engagement.
 
 source: [configuration loading, saving, and precedence](../gate-checker/config.js), [slash command behavior](../gate-checker/index.ts)
 
@@ -441,10 +450,11 @@ source: [verification execution and cache](../gate-checker/index.ts), [level dis
 
 ## commit routing
 
-when this script exists:
+the canonical agent directory is `PI_CODING_AGENT_DIR` when set, otherwise
+`~/.omp/agent`. when this script exists:
 
 ```text
-~/.omp/agent/skills/git-pushing/scripts/smart_commit.sh
+<agent-dir>/skills/git-pushing/scripts/smart_commit.sh
 ```
 
 the extension rewrites supported bash commit commands before execution.
@@ -471,7 +481,7 @@ source: [commit routing implementation](../gate-checker/index.ts)
 
 ## subagent contract
 
-before every `task` call, the extension injects instructions that require a changed-file manifest and truthful test and modification claims.
+before every `task` call, the extension injects instructions that require a changed-file manifest and truthful test and modification claims. scratchpad coverage uses server-bound session files, not task-input correlation.
 
 ### prose report form
 
@@ -503,6 +513,52 @@ accepted manifest keys are `changed`, `changedFiles`, `changed_files`, and `mani
 subagent adjudication starts only when the parent response refers to delegated or reviewed work. if the parent does not rely on a subagent report, parent claims and the actual diff still receive normal checks. each report is judged once per request, including across forced continuations.
 
 source: [subagent injection and citation checks](../gate-checker/index.ts), [manifest parser](../gate-checker/predicates.js)
+
+## scratchpad records
+
+at `low`, `medium`, and `high`, every active agent session must have one valid record. `off` performs no scratchpad check or write. a missing session record blocks at every enabled level.
+
+### storage and required caller fields
+
+normal storage is append-only jsonl:
+
+```text
+~/.omp/gate-checker/frustrations.jsonl
+```
+
+set `OMP_GATE_FRUSTRATIONS` before the session to relocate it. call the native `record_frustration` tool with:
+
+| field | requirement |
+|---|---|
+| `agent_id` | nonempty assigned main or subagent id |
+| `primary_goal` | nonempty assigned goal |
+| `complaint` | nonempty description of friction or blockage |
+| `type` | one accepted taxonomy type |
+| `severity` | one accepted taxonomy severity |
+| `evidence` | nonempty array of valid `gate`, `snapshot`, or `command` evidence |
+
+the server derives `session_file` and `session_id` from each active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and child session files arrive through native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields.
+
+### taxonomy
+
+fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, and `other`. fixed severities are `low`, `medium`, `high`, and `blocker`.
+
+a project can add, but cannot remove, values in `.omp/gates-frustrations.json`:
+
+```json
+{
+  "types": ["domain"],
+  "severities": ["notice"]
+}
+```
+
+the extension loads this file from the git repository root. without a git root, it resolves it from `ctx.cwd`, the active request working directory.
+
+### automatic gate records
+
+the extension writes a machine-authored scratchpad record for every warning or blocking gate outcome. its gate evidence names the exact rule and event. it satisfies main-session coverage in that same `session_stop`, but never a child session because each child has a different server session identity.
+
+source: [scratchpad tool and identity coverage](../gate-checker/index.ts), [record validation and taxonomy](../gate-checker/frustrations.js), [level policy](../gate-checker/config.js)
 
 ## command-line tools
 
@@ -646,18 +702,17 @@ source: [declared executable](../package.json), [cli entry point](../gate-checke
 
 ### a level change does not take effect
 
-run `/gates-engage` and inspect the reported source. the persisted file outranks environment variables. use a slash command or update the file selected by `OMP_GATE_CONFIG`.
+slash level changes apply live, but they use configuration loaded when the extension started. if you edit the persisted file, restart omp before a slash level change. or set the relevant `OMP_*` environment before the session, subject to persisted-config precedence. a live slash call never reloads disk.
 
 source: [configuration precedence](../gate-checker/config.js)
 
 ### high says verification is off
 
-high does not invent a test command. set one explicitly:
+high does not invent a test command. set `OMP_VERIFY_CMD` before starting omp when the persisted config has no verifier, or edit `verifyCmd` in the persisted configuration, restart omp, then run:
 
 ```text
-/gates-engage high bun test
+/gates-engage high
 ```
-
 source: [high-level description](../gate-checker/config.js)
 
 ### a test-success statement is rejected
@@ -700,7 +755,7 @@ source: [commit policy](../gate-checker/config.js), [clean-tree predicate](../ga
 
 ### commit routing does not occur
 
-confirm that `~/.omp/agent/skills/git-pushing/scripts/smart_commit.sh` exists. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally not rewritten.
+confirm that `smart_commit.sh` exists under `PI_CODING_AGENT_DIR` when set, otherwise under `~/.omp/agent/skills/git-pushing/scripts/`. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally not rewritten.
 
 source: [commit routing activation](../gate-checker/index.ts)
 
@@ -828,4 +883,5 @@ use isolated configuration and ledger paths when running `index.ts` directly so 
 | [predicates.js](../gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
 | [gate-cli.js](../gate-checker/gate-cli.js) | scope audit, cutover, and stats command-line interface |
 | [ledger.js](../gate-checker/ledger.js) | append-only events, explicit release metrics, safe reading, and aggregation |
+| [frustrations.js](../gate-checker/frustrations.js) | scratchpad record validation, taxonomy, server-bound identity coverage, and automatic gate records |
 | [wiring-check.ts](../gate-checker/wiring-check.ts) | isolated end-to-end extension probe |
