@@ -110,6 +110,36 @@ test("records without evidence are rejected and never appended", () => {
   expect(readRecords(path)).toEqual([]);
 });
 
+test("stored none records require the clean-turn payload", () => {
+  const reporoot = repo();
+  const path = join(reporoot, "frustrations.jsonl");
+  const clean = {
+    ts: "2026-08-14T00:00:00.000Z",
+    request_id: "request-1",
+    agent_id: "main",
+    session_file: "/sessions/main.jsonl",
+    session_id: "session-main",
+    primary_goal: "finish the request",
+    complaint: "none",
+    type: "none",
+    severity: "low",
+    source: "agent",
+    evidence: [{ kind: "gate", event_id: "clean-1", rule: "clean_turn" }],
+  };
+  const invalid = [
+    { ...clean, complaint: "the request was difficult" },
+    { ...clean, severity: "blocker" },
+    {
+      ...clean,
+      evidence: [{ kind: "command", command: "false", exit_code: 1, output: "" }],
+    },
+  ];
+
+  for (const record of invalid) expect(appendRecord(record, path).ok).toBe(false);
+  expect(appendRecord(clean, path)).toEqual({ ok: true });
+  expect(readRecords(path)).toEqual([clean]);
+});
+
 test("records require trusted server session file and id options", () => {
   const reporoot = repo();
   const result = validateRecord(
