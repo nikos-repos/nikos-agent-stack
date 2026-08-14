@@ -127,6 +127,17 @@ function validstoredrecord(record, repoRoot) {
     return false;
   if (record.source !== undefined && record.source !== "agent" && record.source !== "auto")
     return false;
+  if (record.type === "none") {
+    const [evidence] = record.evidence;
+    if (
+      record.complaint !== "none" ||
+      record.severity !== "low" ||
+      record.evidence.length !== 1 ||
+      evidence.kind !== "gate" ||
+      evidence.rule !== "clean_turn"
+    )
+      return false;
+  }
   const { types, severities } = loadTaxonomy(repoRoot);
   return (
     types.includes(record.type) &&
