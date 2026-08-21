@@ -106,11 +106,11 @@ function sessionid(context: extensioncontext): string {
 	return id;
 }
 
-function commandinput(args: unknown): { processid: string; input: jsonvalue } {
+function commandinput(args: unknown, command: string): { processid: string; input: jsonvalue } {
 	const text = String(args ?? "").trim();
 	const separator = text.search(/\s/u);
 	const processid = separator < 0 ? text : text.slice(0, separator);
-	if (!processid) throw new Error("usage: /omnipotence <process-id> [json-input]");
+	if (!processid) throw new Error(`usage: /${command} <process-id> [json-input]`);
 	const json = separator < 0 ? "{}" : text.slice(separator).trim() || "{}";
 	return { processid, input: parsejson(json, "omnipotence input") };
 }
@@ -287,9 +287,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		context.ui?.notify?.(stablejson(jsonvalueof(value)), "info");
 	};
 
-	const startcommand = (mode: orchestrationmode) => async (args: unknown, context: extensioncontext) => {
+	const startcommand = (command: string, mode: orchestrationmode) => async (args: unknown, context: extensioncontext) => {
 		await ensureloaded();
-		const request = commandinput(args);
+		const request = commandinput(args, command);
 		const process = engine.resolveprocess(request.processid);
 		const profile = profiles.snapshot(
 			context.cwd,
@@ -314,12 +314,13 @@ export default function omnipotence(pi: ExtensionAPI): void {
 
 	pi.registerCommand("omnipotence", {
 		description: "start one native orchestration run",
-		handler: startcommand("babysit"),
+		handler: startcommand("omnipotence", "babysit"),
 	});
 	for (const mode of ["call", "plan", "yolo", "forever"] as const) {
-		pi.registerCommand(`omnipotence-${mode}`, {
+		const command = `omnipotence-${mode}`;
+		pi.registerCommand(command, {
 			description: `start one native ${mode} run`,
-			handler: startcommand(mode),
+			handler: startcommand(command, mode),
 		});
 	}
 	pi.registerCommand("omnipotence-resume", {

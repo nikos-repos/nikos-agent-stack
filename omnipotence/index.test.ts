@@ -135,6 +135,23 @@ function context(sessionid: string, root: string) {
 }
 
 describe("omnipotence omp extension", () => {
+	test("mode command usage names the invoked command", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-command-usage-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const ctx = context("session-command-usage", root);
+		const command = fake.commands.get("omnipotence-forever");
+		if (!command) throw new Error("omnipotence-forever command was not registered");
+		await expect(command.handler("", ctx)).rejects.toThrow(
+			"usage: /omnipotence-forever <process-id> [json-input]",
+		);
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+	});
+
 	test("an unbound session stop has no orchestration side effect", async () => {
 		expect(nextsleepdelay(3_000_000_000, 0)).toBe(2_147_483_647);
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-inactive-"));
