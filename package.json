@@ -1,7 +1,7 @@
 {
   "name": "nikos-agent-stack",
   "version": "1.0.0",
-  "description": "niko's omp delivery gates, advisor role, and native questionnaire tooling as one installable plugin",
+  "description": "niko's deterministic omp delivery gates, native orchestration engine, advisor, and questionnaire tooling",
   "type": "module",
   "keywords": [
     "omp",
@@ -10,7 +10,10 @@
     "delivery-gates",
     "gate-checker",
     "ask-questionnaire",
-    "advisor"
+    "advisor",
+    "agent-orchestration",
+    "durable-workflows",
+    "omnipotence"
   ],
   "homepage": "https://github.com/nikos-repos/nikos-agent-stack#readme",
   "repository": {
@@ -24,14 +27,17 @@
     "bun": ">=1.2.22"
   },
   "bin": {
-    "nikos-gates": "gate-checker/gate-cli.js"
+    "nikos-gates": "gate-checker/gate-cli.js",
+    "omnipotence": "omnipotence/cli.ts"
   },
   "exports": {
-    "./gate-cli": "./gate-checker/gate-cli.js"
+    "./gate-cli": "./gate-checker/gate-cli.js",
+    "./omnipotence": "./omnipotence/api.ts"
   },
   "omp": {
     "extensions": [
       "./gate-checker/index.ts",
+      "./omnipotence/index.ts",
       "./ask-questionnaire/index.ts"
     ]
   },
@@ -47,12 +53,24 @@
     "gate-checker/risks.js",
     "gate-checker/provenance.js",
     "gate-checker/journal.js",
+    "omnipotence/index.ts",
+    "omnipotence/cli.ts",
+    "omnipotence/api.ts",
+    "omnipotence/contracts.ts",
+    "omnipotence/store.ts",
+    "omnipotence/engine.ts",
+    "omnipotence/hooks.ts",
+    "omnipotence/profiles.ts",
+    "omnipotence/blueprints.ts",
+    "omnipotence/loader.ts",
+    "omnipotence/processes.ts",
+    "docs/omnipotence-user-guide.md",
     "ask-questionnaire/index.ts",
     "advisor/install.js",
     "advisor/WATCHDOG.yml",
     "README.md"
   ],
   "scripts": {
-    "test": "bun test gate-checker/*.test.ts ask-questionnaire/*.test.ts plugin.test.ts && bun run gate-checker/wiring-check.ts"
+    "test": "bun test gate-checker/*.test.ts ask-questionnaire/*.test.ts omnipotence/*.test.ts plugin.test.ts && bun run gate-checker/wiring-check.ts"
   }
 }

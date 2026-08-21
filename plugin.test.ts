@@ -8,11 +8,13 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 const expectedExtensions = [
 	"./gate-checker/index.ts",
+	"./omnipotence/index.ts",
 	"./ask-questionnaire/index.ts",
 ];
 
 const expectedExports = {
 	"./gate-cli": "./gate-checker/gate-cli.js",
+	"./omnipotence": "./omnipotence/api.ts",
 };
 
 const expectedFiles = [
@@ -27,6 +29,18 @@ const expectedFiles = [
 	"gate-checker/risks.js",
 	"gate-checker/provenance.js",
 	"gate-checker/journal.js",
+	"omnipotence/index.ts",
+	"omnipotence/cli.ts",
+	"omnipotence/api.ts",
+	"omnipotence/contracts.ts",
+	"omnipotence/store.ts",
+	"omnipotence/engine.ts",
+	"omnipotence/hooks.ts",
+	"omnipotence/profiles.ts",
+	"omnipotence/blueprints.ts",
+	"omnipotence/loader.ts",
+	"omnipotence/processes.ts",
+	"docs/omnipotence-user-guide.md",
 	"ask-questionnaire/index.ts",
 	"advisor/install.js",
 	"advisor/WATCHDOG.yml",
@@ -44,9 +58,13 @@ test("the package exposes only the declared public surface", async () => {
 	expect(pkg.version).toBe("1.0.0");
 	expect(pkg.engines).toEqual({ bun: ">=1.2.22" });
 	expect(pkg.omp.extensions).toEqual(expectedExtensions);
-	expect(pkg.bin).toEqual({ "nikos-gates": "gate-checker/gate-cli.js" });
+	expect(pkg.bin).toEqual({
+		"nikos-gates": "gate-checker/gate-cli.js",
+		omnipotence: "omnipotence/cli.ts",
+	});
 	expect(pkg.exports).toEqual(expectedExports);
 	expect(pkg.files).toEqual(expectedFiles);
+	expect(pkg.dependencies).toBeUndefined();
 
 	for (const artifact of oldArtifacts) {
 		expect(pkg.files).not.toContain(artifact);
@@ -55,7 +73,7 @@ test("the package exposes only the declared public surface", async () => {
 	for (const entry of [
 		...pkg.omp.extensions,
 		...Object.values(pkg.exports),
-		pkg.bin["nikos-gates"],
+		...Object.values(pkg.bin),
 	]) {
 		expect(existsSync(resolve(root, entry))).toBe(true);
 	}

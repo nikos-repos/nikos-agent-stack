@@ -1,12 +1,13 @@
 # nikos agent stack
 
-an official omp plugin that adds deterministic delivery gates, a batched new-project questionnaire, and a native passive terra advisor to an omp installation.
+an official omp plugin that adds deterministic delivery gates, a native durable orchestration engine, a batched new-project questionnaire, and a passive terra advisor to an omp installation.
 
-the plugin ships three parts:
+the plugin ships four parts:
 
 | part | kind | what it adds |
 |---|---|---|
 | gate checker | omp extension | deterministic post-turn delivery checks, commands, and a command-line audit surface |
+| omnipotence | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery |
 | ask questionnaire | omp extension | forces one batched questionnaire through the native `ask` tool when a request starts a new project |
 | terra advisor | native omp advisor | a read-only passive watchdog that sends source-backed notes through omp's advisor system |
 
@@ -16,6 +17,7 @@ the plugin ships three parts:
 - bun `>=1.2.22`. the extensions run as typescript through bun, and the command-line tools use the bun shebang.
 - git, for full gate coverage. without a repository the gate checker stays active in a reduced mode (see [behavior boundaries](#behavior-boundaries)).
 - no omp source checkout. the plugin uses documented plugin extension points and native advisor configuration only.
+- no babysitter runtime. omnipotence uses omp, bun's built-in sqlite api, and node-compatible standard modules.
 
 ## install
 
@@ -72,7 +74,27 @@ then run `/advisor-install` in an omp session and restart the session.
 omp plugin uninstall nikos-agent-stack
 ```
 
-uninstall removes the plugin, but it does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file or its terra entry. `/advisor-install` updates that entry; `/advisor on` and `/advisor status` only control or report the native advisor. manually remove the terra entry from the user watchdog configuration while preserving its top-level instructions and other advisors. persisted gate state stays on disk at `~/.omp/gate-checker/`; delete that directory to remove the level, ledger, and journal as well.
+uninstall removes the plugin, but it does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file or its terra entry. `/advisor-install` updates that entry; `/advisor on` and `/advisor status` only control or report the native advisor. manually remove the terra entry from the user watchdog configuration while preserving its top-level instructions and other advisors. persisted gate state stays at `~/.omp/gate-checker/`. omnipotence state stays at `~/.omp/nikos-agent-stack/omnipotence.sqlite`, with local blueprints beside it. delete these paths only after every run is terminal and a required backup exists.
+
+## omnipotence
+
+omnipotence replaces prompt-forwarded babysitter invocation with a native omp lifecycle loop. install a local blueprint, then start one process:
+
+```sh
+omnipotence --dry-run blueprint install ./delivery-pack
+omnipotence blueprint install ./delivery-pack
+```
+
+```text
+/omnipotence delivery.review {\"request\":\"review this change\"}
+/omnipotence-status
+```
+
+gate-checker remains the first `session_stop` handler. after a gate accepts the turn, omnipotence schedules the next committed effect through omp's hidden next-turn api. active-run failures block once; sessions without an active run receive no orchestration block.
+
+the engine provides versioned process definitions, task and parallel effects, subprocesses, sleep, breakpoints, hooks, profile layering, local blueprints, event replay, fencing, uncertain-effect recovery, doctor, and repair. it preserves behavior rather than the babysitter api or cli.
+
+see the [omnipotence user guide](docs/omnipotence-user-guide.md) for process and blueprint authoring, commands, state, recovery, safety, and migration.
 
 ## gates
 
@@ -218,8 +240,13 @@ this runs the gate-checker and questionnaire unit tests, the packaged-surface te
 | [`gate-checker/lease.js`](gate-checker/lease.js) | repository mutation lease |
 | [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js) | cutover, audit, telemetry, and advisor setup command-line interface |
 | [`gate-checker/wiring-check.ts`](gate-checker/wiring-check.ts) | end-to-end probe that the gate fires from `session_stop` |
+| [`omnipotence/index.ts`](omnipotence/index.ts) | native omp commands, result tool, session recovery, and hidden-turn scheduling |
+| [`omnipotence/engine.ts`](omnipotence/engine.ts) | deterministic process replay, effects, subprocesses, modes, and terminal behavior |
+| [`omnipotence/store.ts`](omnipotence/store.ts) | sqlite event record, projections, fencing, profiles, blueprints, doctor, and repair |
+| [`omnipotence/cli.ts`](omnipotence/cli.ts) | public `omnipotence` command-line interface |
 | [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts) | questionnaire extension around the native `ask` tool |
 | [`advisor/WATCHDOG.yml`](advisor/WATCHDOG.yml) | native terra advisor watchdog configuration and prompt-enforced evidence rules |
 | [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md) | complete gate user and operator guide |
 | [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire detection, policy, and limitations |
 | [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md) | advisor setup, passive behavior, evidence-note rules, and limitations |
+| [`docs/omnipotence-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/omnipotence-user-guide.md) | native process, blueprint, cli, state, recovery, safety, and migration guide |
