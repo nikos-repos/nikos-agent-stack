@@ -1,0 +1,390 @@
+export type jsonprimitive = string | number | boolean | null;
+export type jsonvalue = jsonprimitive | jsonvalue[] | { [key: string]: jsonvalue };
+
+export interface jsonschema {
+	type?: "null" | "boolean" | "number" | "integer" | "string" | "array" | "object";
+	enum?: readonly jsonprimitive[];
+	min?: number;
+	max?: number;
+	pattern?: string;
+	items?: jsonschema;
+	properties?: Record<string, jsonschema>;
+	required?: readonly string[];
+	additionalproperties?: boolean;
+}
+
+export interface validationissue {
+	path: string;
+	message: string;
+}
+
+export type runstatus =
+	| "created"
+	| "running"
+	| "waiting_effect"
+	| "waiting_for_user"
+	| "blocked"
+	| "completed"
+	| "failed"
+	| "halted";
+
+export type effectstatus = "requested" | "resolved_ok" | "resolved_error" | "uncertain" | "cancelled";
+export type effectkind = "task" | "parallel" | "subprocess" | "sleep" | "breakpoint" | "hook";
+export type orchestrationmode = "babysit" | "call" | "plan" | "yolo" | "forever";
+
+export interface effectrequest {
+	key: string;
+	kind: effectkind;
+	input: jsonvalue;
+	label?: string;
+}
+
+export interface parallelrequest extends effectrequest {
+	kind: "task";
+}
+
+export interface processcontext {
+	readonly runid: string;
+	readonly profile: jsonvalue;
+	task(key: string, input: jsonvalue, label?: string): Promise<jsonvalue>;
+	parallel(key: string, requests: readonly parallelrequest[], maxconcurrency?: number): Promise<jsonvalue[]>;
+	subprocess(key: string, processid: string, input: jsonvalue): Promise<jsonvalue>;
+	sleep(key: string, until: string): Promise<void>;
+	breakpoint(key: string, input: jsonvalue): Promise<jsonvalue>;
+	hook(key: string, hookid: string, input: jsonvalue): Promise<jsonvalue>;
+	halt(reason: string, payload?: jsonvalue): never;
+}
+
+export interface processblueprint {
+	name: string;
+	version: string;
+}
+
+export interface processdefinition<input = unknown, output = unknown> {
+	id: string;
+	version: string;
+	maxturns: number;
+	input: jsonschema;
+	output: jsonschema;
+	blueprint?: processblueprint;
+	active: boolean;
+	profiledefaults?: jsonvalue;
+	sourcehash?: string;
+	run(context: processcontext, input: input): Promise<output>;
+}
+
+export interface processinput<input = unknown, output = unknown> {
+	id: string;
+	version: string;
+	maxturns?: number;
+	input: jsonschema;
+	output: jsonschema;
+	blueprint?: processblueprint;
+	active?: boolean;
+	profiledefaults?: jsonvalue;
+	sourcehash?: string;
+	run(context: processcontext, input: input): Promise<output>;
+}
+
+export interface jsonerror {
+	code: string;
+	message: string;
+	details?: jsonvalue;
+}
+
+export type jsonenvelope<data extends jsonvalue = jsonvalue> =
+	| { ok: true; data: data }
+	| { ok: false; error: jsonerror };
+
+const processidpattern = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
+const versionpattern = /^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/;
+const effectkeypattern = /^[a-z0-9][a-z0-9._/-]{0,127}$/;
+const allowedschemafields: Record<string, true> = {
+	type: true,
+	enum: true,
+	min: true,
+	max: true,
+	pattern: true,
+	items: true,
+	properties: true,
+	required: true,
+	additionalproperties: true,
+};
+const allowedschematypes: Record<string, true> = {
+	null: true,
+	boolean: true,
+	number: true,
+	integer: true,
+	string: true,
+	array: true,
+	object: true,
+};
+
+function pathfor(parent: string, key: string): string {
+	return /^[a-z_][a-z0-9_]*$/i.test(key) ? `${parent}.${key}` : `${parent}[${JSON.stringify(key)}]`;
+}
+
+function issue(path: string, message: string): validationissue[] {
+	return [{ path, message }];
+}
+
+function sameprimitive(left: jsonprimitive, right: unknown): boolean {
+	return left === right;
+}
+
+export function validate(schema: jsonschema, value: unknown, path = "value"): validationissue[] {
+	if (schema.enum && !schema.enum.some((entry) => sameprimitive(entry, value))) {
+		return issue(path, `expected one of ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}`);
+	}
+
+	switch (schema.type) {
+		case undefined:
+			return [];
+		case "null":
+			return value === null ? [] : issue(path, "expected null");
+		case "boolean":
+			return typeof value === "boolean" ? [] : issue(path, "expected boolean");
+		case "number":
+		case "integer": {
+			if (typeof value !== "number" || !Number.isFinite(value)) return issue(path, "expected finite number");
+			if (schema.type === "integer" && !Number.isInteger(value)) return issue(path, "expected integer");
+			if (schema.min !== undefined && value < schema.min) return issue(path, `expected value at least ${schema.min}`);
+			if (schema.max !== undefined && value > schema.max) return issue(path, `expected value at most ${schema.max}`);
+			return [];
+		}
+		case "string": {
+			if (typeof value !== "string") return issue(path, "expected string");
+			if (schema.min !== undefined && value.length < schema.min) {
+				return issue(path, `expected at least ${schema.min} characters`);
+			}
+			if (schema.max !== undefined && value.length > schema.max) {
+				return issue(path, `expected at most ${schema.max} characters`);
+			}
+			if (schema.pattern !== undefined && !new RegExp(schema.pattern, "u").test(value)) {
+				return issue(path, `expected pattern ${schema.pattern}`);
+			}
+			return [];
+		}
+		case "array": {
+			if (!Array.isArray(value)) return issue(path, "expected array");
+			if (schema.min !== undefined && value.length < schema.min) return issue(path, `expected at least ${schema.min} items`);
+			if (schema.max !== undefined && value.length > schema.max) return issue(path, `expected at most ${schema.max} items`);
+			if (!schema.items) return [];
+			return value.flatMap((entry, index) => validate(schema.items!, entry, `${path}[${index}]`));
+		}
+		case "object": {
+			if (!value || typeof value !== "object" || Array.isArray(value)) return issue(path, "expected object");
+			const record = value as Record<string, unknown>;
+			const properties = schema.properties ?? {};
+			const issues: validationissue[] = [];
+			for (const required of schema.required ?? []) {
+				if (!Object.hasOwn(record, required)) {
+					issues.push({ path: pathfor(path, required), message: "required field" });
+				}
+			}
+			for (const [key, entry] of Object.entries(record)) {
+				const property = Object.hasOwn(properties, key) ? properties[key] : undefined;
+				if (!property) {
+					if (schema.additionalproperties === false) issues.push({ path: pathfor(path, key), message: "unknown field" });
+					continue;
+				}
+				issues.push(...validate(property, entry, pathfor(path, key)));
+			}
+			return issues;
+		}
+	}
+}
+
+export function assertvalid(schema: jsonschema, value: unknown, path = "value"): void {
+	const [first] = validate(schema, value, path);
+	if (first) throw new TypeError(`${first.path}: ${first.message}`);
+}
+
+export function assertschema(value: unknown, path = "schema"): asserts value is jsonschema {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new TypeError(`${path}: expected schema`);
+	}
+	const schema = value as Record<string, unknown>;
+	for (const key of Object.keys(schema)) {
+		if (!Object.hasOwn(allowedschemafields, key)) {
+			throw new TypeError(`${pathfor(path, key)}: unknown schema field`);
+		}
+	}
+
+	if (schema.type === undefined && schema.enum === undefined) {
+		throw new TypeError(`${path}: expected type or enum`);
+	}
+	if (
+		schema.type !== undefined &&
+		(typeof schema.type !== "string" || !Object.hasOwn(allowedschematypes, schema.type))
+	) {
+		throw new TypeError(`${path}.type: expected supported type`);
+	}
+	if (schema.enum !== undefined) {
+		if (!Array.isArray(schema.enum) || schema.enum.length === 0) {
+			throw new TypeError(`${path}.enum: expected non-empty primitive array`);
+		}
+		for (const entry of schema.enum) {
+			if (
+				entry !== null &&
+				typeof entry !== "string" &&
+				typeof entry !== "boolean" &&
+				(typeof entry !== "number" || !Number.isFinite(entry))
+			) {
+				throw new TypeError(`${path}.enum: expected primitive values`);
+			}
+		}
+	}
+	for (const bound of ["min", "max"] as const) {
+		const entry = schema[bound];
+		if (entry !== undefined && (typeof entry !== "number" || !Number.isFinite(entry) || entry < 0)) {
+			throw new TypeError(`${path}.${bound}: expected non-negative finite number`);
+		}
+	}
+	if (
+		typeof schema.min === "number" &&
+		typeof schema.max === "number" &&
+		schema.min > schema.max
+	) {
+		throw new TypeError(`${path}: min exceeds max`);
+	}
+	if (schema.pattern !== undefined) {
+		if (typeof schema.pattern !== "string") throw new TypeError(`${path}.pattern: expected string`);
+		try {
+			new RegExp(schema.pattern, "u");
+		} catch {
+			throw new TypeError(`${path}.pattern: invalid regular expression`);
+		}
+	}
+	if (schema.type === "array") {
+		if (schema.items === undefined) throw new TypeError(`${path}.items: required schema`);
+		assertschema(schema.items, `${path}.items`);
+	}
+	if (schema.type === "object") {
+		if (schema.additionalproperties !== undefined && typeof schema.additionalproperties !== "boolean") {
+			throw new TypeError(`${path}.additionalproperties: expected boolean`);
+		}
+		if (schema.properties !== undefined) {
+			if (!schema.properties || typeof schema.properties !== "object" || Array.isArray(schema.properties)) {
+				throw new TypeError(`${path}.properties: expected schema map`);
+			}
+			for (const [key, entry] of Object.entries(schema.properties)) {
+				assertschema(entry, pathfor(`${path}.properties`, key));
+			}
+		}
+		if (schema.required !== undefined) {
+			if (!Array.isArray(schema.required) || !schema.required.every((entry) => typeof entry === "string")) {
+				throw new TypeError(`${path}.required: expected string array`);
+			}
+			const properties =
+				schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+					? schema.properties
+					: {};
+			for (const required of schema.required) {
+				if (!Object.hasOwn(properties, required)) {
+					throw new TypeError(`${path}.required: missing property ${required}`);
+				}
+			}
+		}
+	}
+}
+
+function normalizejson(value: unknown, path: string, seen: WeakSet<object>): jsonvalue {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) throw new TypeError(`${path}: expected finite number`);
+		return value;
+	}
+	if (typeof value !== "object") throw new TypeError(`${path}: expected json value`);
+	if (seen.has(value)) throw new TypeError(`${path}: cyclic value`);
+	seen.add(value);
+
+	if (Array.isArray(value)) {
+		const array = value.map((entry, index) => normalizejson(entry, `${path}[${index}]`, seen));
+		seen.delete(value);
+		return array;
+	}
+
+	if (Object.getPrototypeOf(value) !== Object.prototype) {
+		seen.delete(value);
+		throw new TypeError(`${path}: expected plain object`);
+	}
+
+	const record: Record<string, jsonvalue> = {};
+	for (const key of Object.keys(value).sort()) {
+		const entry = Reflect.get(value, key);
+		Object.defineProperty(record, key, {
+			value: normalizejson(entry, pathfor(path, key), seen),
+			enumerable: true,
+			configurable: true,
+			writable: true,
+		});
+	}
+	seen.delete(value);
+	return record;
+}
+
+export function jsonvalueof(value: unknown, path = "value"): jsonvalue {
+	return normalizejson(value, path, new WeakSet<object>());
+}
+
+export function parsejson(text: string, path = "value"): jsonvalue {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(text);
+	} catch {
+		throw new TypeError(`${path}: invalid json`);
+	}
+	return jsonvalueof(parsed, path);
+}
+
+export function stablejson(value: unknown): string {
+	return JSON.stringify(jsonvalueof(value));
+}
+
+function assertidentifier(value: string, path: string): void {
+	if (!processidpattern.test(value)) throw new TypeError(`${path}: expected lowercase dotted identifier`);
+}
+
+export function assertprocessid(value: string): void {
+	assertidentifier(value, "process.id");
+}
+
+export function assertversion(value: string, path = "version"): void {
+	if (!versionpattern.test(value)) throw new TypeError(`${path}: expected semantic version`);
+}
+
+export function asserteffectkey(value: string): void {
+	if (!effectkeypattern.test(value)) throw new TypeError("effect.key: expected lowercase stable key");
+}
+
+export function defineprocess<input = unknown, output = unknown>(
+	definition: processinput<input, output>,
+): Readonly<processdefinition<input, output>> {
+	assertprocessid(definition.id);
+	assertversion(definition.version, "process.version");
+	assertschema(definition.input, "process.input");
+	assertschema(definition.output, "process.output");
+	if (definition.blueprint) {
+		assertidentifier(definition.blueprint.name, "process.blueprint.name");
+		assertversion(definition.blueprint.version, "process.blueprint.version");
+	}
+	const maxturns = definition.maxturns ?? 64;
+	if (!Number.isInteger(maxturns) || maxturns < 1 || maxturns > 10_000) {
+		throw new TypeError("process.maxturns: expected integer from 1 to 10000");
+	}
+	if (typeof definition.run !== "function") throw new TypeError("process.run: expected function");
+	const profiledefaults =
+		definition.profiledefaults === undefined
+			? undefined
+			: jsonvalueof(definition.profiledefaults, "process.profiledefaults");
+	if (definition.sourcehash !== undefined && !/^[a-f0-9]{64}$/.test(definition.sourcehash)) {
+		throw new TypeError("process.sourcehash: expected sha256");
+	}
+	return Object.freeze({
+		...definition,
+		maxturns,
+		active: definition.active ?? true,
+		profiledefaults,
+	});
+}
