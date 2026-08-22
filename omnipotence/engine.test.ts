@@ -1081,10 +1081,28 @@ describe("deterministic process engine", () => {
 				},
 			}),
 		);
+		let beforeadvancehooks = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.child-lease",
+				version: "1.0.0",
+				phase: "before_advance",
+				timeoutms: 1_000,
+				async run() {
+					beforeadvancehooks += 1;
+					return null;
+				},
+			}),
+		);
 
 		const first = engine.halt(root.id, "operator requested stop");
 		await entered.promise;
+		await expect(engine.advance(child.id)).rejects.toThrow(
+			`run ${root.id} is leased by another engine`,
+		);
+		expect(beforeadvancehooks).toBe(0);
 		await expect(engine.advance(root.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
+
 		release.resolve();
 		const halted = await first;
 		expect(halted.status).toBe("halted");

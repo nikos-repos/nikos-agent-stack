@@ -1073,6 +1073,32 @@ export class orchestrationstore {
 		return run;
 	}
 
+	private parentrunid(childrunid: string): string | null {
+		const rows = this.data
+			.query("select * from effects where kind = 'subprocess' order by created_at, id")
+			.all() as effectrow[];
+		for (const row of rows) {
+			const effect = parseeffect(row);
+			const input = objectvalue(effect.input, `effect ${effect.key} input`);
+			if (input.childrunid === childrunid) return effect.runid;
+		}
+		return null;
+	}
+
+	rootrunid(runid: string): string {
+		this.requiredrun(runid);
+		let current = runid;
+		const seen = new Set<string>();
+		while (true) {
+			if (seen.has(current)) throw new Error(`run ${runid} has cyclic subprocess ownership`);
+			seen.add(current);
+			const parent = this.parentrunid(current);
+			if (!parent) return current;
+			this.requiredrun(parent);
+			current = parent;
+		}
+	}
+
 	private ownedrunids(rootrunid: string): string[] {
 		const pending = [rootrunid];
 		const seen = new Set<string>();

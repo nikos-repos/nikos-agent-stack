@@ -161,11 +161,12 @@ export class orchestrationengine {
 		operation: (owner: string, epoch: number) => Promise<result>,
 	): Promise<result> {
 		const owner = this.operationowner();
-		const epoch = this.store.claimrun(runid, owner);
+		const rootrunid = this.store.rootrunid(runid);
+		const epoch = this.store.claimrun(rootrunid, owner);
 		try {
 			return await operation(owner, epoch);
 		} finally {
-			this.store.releaserun(runid, owner, epoch);
+			this.store.releaserun(rootrunid, owner, epoch);
 		}
 	}
 	constructor(store: orchestrationstore, hooks = new hookregistry()) {
@@ -518,7 +519,7 @@ export class orchestrationengine {
 
 		if (parent.status === "resolved_ok") return parent.value;
 		if (parent.status === "resolved_error" || parent.status === "cancelled") throw new effectexecutionerror(parent);
-		const childresult = await this.advance(childrunid);
+		const childresult = await this.advanceclaimed(childrunid);
 		if (childresult.status === "waiting") throw new effectpending(childresult.effects);
 		if (childresult.status === "blocked") throw new processblocked(`child ${childrunid} blocked: ${childresult.reason}`);
 		if (childresult.status === "failed") {
