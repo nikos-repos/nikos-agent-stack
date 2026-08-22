@@ -686,11 +686,13 @@ export class orchestrationengine {
 	}
 
 	async advance(runid: string): Promise<advanceresult> {
-		const result = await this.withrootlease(runid, async () => this.advanceclaimed(runid));
-		const current = this.store.getrun(runid);
-		if (!current) throw new Error(`run ${runid} does not exist`);
-		result.run = current;
-		return result;
+		return this.withrootlease(runid, async () => {
+			const result = await this.advanceclaimed(runid);
+			const current = this.store.getrun(runid);
+			if (!current) throw new Error(`run ${runid} does not exist`);
+			result.run = { ...current, leaseowner: null, leaseexpiresat: null };
+			return result;
+		});
 	}
 
 	private async advanceclaimed(runid: string): Promise<advanceresult> {
@@ -778,13 +780,13 @@ export class orchestrationengine {
 	}
 
 	async commiteffect(post: enginepost): Promise<effectcommit> {
-		const result = await this.withrootlease(post.rootrunid, async () =>
-			this.commiteffectclaimed(post),
-		);
-		const current = this.store.getrun(post.rootrunid);
-		if (!current) throw new Error(`run ${post.rootrunid} does not exist`);
-		result.run = current;
-		return result;
+		return this.withrootlease(post.rootrunid, async () => {
+			const result = await this.commiteffectclaimed(post);
+			const current = this.store.getrun(post.rootrunid);
+			if (!current) throw new Error(`run ${post.rootrunid} does not exist`);
+			result.run = { ...current, leaseowner: null, leaseexpiresat: null };
+			return result;
+		});
 	}
 
 	private async commiteffectclaimed(post: enginepost): Promise<effectcommit> {

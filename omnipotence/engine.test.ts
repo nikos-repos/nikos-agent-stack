@@ -20,6 +20,30 @@ function openengine() {
 	const store = new orchestrationstore(path);
 	return { store, engine: new orchestrationengine(store), path };
 }
+class mutationstore extends orchestrationstore {
+	mutateafterrelease = false;
+
+	releaserun(runid: string, owner: string, epoch: number): boolean {
+		const released = super.releaserun(runid, owner, epoch);
+		if (released && this.mutateafterrelease) {
+			this.mutateafterrelease = false;
+			const run = this.getrun(runid);
+			if (run?.status === "waiting_effect" || run?.status === "running") {
+				this.transitionrun(runid, "blocked", null, "mutation after release");
+			}
+		}
+		return released;
+	}
+}
+
+function openmutationengine() {
+	const root = mkdtempSync(join(tmpdir(), "omnipotence-engine-mutation-"));
+	roots.push(root);
+	const path = join(root, "state.sqlite");
+	const store = new mutationstore(path);
+	return { store, engine: new orchestrationengine(store), path };
+}
+
 
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -755,6 +779,75 @@ describe("deterministic process engine", () => {
 				event.payload.status === "completed",
 		);
 		expect(terminalevents).toHaveLength(1);
+		store.close();
+	});
+
+	test("advance snapshots the run before releasing its lease", async () => {
+		const { store, engine } = openmutationengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.snapshot-advance",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("work", {});
+				},
+			}),
+		);
+		const started = await engine.start({
+			processid: "delivery.snapshot-advance",
+			sessionid: "session-snapshot-advance",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+
+		store.mutateafterrelease = true;
+		const advanced = await engine.advance(started.run.id);
+
+		expect(advanced.status).toBe("waiting");
+		expect(advanced.run.status).toBe("waiting_effect");
+		expect(store.getrun(started.run.id)?.status).toBe("blocked");
+		store.close();
+	});
+
+	test("commiteffect snapshots the run before releasing its lease", async () => {
+		const { store, engine } = openmutationengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.snapshot-commiteffect",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("work", {});
+				},
+			}),
+		);
+		const started = await engine.start({
+			processid: "delivery.snapshot-commiteffect",
+			sessionid: "session-snapshot-commiteffect",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const effect = started.effects[0]!;
+
+		store.mutateafterrelease = true;
+		const committed = await engine.commiteffect({
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+
+		expect(committed.status).toBe("committed");
+		expect(committed.run.status).toBe("running");
+		expect(store.getrun(started.run.id)?.status).toBe("blocked");
 		store.close();
 	});
 
