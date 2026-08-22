@@ -1795,6 +1795,7 @@ export class orchestrationstore {
 			.all() as eventrow[];
 		const previousbyrun = new Map<string, string | null>();
 		const runprojectionbyid = new Map<string, projectionrecord>();
+		const runleaseepochbyid = new Map<string, number>();
 		const effectprojectionbyid = new Map<string, projectionrecord>();
 		for (const row of rows) {
 			const expectedprevious = previousbyrun.get(row.run_id) ?? null;
@@ -1810,7 +1811,14 @@ export class orchestrationstore {
 			if (row.type === "run_created" || row.type === "run_status") {
 				const status = stringfield(payload, "status", "event payload");
 				assertstatus(status);
-				runprojectionbyid.set(row.run_id, eventrunprojection(payload));
+				const projection = eventrunprojection(payload);
+				runprojectionbyid.set(row.run_id, projection);
+				if (typeof projection.leaseepoch === "number") {
+					runleaseepochbyid.set(
+						row.run_id,
+						Math.max(runleaseepochbyid.get(row.run_id) ?? 0, projection.leaseepoch),
+					);
+				}
 			}
 			if (row.type.startsWith("effect_")) {
 				const effectid = stringfield(payload, "id", "event payload");
@@ -1830,6 +1838,12 @@ export class orchestrationstore {
 				continue;
 			}
 			compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
+			const durableleaseepoch = runleaseepochbyid.get(row.id) ?? 0;
+			if (row.lease_epoch < durableleaseepoch) {
+				issues.push(
+					`run ${row.id} projection leaseepoch ${row.lease_epoch} is below durable event minimum ${durableleaseepoch}`,
+				);
+			}
 		}
 		for (const runid of runprojectionbyid.keys()) {
 			if (!seenruns.has(runid)) issues.push(`run ${runid} projection is missing`);
@@ -1964,6 +1978,10 @@ export class orchestrationstore {
 					const status = stringfield(payload, "status", "event payload");
 					assertmode(mode);
 					assertstatus(status);
+					leaseepochs.set(
+						id,
+						Math.max(leaseepochs.get(id) ?? 0, typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0),
+					);
 					this.data
 						.query(`insert into runs(
 							id, session_id, process_id, process_version, process_hash,
@@ -2015,10 +2033,7 @@ export class orchestrationstore {
 							numberfield(payload, "turns", "event payload"),
 							numberfield(payload, "fence", "event payload"),
 							null,
-							Math.max(
-								typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0,
-								leaseepochs.get(id) ?? 0,
-							),
+							leaseepochs.get(id) ?? 0,
 							null,
 							stringfield(payload, "createdat", "event payload"),
 							stringfield(payload, "updatedat", "event payload"),
