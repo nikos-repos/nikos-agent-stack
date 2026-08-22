@@ -129,6 +129,12 @@ function processhash(process: Readonly<processdefinition>): string {
 		.digest("hex");
 }
 
+function assertparallelmaxconcurrency(maxconcurrency: number): void {
+	if (!Number.isInteger(maxconcurrency) || maxconcurrency < 1 || maxconcurrency > 64) {
+		throw new TypeError("parallel.maxconcurrency: expected integer from 1 to 64");
+	}
+}
+
 function objectinput(value: jsonvalue, path: string): Record<string, jsonvalue> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path}: expected object`);
 	return value;
@@ -412,12 +418,10 @@ export class orchestrationengine {
 		run: runrecord,
 		key: string,
 		requests: readonly parallelrequest[],
-		maxconcurrency = requests.length,
+		maxconcurrency = Math.max(1, requests.length),
 	): Promise<jsonvalue[]> {
 		asserteffectkey(key);
-		if (!Number.isInteger(maxconcurrency) || maxconcurrency < 1 || maxconcurrency > 64) {
-			throw new TypeError("parallel.maxconcurrency: expected integer from 1 to 64");
-		}
+		assertparallelmaxconcurrency(maxconcurrency);
 		if (requests.length === 0) return [];
 		const seen = new Set<string>();
 		for (const request of requests) {
@@ -617,19 +621,24 @@ export class orchestrationengine {
 			runid: run.id,
 			profile: run.profile,
 			task: (key, input) => pending({ key, kind: "task", input }),
-			parallel: (key, requests, maxconcurrency) =>
-				pending({
+			parallel: (key, requests, maxconcurrency) => {
+				const effectiveconcurrency =
+					maxconcurrency === undefined ? Math.max(1, requests.length) : maxconcurrency;
+				assertparallelmaxconcurrency(effectiveconcurrency);
+				if (requests.length === 0) return Promise.resolve([]);
+				return pending({
 					key,
 					kind: "parallel",
 					input: {
-						maxconcurrency: maxconcurrency ?? requests.length,
+						maxconcurrency: effectiveconcurrency,
 						requests: requests.map((request) => ({
 							key: request.key,
 							kind: request.kind,
 							input: request.input,
 						})),
 					},
-				}),
+				});
+			},
 			subprocess: (key, processid, input) =>
 				pending({ key, kind: "subprocess", input: { processid, input } }),
 			sleep: (key, until) => pending({ key, kind: "sleep", input: { until } }),

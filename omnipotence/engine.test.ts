@@ -301,6 +301,77 @@ describe("deterministic process engine", () => {
 	});
 
 
+	test("empty parallel groups complete without effects in execute and plan modes", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.parallel-empty",
+				version: "1.0.0",
+				input: objectinput,
+				output: { type: "array", items: { type: "object", additionalproperties: true } },
+				async run(ctx) {
+					return ctx.parallel("empty", []);
+				},
+			}),
+		);
+
+		const executed = await engine.start({
+			processid: "delivery.parallel-empty",
+			sessionid: "session-parallel-empty-call",
+			mode: "call",
+			input: {},
+		});
+		expect(executed.status).toBe("completed");
+		if (executed.status !== "completed") throw new Error("expected empty execute result");
+		expect(executed.output).toEqual([]);
+		expect(store.listeffects(executed.run.id)).toHaveLength(0);
+		expect(store.events(executed.run.id).filter((event) => event.type === "effect_requested")).toHaveLength(0);
+
+		const planned = await engine.start({
+			processid: "delivery.parallel-empty",
+			sessionid: "session-parallel-empty-plan",
+			mode: "plan",
+			input: {},
+		});
+		expect(planned.status).toBe("completed");
+		if (planned.status !== "completed") throw new Error("expected empty plan result");
+		expect(planned.output).toEqual([]);
+		expect(store.listeffects(planned.run.id)).toHaveLength(0);
+		expect(store.events(planned.run.id).filter((event) => event.type === "effect_requested")).toHaveLength(0);
+
+		engine.register(
+			defineprocess({
+				id: "delivery.parallel-empty-invalid",
+				version: "1.0.0",
+				input: objectinput,
+				output: { type: "array", items: { type: "object", additionalproperties: true } },
+				async run(ctx) {
+					return ctx.parallel("empty", [], 0);
+				},
+			}),
+		);
+		const invalid = await engine.start({
+			processid: "delivery.parallel-empty-invalid",
+			sessionid: "session-parallel-empty-invalid",
+			mode: "call",
+			input: {},
+		});
+		expect(invalid.status).toBe("failed");
+		if (invalid.status !== "failed") throw new Error("expected invalid concurrency failure");
+		expect(invalid.error).toBe("parallel.maxconcurrency: expected integer from 1 to 64");
+
+		const invalidplan = await engine.start({
+			processid: "delivery.parallel-empty-invalid",
+			sessionid: "session-parallel-empty-invalid-plan",
+			mode: "plan",
+			input: {},
+		});
+		expect(invalidplan.status).toBe("failed");
+		if (invalidplan.status !== "failed") throw new Error("expected invalid plan concurrency failure");
+		expect(invalidplan.error).toBe("parallel.maxconcurrency: expected integer from 1 to 64");
+		store.close();
+	});
+
 	test("parallel max concurrency releases one effect per available slot", async () => {
 		const { store, engine } = openengine();
 		engine.register(
