@@ -150,6 +150,38 @@ describe("omnipotence cli", () => {
 		const status = await invoke(options, ["--json", "run", "status", String(run.id)]);
 		expect(objectvalue(objectvalue(status.parsed, "status").data, "status.data").status).toBe("completed");
 	});
+	test("run halt uses the engine and preserves the halt fence", async () => {
+		const { root, options } = opencli();
+		const source = processfixture(root);
+		expect((await invoke(options, ["--json", "blueprint", "install", source])).code).toBe(0);
+		const started = await invoke(options, [
+			"--json",
+			"run",
+			"start",
+			"delivery.cli",
+			"--session",
+			"cli-halt-session",
+			"--input",
+			"{}",
+		]);
+		expect(started.code).toBe(0);
+		const startdata = objectvalue(objectvalue(started.parsed, "started").data, "started.data");
+		const run = objectvalue(startdata.run, "started.run");
+		const reason = "operator requested stop";
+		const halted = await invoke(options, [
+			"--json",
+			"run",
+			"halt",
+			String(run.id),
+			"--reason",
+			reason,
+		]);
+		expect(halted.code).toBe(0);
+		const haltedrun = objectvalue(objectvalue(halted.parsed, "halted").data, "halted.data");
+		expect(haltedrun.status).toBe("halted");
+		expect(haltedrun.blockedreason).toBe(reason);
+		expect(haltedrun.fence).toBe(Number(run.fence) + 1);
+	});
 
 	test("profile and doctor commands use stable envelopes and exit codes", async () => {
 		const { options } = opencli();

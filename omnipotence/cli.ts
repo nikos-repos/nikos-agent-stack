@@ -280,7 +280,8 @@ export async function runcli(argv: readonly string[], options: clioptions = {}):
 					emit({ action: "halt", runid, reason });
 					return 0;
 				}
-				emit(jsonvalueof(store.transitionrun(runid, "halted", null, reason)));
+				const halted = await engine.halt(runid, reason);
+				emit(jsonvalueof(halted.run));
 				return 0;
 			}
 			throw new clierror("run command must be start, status, events, resume, halt, or list");

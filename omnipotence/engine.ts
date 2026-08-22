@@ -583,6 +583,36 @@ export class orchestrationengine {
 		return { status: "blocked", run, reason };
 	}
 
+	private async haltclaimed(runid: string, reason: string): Promise<advanceresult> {
+		const root = this.store.getrun(runid);
+		if (!root) throw new Error(`run ${runid} does not exist`);
+		for (const ownedrunid of this.ownedrunids(runid).reverse()) {
+			const run = this.store.getrun(ownedrunid);
+			if (!run) throw new Error(`run ${ownedrunid} does not exist`);
+			if (run.status === "completed" || run.status === "failed" || run.status === "halted") continue;
+			this.store.bumpfence(run.id);
+			const halted = this.store.transitionrun(run.id, "halted", null, reason);
+			await this.postsafe(run.id, "run_halted", {
+				runid: halted.id,
+				reason,
+				payload: null,
+			});
+		}
+		const current = this.store.getrun(runid);
+		if (!current) throw new Error(`run ${runid} does not exist`);
+		const result = terminalresult(current);
+		if (result) return result;
+		return { status: "halted", run: current, reason };
+	}
+
+	async halt(runid: string, reason: string): Promise<advanceresult> {
+		const result = await this.withrootlease(runid, async () => this.haltclaimed(runid, reason));
+		const current = this.store.getrun(runid);
+		if (!current) throw new Error(`run ${runid} does not exist`);
+		result.run = current;
+		return result;
+	}
+
 	async advance(runid: string): Promise<advanceresult> {
 		const result = await this.withrootlease(runid, async () => this.advanceclaimed(runid));
 		const current = this.store.getrun(runid);

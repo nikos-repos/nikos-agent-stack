@@ -739,4 +739,132 @@ describe("deterministic process engine", () => {
 		expect(resolvedhooks).toBe(1);
 		store.close();
 	});
+	test("halting a root cascades owned descendants under one lease", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.halt-leaf",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("leaf-work", {});
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.halt-child",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("leaf", "delivery.halt-leaf", {});
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.halt-root",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("child", "delivery.halt-child", {});
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.halt-root",
+			sessionid: "session-halt-root",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting halt tree");
+		const leafeffect = started.effects[0];
+		if (!leafeffect) throw new Error("expected leaf effect");
+		const child = store.listruns().find((run) => run.processid === "delivery.halt-child");
+		const leaf = store.listruns().find((run) => run.processid === "delivery.halt-leaf");
+		if (!child || !leaf) throw new Error("expected owned descendants");
+		const root = store.getrun(started.run.id);
+		if (!root) throw new Error("expected root run");
+		const initialfences = new Map(
+			[root, child, leaf].map((run) => [run.id, run.fence]),
+		);
+
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		engine.hooks.register(
+			definehook({
+				id: "audit.halt-lease",
+				version: "1.0.0",
+				phase: "run_halted",
+				timeoutms: 1_000,
+				async run(input) {
+					if (
+						input &&
+						typeof input === "object" &&
+						!Array.isArray(input) &&
+						"runid" in input &&
+						input.runid === child.id
+					) {
+						entered.resolve();
+						await release.promise;
+					}
+					return null;
+				},
+			}),
+		);
+
+		const first = engine.halt(root.id, "operator requested stop");
+		await entered.promise;
+		await expect(engine.advance(root.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
+		release.resolve();
+		const halted = await first;
+		expect(halted.status).toBe("halted");
+		expect(halted.reason).toBe("operator requested stop");
+		for (const runid of [root.id, child.id, leaf.id]) {
+			expect(store.getrun(runid)?.status).toBe("halted");
+			expect(store.getrun(runid)?.blockedreason).toBe("operator requested stop");
+			expect(store.getrun(runid)!.fence).toBe(initialfences.get(runid)! + 1);
+		}
+
+		const haltedevent = (runid: string) =>
+			store.events(runid).find(
+				(event) =>
+					event.type === "run_status" &&
+					event.payload &&
+					typeof event.payload === "object" &&
+					!Array.isArray(event.payload) &&
+					"status" in event.payload &&
+					event.payload.status === "halted",
+			);
+		const leafhalt = haltedevent(leaf.id);
+		const childhalt = haltedevent(child.id);
+		const roothalt = haltedevent(root.id);
+		if (!leafhalt || !childhalt || !roothalt) throw new Error("expected halt events");
+		expect(leafhalt.id).toBeLessThan(childhalt.id);
+		expect(childhalt.id).toBeLessThan(roothalt.id);
+
+		await expect(
+			engine.commiteffect({
+				rootrunid: root.id,
+				runid: leafeffect.runid,
+				effectid: leafeffect.id,
+				fence: leafeffect.fence,
+				inputhash: leafeffect.inputhash,
+				status: "ok",
+				value: { done: true },
+			}),
+		).rejects.toThrow("stale fence");
+
+		const transitions = store.events(root.id).filter((event) => event.type === "run_status").length;
+		const repeated = await engine.halt(root.id, "different reason");
+		expect(repeated.status).toBe("halted");
+		expect(repeated.reason).toBe("operator requested stop");
+		expect(store.getrun(root.id)?.blockedreason).toBe("operator requested stop");
+		expect(store.events(root.id).filter((event) => event.type === "run_status")).toHaveLength(transitions);
+		store.close();
+	});
 });

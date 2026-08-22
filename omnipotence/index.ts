@@ -349,9 +349,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const run = store.getsessionrun(sessionid(context));
 			if (!run) throw new Error("this session has no active omnipotence run");
 			const reason = String(args ?? "").trim() || "halted by user";
-			const halted = store.transitionrun(run.id, "halted", null, reason);
-			pi.appendEntry(stateentry, { runid: halted.id, status: halted.status });
-			notify(context, halted);
+			const halted = await engine.halt(run.id, reason);
+			pi.appendEntry(stateentry, { runid: halted.run.id, status: halted.run.status });
+			notify(context, halted.run);
 		},
 	});
 

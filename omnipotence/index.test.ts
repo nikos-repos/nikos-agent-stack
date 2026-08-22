@@ -176,6 +176,31 @@ describe("omnipotence omp extension", () => {
 		store.close();
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 	});
+	test("stop command halts the active run through the engine", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-stop-engine-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const ctx = context("session-stop-engine", root);
+		const start = fake.commands.get("omnipotence");
+		const stop = fake.commands.get("omnipotence-stop");
+		if (!start || !stop) throw new Error("omnipotence commands were not registered");
+		await start.handler("delivery.extension {}", ctx);
+		const store = new orchestrationstore(paths.dbpath);
+		const run = store.getsessionrun("session-stop-engine");
+		if (!run) throw new Error("expected active stop run");
+		const reason = "operator requested stop";
+		await stop.handler(reason, ctx);
+		const halted = store.getrun(run.id);
+		expect(halted?.status).toBe("halted");
+		expect(halted?.blockedreason).toBe(reason);
+		expect(halted?.fence).toBe(run.fence + 1);
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+		store.close();
+	});
 
 	test("commands start once and session stop schedules only after gates can run", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-extension-"));
