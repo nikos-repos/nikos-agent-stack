@@ -150,6 +150,49 @@ describe("authoritative orchestration store", () => {
 		expect(store.getrun(run.id)?.status).toBe("running");
 		store.close();
 	});
+	test("an uncertain effect blocks session ownership changes atomically", () => {
+		const { store } = openstore();
+		const run = createrun(store, "session-uncertain-rebind");
+		const effect = store.requesteffect(run.id, {
+			key: "publish",
+			kind: "task",
+			input: { target: "external" },
+		});
+		store.markeffectdispatching(run.id, effect.id, effect.fence);
+		const dispatched = store.markeffectdispatched(run.id, effect.id, effect.fence);
+		const uncertain = store.posteffect({
+			runid: run.id,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "uncertain",
+			error: { message: "connection closed after dispatch" },
+		});
+
+		expect(uncertain.dispatchedat).toBe(dispatched.dispatchedat);
+		expect(() => store.bindsession("session-new", run.id)).toThrow(
+			`run ${run.id} has uncertain effect ${effect.id}; resolve it before session ownership changes`,
+		);
+		expect(store.getrun(run.id)).toMatchObject({ fence: run.fence, sessionid: "session-uncertain-rebind" });
+		expect(store.geteffect(run.id, effect.id)).toMatchObject({
+			status: "uncertain",
+			fence: effect.fence,
+			dispatchingat: null,
+			dispatchedat: dispatched.dispatchedat,
+		});
+		expect(store.getsessionrun("session-uncertain-rebind")?.id).toBe(run.id);
+		expect(store.getsessionrun("session-new")).toBeNull();
+		const recovered = store.resolveuncertain({
+			runid: run.id,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			decision: "confirm",
+			value: { published: true },
+		});
+		expect(recovered.status).toBe("resolved_ok");
+		store.close();
+	});
 
 
 	test("retry refences every pending sibling effect", () => {

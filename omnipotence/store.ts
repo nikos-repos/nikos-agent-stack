@@ -1093,7 +1093,14 @@ export class orchestrationstore {
 		const ownedruns = this.ownedrunids(run.id).map((runid) => this.requiredrun(runid));
 		const pending = new Map<string, effectrecord[]>();
 		for (const ownedrun of ownedruns) {
-			const requested = this.listeffects(ownedrun.id).filter((effect) => effect.status === "requested");
+			const effects = this.listeffects(ownedrun.id);
+			const uncertain = effects.find((effect) => effect.status === "uncertain");
+			if (uncertain) {
+				throw new Error(
+					`run ${ownedrun.id} has uncertain effect ${uncertain.id}; resolve it before session ownership changes`,
+				);
+			}
+			const requested = effects.filter((effect) => effect.status === "requested");
 			const dispatched = requested.find(
 				(effect) => effect.dispatchedat !== null || effect.dispatchingat !== null,
 			);
