@@ -203,6 +203,7 @@ describe("authoritative orchestration store", () => {
 		expect(store.geteffect(run.id, effect.id)?.fence).toBe(2);
 		expect(store.getsessionrun("session-old")).toBeNull();
 		expect(store.getsessionrun("session-new")?.id).toBe(run.id);
+		expect(store.doctor()).toEqual({ ok: true, issues: [] });
 		expect(() =>
 			store.posteffect({
 				runid: run.id,
@@ -345,6 +346,41 @@ describe("authoritative orchestration store", () => {
 		expect(store.getrun(run.id)?.status).toBe("running");
 		expect(store.geteffect(run.id, effect.id)?.status).toBe("requested");
 		expect(store.doctor()).toEqual({ ok: true, issues: [] });
+		store.close();
+	});
+	test("doctor compares durable run and effect projection fields", () => {
+		const { store, path } = openstore();
+		const run = createrun(store, null);
+		const effect = store.requesteffect(run.id, {
+			key: "projection-check",
+			kind: "task",
+			input: { value: 1 },
+		});
+
+		const external = new Database(path);
+		external
+			.query("update runs set process_hash = ?, input_json = ?, fence = fence + 1 where id = ?")
+			.run("corrupt-process-hash", stablejson({ value: "corrupt" }), run.id);
+		external
+			.query("update effects set input_hash = ?, fence = fence + 1 where id = ?")
+			.run("corrupt-effect-input-hash", effect.id);
+		external.close();
+
+		const report = store.doctor();
+		expect(report.ok).toBe(false);
+		expect(report.issues).toContain(
+			`run ${run.id} projection processhash corrupt-process-hash does not match ${run.processhash}`,
+		);
+		expect(report.issues).toContain(
+			`run ${run.id} projection input ${stablejson({ value: "corrupt" })} does not match ${stablejson(run.input)}`,
+		);
+		expect(report.issues).toContain(`run ${run.id} projection fence ${run.fence + 1} does not match ${run.fence}`);
+		expect(report.issues).toContain(
+			`effect ${effect.id} projection inputhash corrupt-effect-input-hash does not match ${effect.inputhash}`,
+		);
+		expect(report.issues).toContain(
+			`effect ${effect.id} projection fence ${effect.fence + 1} does not match ${effect.fence}`,
+		);
 		store.close();
 	});
 	test("repair clears released leases while preserving durable run state", () => {

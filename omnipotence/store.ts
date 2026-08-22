@@ -404,6 +404,180 @@ function parseeffect(row: effectrow): effectrecord {
 	};
 }
 
+type projectionrecord = Record<string, unknown>;
+
+const runprojectionfields = [
+	"id",
+	"sessionid",
+	"processid",
+	"processversion",
+	"processhash",
+	"blueprintname",
+	"blueprintversion",
+	"profile",
+	"userprofileversion",
+	"projectprofileversion",
+	"mode",
+	"status",
+	"input",
+	"output",
+	"blockedreason",
+	"maxturns",
+	"turns",
+	"fence",
+	"leaseepoch",
+	"createdat",
+	"updatedat",
+] as const;
+
+const effectprojectionfields = [
+	"id",
+	"runid",
+	"key",
+	"kind",
+	"input",
+	"inputhash",
+	"status",
+	"fence",
+	"value",
+	"error",
+	"dispatchingat",
+	"dispatchedat",
+	"createdat",
+	"updatedat",
+] as const;
+
+function projectionjson(value: string | null, path: string): unknown {
+	if (value === null) return null;
+	try {
+		return parsejson(value, path);
+	} catch {
+		return value;
+	}
+}
+
+function runprojection(row: runrow): projectionrecord {
+	return {
+		id: row.id,
+		sessionid: row.session_id,
+		processid: row.process_id,
+		processversion: row.process_version,
+		processhash: row.process_hash,
+		blueprintname: row.blueprint_name,
+		blueprintversion: row.blueprint_version,
+		profile: projectionjson(row.profile_json, `run ${row.id} profile`),
+		userprofileversion: row.user_profile_version,
+		projectprofileversion: row.project_profile_version,
+		mode: row.mode,
+		status: row.status,
+		input: projectionjson(row.input_json, `run ${row.id} input`),
+		output: projectionjson(row.output_json, `run ${row.id} output`),
+		blockedreason: row.blocked_reason,
+		maxturns: row.max_turns,
+		turns: row.turns,
+		fence: row.fence,
+		leaseepoch: row.lease_epoch,
+		createdat: row.created_at,
+		updatedat: row.updated_at,
+	};
+}
+
+function effectprojection(row: effectrow): projectionrecord {
+	return {
+		id: row.id,
+		runid: row.run_id,
+		key: row.effect_key,
+		kind: row.kind,
+		input: projectionjson(row.input_json, `effect ${row.id} input`),
+		inputhash: row.input_hash,
+		status: row.status,
+		fence: row.fence,
+		value: projectionjson(row.value_json, `effect ${row.id} value`),
+		error: projectionjson(row.error_json, `effect ${row.id} error`),
+		dispatchingat: row.dispatching_at,
+		dispatchedat: row.dispatched_at,
+		createdat: row.created_at,
+		updatedat: row.updated_at,
+	};
+}
+
+function eventrunprojection(payload: Record<string, jsonvalue>): projectionrecord {
+	return {
+		id: payload.id,
+		sessionid: payload.sessionid === undefined ? null : payload.sessionid,
+		processid: payload.processid,
+		processversion: payload.processversion,
+		processhash: payload.processhash,
+		blueprintname: payload.blueprintname === undefined ? null : payload.blueprintname,
+		blueprintversion: payload.blueprintversion === undefined ? null : payload.blueprintversion,
+		profile: payload.profile === undefined ? { schema: 1 } : payload.profile,
+		userprofileversion: payload.userprofileversion === undefined ? null : payload.userprofileversion,
+		projectprofileversion: payload.projectprofileversion === undefined ? null : payload.projectprofileversion,
+		mode: payload.mode,
+		status: payload.status,
+		input: payload.input,
+		output: payload.output === undefined ? null : payload.output,
+		blockedreason: payload.blockedreason === undefined ? null : payload.blockedreason,
+		maxturns: payload.maxturns,
+		turns: payload.turns,
+		fence: payload.fence,
+		leaseepoch: payload.leaseepoch === undefined ? 0 : payload.leaseepoch,
+		createdat: payload.createdat,
+		updatedat: payload.updatedat,
+	};
+}
+
+function eventeffectprojection(payload: Record<string, jsonvalue>): projectionrecord {
+	return {
+		id: payload.id,
+		runid: payload.runid,
+		key: payload.key,
+		kind: payload.kind,
+		input: payload.input,
+		inputhash: payload.inputhash,
+		status: payload.status,
+		fence: payload.fence,
+		value: payload.value === undefined ? null : payload.value,
+		error: payload.error === undefined ? null : payload.error,
+		dispatchingat: payload.dispatchingat === undefined ? null : payload.dispatchingat,
+		dispatchedat: payload.dispatchedat === undefined ? null : payload.dispatchedat,
+		createdat: payload.createdat,
+		updatedat: payload.updatedat,
+	};
+}
+
+function sameprojectionvalue(left: unknown, right: unknown): boolean {
+	if (left === undefined || right === undefined) return left === right;
+	if ((left !== null && typeof left === "object") || (right !== null && typeof right === "object")) {
+		return stablejson(left) === stablejson(right);
+	}
+	return left === right;
+}
+
+function projectiondisplay(value: unknown): string {
+	if (value === undefined) return "<missing>";
+	if (typeof value === "string") return value;
+	return stablejson(value);
+}
+
+function compareprojection(
+	kind: "run" | "effect",
+	id: string,
+	actual: projectionrecord,
+	expected: projectionrecord,
+	fields: readonly string[],
+	issues: string[],
+): void {
+	for (const field of fields) {
+		const actualvalue = actual[field];
+		const expectedvalue = expected[field];
+		if (sameprojectionvalue(actualvalue, expectedvalue)) continue;
+		issues.push(
+			`${kind} ${id} projection ${field} ${projectiondisplay(actualvalue)} does not match ${projectiondisplay(expectedvalue)}`,
+		);
+	}
+}
+
 function parseevent(row: eventrow): eventrecord {
 	return {
 		id: row.id,
@@ -1588,8 +1762,8 @@ export class orchestrationstore {
 			.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq")
 			.all() as eventrow[];
 		const previousbyrun = new Map<string, string | null>();
-		const statusbyrun = new Map<string, runstatus>();
-		const statuseffectbyid = new Map<string, effectstatus>();
+		const runprojectionbyid = new Map<string, projectionrecord>();
+		const effectprojectionbyid = new Map<string, projectionrecord>();
 		for (const row of rows) {
 			const expectedprevious = previousbyrun.get(row.run_id) ?? null;
 			if (row.previous_hash !== expectedprevious) {
@@ -1604,13 +1778,13 @@ export class orchestrationstore {
 			if (row.type === "run_created" || row.type === "run_status") {
 				const status = stringfield(payload, "status", "event payload");
 				assertstatus(status);
-				statusbyrun.set(row.run_id, status);
+				runprojectionbyid.set(row.run_id, eventrunprojection(payload));
 			}
 			if (row.type.startsWith("effect_")) {
 				const effectid = stringfield(payload, "id", "event payload");
 				const status = stringfield(payload, "status", "event payload");
 				asserteffectstatus(status);
-				statuseffectbyid.set(effectid, status);
+				effectprojectionbyid.set(effectid, eventeffectprojection(payload));
 			}
 		}
 
@@ -1618,14 +1792,14 @@ export class orchestrationstore {
 		const runrows = this.data.query("select * from runs order by id").all() as runrow[];
 		for (const row of runrows) {
 			seenruns.add(row.id);
-			const expected = statusbyrun.get(row.id);
+			const expected = runprojectionbyid.get(row.id);
 			if (!expected) {
 				issues.push(`run ${row.id} projection has no event record`);
-			} else if (row.status !== expected) {
-				issues.push(`run ${row.id} projection status ${row.status} does not match ${expected}`);
+				continue;
 			}
+			compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
 		}
-		for (const runid of statusbyrun.keys()) {
+		for (const runid of runprojectionbyid.keys()) {
 			if (!seenruns.has(runid)) issues.push(`run ${runid} projection is missing`);
 		}
 
@@ -1633,14 +1807,14 @@ export class orchestrationstore {
 		const effectrows = this.data.query("select * from effects order by id").all() as effectrow[];
 		for (const row of effectrows) {
 			seeneffects.add(row.id);
-			const expected = statuseffectbyid.get(row.id);
+			const expected = effectprojectionbyid.get(row.id);
 			if (!expected) {
 				issues.push(`effect ${row.id} projection has no event record`);
-			} else if (row.status !== expected) {
-				issues.push(`effect ${row.id} projection status ${row.status} does not match ${expected}`);
+				continue;
 			}
+			compareprojection("effect", row.id, effectprojection(row), expected, effectprojectionfields, issues);
 		}
-		for (const effectid of statuseffectbyid.keys()) {
+		for (const effectid of effectprojectionbyid.keys()) {
 			if (!seeneffects.has(effectid)) issues.push(`effect ${effectid} projection is missing`);
 		}
 
