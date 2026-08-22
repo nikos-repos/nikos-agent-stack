@@ -266,6 +266,49 @@ describe("omnipotence omp extension", () => {
 	});
 
 
+	test("result tool is bound to the calling session", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-result-session-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const owner = context("session-result-owner", root);
+		const command = fake.commands.get("omnipotence");
+		if (!command) throw new Error("omnipotence command was not registered");
+		await command.handler("delivery.extension {}", owner);
+		const store = new orchestrationstore(paths.dbpath);
+		const run = store.getsessionrun("session-result-owner");
+		if (!run) throw new Error("expected active result run");
+		const [effect] = store.listeffects(run.id);
+		if (!effect) throw new Error("expected dispatched result effect");
+		const tool = fake.tools.get("omnipotence_result");
+		if (!tool) throw new Error("result tool was not registered");
+		const post = {
+			rootrunid: run.id,
+			runid: run.id,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: { accepted: true },
+		};
+		const before = {
+			run: store.getrun(run.id),
+			effect: store.geteffect(run.id, effect.id),
+		};
+		await expect(
+			tool.execute("call-session-b", post, undefined, undefined, context("session-result-other", root)),
+		).rejects.toThrow("this session has no active omnipotence run");
+		expect(store.getrun(run.id)).toEqual(before.run);
+		expect(store.geteffect(run.id, effect.id)).toEqual(before.effect);
+		await expect(tool.execute("call-session-a", post, undefined, undefined, owner)).resolves.toBeDefined();
+		expect(store.geteffect(run.id, effect.id)?.status).toBe("resolved_ok");
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, owner);
+		store.close();
+	});
+
 	test("a hidden-turn send failure reverts dispatch and blocks recovery", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-send-failure-"));
 		roots.push(root);

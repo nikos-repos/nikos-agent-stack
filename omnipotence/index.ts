@@ -360,9 +360,14 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		label: "omnipotence result",
 		description: "post one committed effect result to the active native orchestration run",
 		parameters: resultparameters,
-		async execute(_callid, params) {
+		async execute(_callid, params, _signal, _onupdate, context) {
 			await ensureloaded();
 			const post = resultinput(params);
+			const run = store.getsessionrun(sessionid(context));
+			if (!run) throw new Error("this session has no active omnipotence run");
+			if (run.id !== post.rootrunid) {
+				throw new Error(`omnipotence result root run ${post.rootrunid} does not match this session's active run ${run.id}`);
+			}
 			const result = await engine.commiteffect(post);
 			pi.appendEntry(stateentry, {
 				runid: result.run.id,
