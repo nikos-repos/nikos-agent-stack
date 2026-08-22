@@ -22,6 +22,7 @@ import { orchestrationstore } from "./store.ts";
 import type {
 	effectpost,
 	effectrecord,
+	hookdeliveryrecord,
 	runrecord,
 	uncertainresolution,
 } from "./store.ts";
@@ -236,6 +237,73 @@ export class orchestrationengine {
 		for (const result of results) this.store.recordevent(runid, "hook_completed", jsonvalueof(result));
 		return results;
 	}
+	private hookdeliveryselector(delivery: hookdeliveryrecord): hookselector {
+		return delivery.blueprintname && delivery.blueprintversion
+			? {
+					version: delivery.hookversion,
+					blueprintname: delivery.blueprintname,
+					blueprintversion: delivery.blueprintversion,
+				}
+			: { version: delivery.hookversion };
+	}
+
+	private async dispatchhookdelivery(delivery: hookdeliveryrecord): Promise<void> {
+		try {
+			const result = await this.hooks.dispatchone(
+				delivery.hookid,
+				delivery.input,
+				this.hookdeliveryselector(delivery),
+			);
+			this.store.completehookdelivery(delivery);
+			this.store.recordevent(delivery.runid, "hook_completed", jsonvalueof(result));
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.store.failhookdelivery(delivery, message);
+			throw error;
+		}
+	}
+
+	private async dispatchresolvedeffect(
+		rootrunid: string,
+		runid: string,
+		effectid: string,
+		status: effectrecord["status"],
+	): Promise<void> {
+		const run = this.store.getrun(runid);
+		if (!run) throw new Error(`run ${runid} does not exist`);
+		const blueprint =
+			run.blueprintname && run.blueprintversion
+				? { name: run.blueprintname, version: run.blueprintversion }
+				: undefined;
+		const input = { runid, effectid, status };
+		const existing = this.store.listhookdeliveries(runid, effectid);
+		for (const hook of this.hooks.listfor("effect_resolved", blueprint)) {
+			const known = existing.find(
+				(delivery) =>
+					delivery.hookid === hook.id &&
+					delivery.hookversion === hook.version &&
+					delivery.blueprintname === (hook.blueprint?.name ?? null) &&
+					delivery.blueprintversion === (hook.blueprint?.version ?? null),
+			);
+			if (known?.state === "completed") continue;
+			const delivery =
+				known ??
+				this.store.recordhookdelivery({
+					rootrunid,
+					runid,
+					effectid,
+					phase: "effect_resolved",
+					hookid: hook.id,
+					hookversion: hook.version,
+					blueprintname: hook.blueprint?.name ?? null,
+					blueprintversion: hook.blueprint?.version ?? null,
+					status,
+					input,
+				});
+			await this.dispatchhookdelivery(delivery);
+		}
+	}
+
 
 	private async postsafe(runid: string, phase: hookphase, input: jsonvalue): Promise<void> {
 		try {
@@ -331,11 +399,7 @@ export class orchestrationengine {
 			status,
 			...(status === "ok" ? { value } : { error: value }),
 		});
-		await this.dispatchphase(runid, "effect_resolved", {
-			runid,
-			effectid: effect.id,
-			status: resolved.status,
-		});
+		await this.dispatchresolvedeffect(runid, runid, effect.id, resolved.status);
 		return resolved;
 	}
 
@@ -732,11 +796,7 @@ export class orchestrationengine {
 		const duplicate = previous !== null && previous.status !== "requested";
 		if (!duplicate) {
 			try {
-				await this.dispatchphase(post.runid, "effect_resolved", {
-					runid: post.runid,
-					effectid: post.effectid,
-					status: effect.status,
-				});
+				await this.dispatchresolvedeffect(post.rootrunid, post.runid, post.effectid, effect.status);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				const blocked = await this.block(post.rootrunid, message);
@@ -778,6 +838,15 @@ export class orchestrationengine {
 		return result;
 	}
 
+	private async retrypendinghookdeliveries(runid: string): Promise<Set<string>> {
+		const retried = new Set<string>();
+		for (const delivery of this.store.pendinghookdeliveries(this.ownedrunids(runid))) {
+			await this.dispatchhookdelivery(delivery);
+			retried.add(delivery.runid);
+		}
+		return retried;
+	}
+
 	private async resumeclaimed(runid: string, response?: jsonvalue): Promise<advanceresult> {
 		const run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);
@@ -809,6 +878,18 @@ export class orchestrationengine {
 		}
 
 		if (run.status === "blocked") {
+			let retried: Set<string>;
+			try {
+				retried = await this.retrypendinghookdeliveries(runid);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return this.block(runid, message);
+			}
+			for (const retriedrunid of retried) {
+				if (retriedrunid === runid) continue;
+				const retriedrun = this.store.getrun(retriedrunid);
+				if (retriedrun?.status === "blocked") this.store.transitionrun(retriedrunid, "running");
+			}
 			if (run.blockedreason?.startsWith("turn budget ")) {
 				this.store.extendturnbudget(runid, Math.max(1, run.turns + 1 - run.maxturns));
 			}
@@ -866,11 +947,12 @@ export class orchestrationengine {
 			}
 			const resolved = this.store.resolveuncertain(resolution);
 			try {
-				await this.dispatchphase(resolution.runid, "effect_resolved", {
-					runid: resolution.runid,
-					effectid: resolution.effectid,
-					status: resolved.status,
-				});
+				await this.dispatchresolvedeffect(
+					resolution.rootrunid,
+					resolution.runid,
+					resolution.effectid,
+					resolved.status,
+				);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return this.block(resolution.rootrunid, message);

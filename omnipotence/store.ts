@@ -103,6 +103,23 @@ export interface effectpost {
 	value?: jsonvalue;
 	error?: jsonvalue;
 }
+export interface hookdeliveryrecord {
+	runid: string;
+	rootrunid: string;
+	effectid: string;
+	phase: "effect_resolved";
+	hookid: string;
+	hookversion: string;
+	blueprintname: string | null;
+	blueprintversion: string | null;
+	status: effectstatus;
+	input: jsonvalue;
+	state: "pending" | "completed";
+	error: string | null;
+}
+
+export type hookdeliveryinput = Omit<hookdeliveryrecord, "state" | "error">;
+
 
 export interface uncertainresolution {
 	runid: string;
@@ -399,6 +416,48 @@ function parseevent(row: eventrow): eventrecord {
 		createdat: row.created_at,
 	};
 }
+function hookdeliverykey(delivery: Pick<hookdeliveryrecord, "runid" | "effectid" | "hookid" | "hookversion" | "blueprintname" | "blueprintversion">): string {
+	return [
+		delivery.runid,
+		delivery.effectid,
+		delivery.hookid,
+		delivery.hookversion,
+		delivery.blueprintname ?? "",
+		delivery.blueprintversion ?? "",
+	].join("\u0000");
+}
+
+function parsehookdelivery(
+	row: eventrow,
+	type: "hook_delivery_pending" | "hook_delivery_failed" | "hook_delivery_completed",
+): hookdeliveryrecord {
+	const payload = objectvalue(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
+	const phase = stringfield(payload, "phase", "event payload");
+	if (phase !== "effect_resolved") throw new Error(`event payload.phase: unsupported hook phase ${phase}`);
+	const status = stringfield(payload, "status", "event payload");
+	asserteffectstatus(status);
+	if (!Object.hasOwn(payload, "input")) throw new Error("event payload.input: expected value");
+	const blueprintname = payload.blueprintname === null ? null : stringfield(payload, "blueprintname", "event payload");
+	const blueprintversion =
+		payload.blueprintversion === null ? null : stringfield(payload, "blueprintversion", "event payload");
+	const rawerror = payload.error;
+	const error = rawerror === undefined || rawerror === null ? null : stringfield(payload, "error", "event payload");
+	return {
+		runid: stringfield(payload, "runid", "event payload"),
+		rootrunid: stringfield(payload, "rootrunid", "event payload"),
+		effectid: stringfield(payload, "effectid", "event payload"),
+		phase,
+		hookid: stringfield(payload, "hookid", "event payload"),
+		hookversion: stringfield(payload, "hookversion", "event payload"),
+		blueprintname,
+		blueprintversion,
+		status,
+		input: payload.input,
+		state: type === "hook_delivery_completed" ? "completed" : "pending",
+		error,
+	};
+}
+
 
 function parseprofile(row: profilerow): profilerecord {
 	if (!Object.hasOwn(profilescopes, row.scope)) throw new Error(`invalid profile scope ${row.scope}`);
@@ -1111,6 +1170,90 @@ export class orchestrationstore {
 			.query("select * from effects where run_id = ? and effect_key = ?")
 			.get(runid, key) as effectrow | null;
 		return row ? parseeffect(row) : null;
+	}
+
+	private listhookdeliveriesinside(): hookdeliveryrecord[] {
+		const rows = this.data
+			.query(
+				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where type in ('hook_delivery_pending', 'hook_delivery_failed', 'hook_delivery_completed') order by id",
+			)
+			.all() as eventrow[];
+		const latest = new Map<string, hookdeliveryrecord>();
+		for (const row of rows) {
+			if (
+				row.type !== "hook_delivery_pending" &&
+				row.type !== "hook_delivery_failed" &&
+				row.type !== "hook_delivery_completed"
+			) {
+				continue;
+			}
+			const delivery = parsehookdelivery(row, row.type);
+			latest.set(hookdeliverykey(delivery), delivery);
+		}
+		return [...latest.values()];
+	}
+
+	private findhookdeliveryinside(delivery: Pick<hookdeliveryrecord, "runid" | "effectid" | "hookid" | "hookversion" | "blueprintname" | "blueprintversion">): hookdeliveryrecord | null {
+		const key = hookdeliverykey(delivery);
+		return this.listhookdeliveriesinside().find((entry) => hookdeliverykey(entry) === key) ?? null;
+	}
+
+	listhookdeliveries(runid: string, effectid?: string): hookdeliveryrecord[] {
+		return this.listhookdeliveriesinside().filter(
+			(delivery) => delivery.runid === runid && (effectid === undefined || delivery.effectid === effectid),
+		);
+	}
+
+	pendinghookdeliveries(runids: readonly string[]): hookdeliveryrecord[] {
+		const owned = new Set(runids);
+		return this.listhookdeliveriesinside().filter(
+			(delivery) => delivery.state === "pending" && owned.has(delivery.runid),
+		);
+	}
+
+	recordhookdelivery(input: hookdeliveryinput): hookdeliveryrecord {
+		if (input.phase !== "effect_resolved") throw new TypeError("hook delivery phase must be effect_resolved");
+		const value = jsonvalueof(input.input, "hook delivery input");
+		return this.transact(() => {
+			this.requiredrun(input.runid);
+			const existing = this.findhookdeliveryinside(input);
+			if (existing) {
+				if (existing.status !== input.status || stablejson(existing.input) !== stablejson(value)) {
+					throw new Error(`hook delivery ${input.effectid}/${input.hookid} input changed during replay`);
+				}
+				return existing;
+			}
+			const delivery: hookdeliveryrecord = {
+				...input,
+				input: value,
+				state: "pending",
+				error: null,
+			};
+			this.appendevent(input.runid, "hook_delivery_pending", jsonvalueof(delivery));
+			return delivery;
+		});
+	}
+
+	failhookdelivery(delivery: hookdeliveryrecord, message: string): hookdeliveryrecord {
+		return this.transact(() => {
+			const current = this.findhookdeliveryinside(delivery);
+			if (!current) throw new Error(`hook delivery ${delivery.effectid}/${delivery.hookid} does not exist`);
+			if (current.state === "completed") return current;
+			const failed = { ...current, error: message };
+			this.appendevent(current.runid, "hook_delivery_failed", jsonvalueof(failed));
+			return failed;
+		});
+	}
+
+	completehookdelivery(delivery: hookdeliveryrecord): hookdeliveryrecord {
+		return this.transact(() => {
+			const current = this.findhookdeliveryinside(delivery);
+			if (!current) throw new Error(`hook delivery ${delivery.effectid}/${delivery.hookid} does not exist`);
+			if (current.state === "completed") return current;
+			const completed = { ...current, state: "completed" as const, error: null };
+			this.appendevent(current.runid, "hook_delivery_completed", jsonvalueof(completed));
+			return completed;
+		});
 	}
 
 	requesteffect(runid: string, request: effectinput): effectrecord {

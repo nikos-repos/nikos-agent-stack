@@ -968,4 +968,77 @@ describe("deterministic process engine", () => {
 		expect(store.events(root.id).filter((event) => event.type === "run_status")).toHaveLength(transitions);
 		store.close();
 	});
+	test("resumes a failed resolved-effect hook without repeating completed delivery", async () => {
+		const { store, engine, path } = openengine();
+		let hookcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.retry-resolved",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 100,
+				async run() {
+					hookcalls += 1;
+					if (hookcalls === 1) throw new Error("policy unavailable");
+					return null;
+				},
+			}),
+		);
+		const process = defineprocess({
+			id: "delivery.retry-resolved",
+			version: "1.0.0",
+			input: objectinput,
+			output: objectoutput,
+			async run(ctx) {
+				const result = await ctx.task("work", {});
+				return { result };
+			},
+		});
+		engine.register(process);
+		const started = await engine.start({
+			processid: "delivery.retry-resolved",
+			sessionid: "session-retry-resolved",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const effect = started.effects[0]!;
+		const blocked = await engine.commiteffect({
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(blocked.status).toBe("blocked");
+		expect(store.geteffect(effect.runid, effect.id)?.status).toBe("resolved_ok");
+		expect(hookcalls).toBe(1);
+		store.close();
+
+		const reopenedstore = new orchestrationstore(path);
+		const reopened = new orchestrationengine(reopenedstore);
+		reopened.hooks.register(
+			definehook({
+				id: "audit.retry-resolved",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 100,
+				async run() {
+					hookcalls += 1;
+					if (hookcalls === 1) throw new Error("policy unavailable");
+					return null;
+				},
+			}),
+		);
+		reopened.register(process);
+		const completed = await reopened.resume(started.run.id);
+		expect(completed.status).toBe("completed");
+		expect(hookcalls).toBe(2);
+		const repeated = await reopened.resume(started.run.id);
+		expect(repeated.status).toBe("completed");
+		expect(hookcalls).toBe(2);
+		reopenedstore.close();
+	});
 });
