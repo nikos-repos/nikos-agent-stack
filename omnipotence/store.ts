@@ -1660,9 +1660,9 @@ export class orchestrationstore {
 							numberfield(payload, "maxturns", "event payload"),
 							numberfield(payload, "turns", "event payload"),
 							numberfield(payload, "fence", "event payload"),
-							typeof payload.leaseowner === "string" ? payload.leaseowner : null,
+							null,
 							typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0,
-							typeof payload.leaseexpiresat === "number" ? payload.leaseexpiresat : null,
+							null,
 							stringfield(payload, "createdat", "event payload"),
 							stringfield(payload, "updatedat", "event payload"),
 						);
