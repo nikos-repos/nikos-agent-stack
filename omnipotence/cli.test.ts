@@ -77,6 +77,30 @@ async function invoke(base: clioptions, args: string[]) {
 	return { code, stdout, stderr, parsed };
 }
 
+async function fencedEffect(sessionid: string) {
+	const { root, options } = opencli();
+	const source = processfixture(root);
+	expect((await invoke(options, ["--json", "blueprint", "install", source])).code).toBe(0);
+	const started = await invoke(options, [
+		"--json",
+		"run",
+		"start",
+		"delivery.cli",
+		"--session",
+		sessionid,
+		"--input",
+		"{}",
+	]);
+	expect(started.code).toBe(0);
+	const starteddata = objectvalue(objectvalue(started.parsed, "started").data, "started.data");
+	const run = objectvalue(starteddata.run, "started.run");
+	const effects = starteddata.effects;
+	if (!Array.isArray(effects) || effects.length !== 1) throw new Error("expected one effect");
+	const effect = objectvalue(effects[0], "started.effect");
+	expect(effect.fence).toBe(1);
+	return { options, run, effect };
+}
+
 describe("omnipotence cli", () => {
 	test("a local blueprint drives one run through json commands", async () => {
 		const { root, options } = opencli();
@@ -233,4 +257,116 @@ describe("omnipotence cli", () => {
 		expect((await invoke(options, ["--json", "doctor"])).code).toBe(0);
 		expect(existsSync(marker)).toBe(false);
 	});
+	test("effect post reports the supplied fence before the stored fence", async () => {
+		const { options, run, effect } = await fencedEffect("cli-fence-post");
+		const stale = await invoke(options, [
+			"--json",
+			"effect",
+			"post",
+			String(run.id),
+			String(effect.id),
+			"--root",
+			String(run.id),
+			"--fence",
+			"0",
+			"--input-hash",
+			String(effect.inputhash),
+			"--status",
+			"ok",
+			"--value",
+			'{"done":true}',
+		]);
+		expect(stale.code).toBe(3);
+		expect(stale.parsed).toEqual({
+			ok: false,
+			error: {
+				code: "state_conflict",
+				message: "stale effect fence 0; current fence is 1",
+			},
+		});
+		const valid = await invoke(options, [
+			"--json",
+			"effect",
+			"post",
+			String(run.id),
+			String(effect.id),
+			"--root",
+			String(run.id),
+			"--fence",
+			String(effect.fence),
+			"--input-hash",
+			String(effect.inputhash),
+			"--status",
+			"ok",
+			"--value",
+			'{"done":true}',
+		]);
+		expect(valid.code).toBe(0);
+	});
+
+	test("effect resolve uncertain reports the supplied fence before the stored fence", async () => {
+		const { options, run, effect } = await fencedEffect("cli-fence-resolve");
+		const uncertain = await invoke(options, [
+			"--json",
+			"effect",
+			"post",
+			String(run.id),
+			String(effect.id),
+			"--root",
+			String(run.id),
+			"--fence",
+			String(effect.fence),
+			"--input-hash",
+			String(effect.inputhash),
+			"--status",
+			"uncertain",
+			"--value",
+			'{"attempt":"uncertain"}',
+		]);
+		expect(uncertain.code).toBe(3);
+		const stale = await invoke(options, [
+			"--json",
+			"effect",
+			"resolve-uncertain",
+			String(run.id),
+			String(effect.id),
+			"--root",
+			String(run.id),
+			"--fence",
+			"0",
+			"--input-hash",
+			String(effect.inputhash),
+			"--decision",
+			"confirm",
+			"--value",
+			'{"done":true}',
+		]);
+		expect(stale.code).toBe(3);
+		expect(stale.parsed).toEqual({
+			ok: false,
+			error: {
+				code: "state_conflict",
+				message: "stale effect fence 0; current fence is 1",
+			},
+		});
+		const valid = await invoke(options, [
+			"--json",
+			"effect",
+			"resolve-uncertain",
+			String(run.id),
+			String(effect.id),
+			"--root",
+			String(run.id),
+			"--fence",
+			String(effect.fence),
+			"--input-hash",
+			String(effect.inputhash),
+			"--decision",
+			"confirm",
+			"--value",
+			'{"done":true}',
+		]);
+		expect(valid.code).toBe(0);
+	});
+
 });

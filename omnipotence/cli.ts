@@ -314,7 +314,7 @@ export async function runcli(argv: readonly string[], options: clioptions = {}):
 				const target = store.geteffect(runid, effectid);
 				if (!target) throw new Error(`effect ${effectid} does not exist`);
 				if (target.fence !== fence) {
-					throw new Error(`stale effect fence ${target.fence}; current fence is ${fence}`);
+					throw new Error(`stale effect fence ${fence}; current fence is ${target.fence}`);
 				}
 				if (target.inputhash !== inputhash) {
 					throw new TypeError(`effect ${effectid} input hash mismatch`);
@@ -352,7 +352,7 @@ export async function runcli(argv: readonly string[], options: clioptions = {}):
 				if (!target) throw new Error(`effect ${effectid} does not exist`);
 				if (target.status !== "uncertain") throw new Error(`effect ${effectid} is not uncertain`);
 				if (target.fence !== fence) {
-					throw new Error(`stale effect fence ${target.fence}; current fence is ${fence}`);
+					throw new Error(`stale effect fence ${fence}; current fence is ${target.fence}`);
 				}
 				if (target.inputhash !== inputhash) {
 					throw new TypeError(`effect ${effectid} input hash mismatch`);
