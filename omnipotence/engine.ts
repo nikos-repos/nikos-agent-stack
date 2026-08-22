@@ -249,19 +249,7 @@ export class orchestrationengine {
 				: undefined,
 		);
 		assertvalid(process.input, input.input, "run.input");
-		const blueprint = process.blueprint;
-		const startedhooks = modepolicy(input.mode).execute
-			? await this.hooks.dispatchfor(
-					"run_start",
-					{
-						processid: process.id,
-						processversion: process.version,
-						mode: input.mode,
-						input: input.input,
-					},
-					blueprint,
-				)
-			: [];
+		const policy = modepolicy(input.mode);
 		const run = this.store.createrun({
 			runid: input.runid,
 			processid: process.id,
@@ -277,8 +265,22 @@ export class orchestrationengine {
 			projectprofileversion: input.projectprofileversion,
 			maxturns: process.maxturns,
 		});
-		for (const result of startedhooks) this.store.recordevent(run.id, "hook_completed", jsonvalueof(result));
-		return run;
+		if (!policy.execute) return run;
+		try {
+			await this.dispatchphase(run.id, "run_start", {
+				processid: process.id,
+				processversion: process.version,
+				mode: input.mode,
+				input: input.input,
+			});
+			return run;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.store.recordevent(run.id, "hook_failed", { phase: "run_start", message });
+			const failed = this.store.transitionrun(run.id, "failed", null, message);
+			await this.postsafe(run.id, "run_failed", { runid: run.id, error: message });
+			return failed;
+		}
 	}
 
 	async start(input: startinput): Promise<advanceresult> {

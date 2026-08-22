@@ -118,6 +118,78 @@ describe("deterministic process engine", () => {
 		expect(store.getsessionrun("session-1")).toBeNull();
 		store.close();
 	});
+	test("reserves a session before dispatching run start hooks", async () => {
+		const { store, engine } = openengine();
+		let runstarthooks = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.session-reservation",
+				version: "1.0.0",
+				phase: "run_start",
+				timeoutms: 100,
+				async run() {
+					runstarthooks += 1;
+					return { accepted: true };
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.session-reservation",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("work", {});
+				},
+			}),
+		);
+
+		const first = await engine.start({
+			processid: "delivery.session-reservation",
+			sessionid: "session-reservation",
+			mode: "call",
+			input: {},
+		});
+		if (first.status !== "waiting") throw new Error("expected waiting result");
+
+		await expect(
+			engine.start({
+				processid: "delivery.session-reservation",
+				sessionid: "session-reservation",
+				mode: "call",
+				input: {},
+			}),
+		).rejects.toThrow("session session-reservation already has active run");
+		expect(runstarthooks).toBe(1);
+		expect(store.listruns()).toHaveLength(1);
+		expect(store.events(first.run.id).filter((event) => event.type === "hook_completed")).toHaveLength(1);
+
+		engine.hooks.register(
+			definehook({
+				id: "audit.start-failure",
+				version: "1.0.0",
+				phase: "run_start",
+				timeoutms: 100,
+				async run() {
+					throw new Error("start hook rejected");
+				},
+			}),
+		);
+		const failed = await engine.start({
+			processid: "delivery.session-reservation",
+			sessionid: "session-reservation-failure",
+			mode: "call",
+			input: {},
+		});
+		expect(failed.status).toBe("failed");
+		expect(failed.run.status).toBe("failed");
+		expect(failed.run.blockedreason).toBe("hook audit.start-failure failed during run_start: start hook rejected");
+		expect(store.getsessionrun("session-reservation-failure")).toBeNull();
+		expect(store.listruns()).toHaveLength(2);
+		expect(store.events(failed.run.id).map((event) => event.type)).toContain("hook_failed");
+		store.close();
+	});
 
 	test("parallel effects wait for every result without repeating resolved work", async () => {
 		const { store, engine } = openengine();
