@@ -34,24 +34,24 @@ process code uses the native package api. every process declares a stable id, se
 import { defineprocess } from "nikos-agent-stack/omnipotence";
 
 export default defineprocess({
-	id: "delivery.review",
-	version: "1.0.0",
-	maxturns: 32,
-	input: {
-		type: "object",
-		required: ["request"],
-		additionalproperties: false,
-		properties: { request: { type: "string", min: 1 } },
-	},
-	output: {
-		type: "object",
-		required: ["accepted"],
-		additionalproperties: false,
-		properties: { accepted: { type: "boolean" } },
-	},
-	async run(ctx, input) {
-		return ctx.task("review", { request: input.request });
-	},
+    id: "delivery.review",
+    version: "1.0.0",
+    maxturns: 32,
+    input: {
+        type: "object",
+        required: ["request"],
+        additionalproperties: false,
+        properties: { request: { type: "string", min: 1 } },
+    },
+    output: {
+        type: "object",
+        required: ["accepted"],
+        additionalproperties: false,
+        properties: { accepted: { type: "boolean" } },
+    },
+    async run(ctx, input) {
+        return ctx.task("review", { request: input.request });
+    },
 });
 ```
 
@@ -179,7 +179,6 @@ export OMNIPOTENCE_DB=/path/to/omnipotence.sqlite
 export OMNIPOTENCE_BLUEPRINTS=/path/to/blueprints
 ```
 
-
 run state, events, effects, session bindings, profile versions, and blueprint registry data use sqlite. effects carry a stable key, input hash, and fencing epoch. duplicate identical result posts are idempotent. stale or conflicting posts fail closed.
 
 if a session restarts after an effect dispatch, omnipotence marks the effect uncertain. it does not retry an uncertain external mutation. resolve it explicitly:
@@ -205,19 +204,6 @@ omnipotence repair --json
 ```
 
 source: `omnipotence/store.ts`, `omnipotence/store.test.ts`, and `omnipotence/index.test.ts`.
-
-## migrate from the separate babysitter extension
-
-1. finish or halt active babysitter runs.
-2. port process behavior to `defineprocess`; no old api or cli compatibility layer exists.
-3. package the native process and hooks as a local blueprint.
-4. install and test the blueprint with `omnipotence --dry-run blueprint install` and `omnipotence process validate <process-id>`.
-5. start one native run and verify status, events, restart recovery, and gate order.
-6. after validation, remove the separate babysitter plugin by using the exact installed package name shown by the omp plugin list command.
-
-nikos-agent-stack does not import babysitter state, profiles, blueprints, prompt wrappers, or shell hooks automatically.
-
-source: `.factory/recon.md`.
 
 ## remove omnipotence state
 
