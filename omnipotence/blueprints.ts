@@ -12,6 +12,7 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
 	assertprocessid,
 	assertversion,
+	compareversions,
 	jsonvalueof,
 	parsejson,
 	stablejson,
@@ -75,9 +76,6 @@ function hashcontent(content: string | Uint8Array): string {
 	return createHash("sha256").update(content).digest("hex");
 }
 
-function compareversions(left: string, right: string): number {
-	return left.localeCompare(right, undefined, { numeric: true });
-}
 
 function setproperty(target: Record<string, jsonvalue>, key: string, value: jsonvalue): void {
 	Object.defineProperty(target, key, {

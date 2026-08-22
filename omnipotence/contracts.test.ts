@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { assertschema, assertvalid, defineprocess, stablejson } from "./contracts.ts";
+import { assertschema, assertvalid, compareversions, defineprocess, stablejson } from "./contracts.ts";
 import type { jsonschema, processcontext } from "./contracts.ts";
 
 const input: jsonschema = {
@@ -170,5 +170,19 @@ describe("native orchestration contracts", () => {
 		expect(() => Reflect.apply(defineprocess, undefined, [inheritedtype])).toThrow(
 			"process.input.type: expected supported type",
 		);
+	});
+	test("semantic versions compare by numeric and prerelease precedence", () => {
+		const cases = [
+			["1.0.0", "1.0.0-rc.1", 1],
+			["1.0.0-rc.10", "1.0.0-rc.2", 1],
+			["1.0.0-alpha", "1.0.0-beta", -1],
+			["1.0.0-alpha.1", "1.0.0-alpha.beta", -1],
+			["1.0.0-alpha.2", "1.0.0-alpha.10", -1],
+			["2.0.0", "10.0.0", -1],
+		] as const;
+		for (const [left, right, expected] of cases) {
+			expect(Math.sign(compareversions(left, right))).toBe(expected);
+			expect(Math.sign(compareversions(right, left))).toBe(-expected);
+		}
 	});
 });

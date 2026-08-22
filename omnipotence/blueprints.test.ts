@@ -104,6 +104,13 @@ describe("local blueprint lifecycle", () => {
 		expect(blueprints.active("delivery-pack")?.version).toBe("2.0.0");
 		store.close();
 	});
+	test("rollback selects the previous prerelease before its stable release", () => {
+		const { root, store, blueprints } = openblueprints();
+		blueprints.install(fixture(root, "1.0.0-rc.1"));
+		blueprints.install(fixture(root, "1.0.0"));
+		expect(blueprints.rollback("delivery-pack").version).toBe("1.0.0-rc.1");
+		store.close();
+	});
 
 	test("install rejects traversal and escaping symlinks before copying", () => {
 		const { root, store, blueprints } = openblueprints();

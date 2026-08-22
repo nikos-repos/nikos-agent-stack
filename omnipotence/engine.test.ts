@@ -26,6 +26,35 @@ afterEach(() => {
 });
 
 describe("deterministic process engine", () => {
+	test("process resolution orders semantic versions and rejects active ties", () => {
+		const { store, engine } = openengine();
+		const process = (version: string, blueprint: { name: string; version: string }) =>
+			defineprocess({
+				id: "delivery.versioned",
+				version,
+				blueprint,
+				input: objectinput,
+				output: objectoutput,
+				async run() {
+					return {};
+				},
+			});
+		engine.register(process("1.0.0-rc.1", { name: "alpha-pack", version: "1.0.0" }));
+		engine.register(process("1.0.0", { name: "alpha-pack", version: "1.0.0" }));
+		expect(engine.resolveprocess("delivery.versioned").version).toBe("1.0.0");
+
+		engine.register(process("1.0.0", { name: "beta-pack", version: "1.0.0" }));
+		expect(() => engine.resolveprocess("delivery.versioned")).toThrow(
+			"process delivery.versioned@1.0.0 is ambiguous across blueprints",
+		);
+		expect(
+			engine.resolveprocess("delivery.versioned", undefined, {
+				name: "beta-pack",
+				version: "1.0.0",
+			}).blueprint?.name,
+		).toBe("beta-pack");
+		store.close();
+	});
 	test("one start advances two effect turns into one validated output", async () => {
 		const { store, engine } = openengine();
 		let resolvedhooks = 0;

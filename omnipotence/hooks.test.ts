@@ -39,6 +39,34 @@ describe("ordered orchestration hooks", () => {
 		expect(results.map((result) => result.hookid)).toEqual(["audit.first", "audit.second"]);
 		expect(results.every((result) => result.durationms >= 0)).toBe(true);
 	});
+	test("hook resolution orders semantic versions and rejects active ties", () => {
+		const registry = new hookregistry();
+		const hook = (version: string, blueprint: { name: string; version: string }) =>
+			definehook({
+				id: "audit.versioned",
+				version,
+				phase: "before_advance",
+				timeoutms: 100,
+				blueprint,
+				async run() {
+					return {};
+				},
+			});
+		registry.register(hook("1.0.0-rc.1", { name: "alpha-pack", version: "1.0.0" }));
+		registry.register(hook("1.0.0", { name: "alpha-pack", version: "1.0.0" }));
+		expect(registry.resolve("audit.versioned").version).toBe("1.0.0");
+
+		registry.register(hook("1.0.0", { name: "beta-pack", version: "1.0.0" }));
+		expect(() => registry.resolve("audit.versioned")).toThrow(
+			"hook audit.versioned@1.0.0 is ambiguous across blueprints",
+		);
+		expect(
+			registry.resolve("audit.versioned", {
+				blueprintname: "beta-pack",
+				blueprintversion: "1.0.0",
+			}).blueprint?.name,
+		).toBe("beta-pack");
+	});
 
 	test("a timeout identifies the exact hook and aborts its signal", async () => {
 		const registry = new hookregistry();

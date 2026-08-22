@@ -3,6 +3,7 @@ import {
 	asserteffectkey,
 	assertprocessid,
 	assertvalid,
+	compareversions,
 	jsonvalueof,
 	stablejson,
 } from "./contracts.ts";
@@ -172,19 +173,22 @@ export class orchestrationengine {
 	}
 
 	listprocesses(): Readonly<processdefinition>[] {
-		return [...this.processes.values()].sort(
-			(left, right) =>
+		return [...this.processes.values()].sort((left, right) => {
+			const leftblueprintversion = left.blueprint?.version;
+			const rightblueprintversion = right.blueprint?.version;
+			return (
 				left.id.localeCompare(right.id) ||
-				left.version.localeCompare(right.version, undefined, { numeric: true }) ||
-				(left.blueprint?.version ?? "").localeCompare(
-					right.blueprint?.version ?? "",
-					undefined,
-					{ numeric: true },
-				),
-		);
+				compareversions(left.version, right.version) ||
+				(leftblueprintversion === undefined
+					? rightblueprintversion === undefined
+						? 0
+						: -1
+					: rightblueprintversion === undefined
+						? 1
+						: compareversions(leftblueprintversion, rightblueprintversion))
+			);
+		});
 	}
-
-
 	resolveprocess(
 		processid: string,
 		version?: string,
@@ -207,18 +211,20 @@ export class orchestrationengine {
 						process.blueprint.version === blueprint.version
 					: process.active,
 			)
-			.sort((left, right) =>
-				right.version.localeCompare(left.version, undefined, { numeric: true }),
-			);
+			.sort((left, right) => compareversions(right.version, left.version));
 		if (candidates.length === 0) {
 			throw new Error(`process ${processid}${version ? `@${version}` : ""} is not registered`);
 		}
-		if (candidates.length > 1 && version !== undefined && blueprint === undefined) {
-			throw new Error(`process ${processid}@${version} is ambiguous across blueprints`);
+		const selected = candidates[0]!;
+		if (
+			blueprint === undefined &&
+			candidates.length > 1 &&
+			compareversions(selected.version, candidates[1]!.version) === 0
+		) {
+			throw new Error(`process ${processid}@${selected.version} is ambiguous across blueprints`);
 		}
-		return candidates[0]!;
+		return selected;
 	}
-
 	private async dispatchphase(runid: string, phase: hookphase, input: jsonvalue): Promise<hookresult[]> {
 		const run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);

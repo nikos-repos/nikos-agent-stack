@@ -1,4 +1,4 @@
-import { assertprocessid, assertversion, jsonvalueof } from "./contracts.ts";
+import { assertprocessid, assertversion, compareversions, jsonvalueof } from "./contracts.ts";
 import type { jsonvalue, processblueprint } from "./contracts.ts";
 
 export type hookphase =
@@ -123,11 +123,16 @@ export class hookregistry {
 						hook.blueprint.version === selector.blueprintversion),
 			)
 			.filter((hook) => selector.blueprintname !== undefined || hook.active)
-			.sort((left, right) =>
-				right.version.localeCompare(left.version, undefined, { numeric: true }),
-			);
+			.sort((left, right) => compareversions(right.version, left.version));
 		const hook = candidates[0];
 		if (!hook) throw new Error(`hook ${hookid} is not registered`);
+		if (
+			selector.blueprintname === undefined &&
+			candidates.length > 1 &&
+			compareversions(hook.version, candidates[1]!.version) === 0
+		) {
+			throw new Error(`hook ${hookid}@${hook.version} is ambiguous across blueprints`);
+		}
 		return hook;
 	}
 

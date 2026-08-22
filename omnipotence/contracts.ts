@@ -353,6 +353,45 @@ export function assertprocessid(value: string): void {
 export function assertversion(value: string, path = "version"): void {
 	if (!versionpattern.test(value)) throw new TypeError(`${path}: expected semantic version`);
 }
+export function compareversions(left: string, right: string): number {
+	assertversion(left, "left");
+	assertversion(right, "right");
+
+	const comparedecimal = (first: string, second: string): number => {
+		const normalizedfirst = first.replace(/^0+(?=\d)/, "");
+		const normalizedsecond = second.replace(/^0+(?=\d)/, "");
+		return normalizedfirst.length - normalizedsecond.length ||
+			(normalizedfirst < normalizedsecond ? -1 : normalizedfirst > normalizedsecond ? 1 : 0);
+	};
+	const compareidentifier = (first: string, second: string): number => {
+		const firstnumeric = /^\d+$/.test(first);
+		const secondnumeric = /^\d+$/.test(second);
+		if (firstnumeric && secondnumeric) return comparedecimal(first, second);
+		if (firstnumeric !== secondnumeric) return firstnumeric ? -1 : 1;
+		return first < second ? -1 : first > second ? 1 : 0;
+	};
+	const prerelease = (version: string): string[] => {
+		const separator = version.indexOf("-");
+		return separator === -1 ? [] : version.slice(separator + 1).split(".");
+	};
+	const leftcore = left.slice(0, left.indexOf("-") === -1 ? undefined : left.indexOf("-")).split(".");
+	const rightcore = right.slice(0, right.indexOf("-") === -1 ? undefined : right.indexOf("-")).split(".");
+	for (let index = 0; index < leftcore.length; index += 1) {
+		const comparison = comparedecimal(leftcore[index]!, rightcore[index]!);
+		if (comparison !== 0) return comparison;
+	}
+
+	const leftprerelease = prerelease(left);
+	const rightprerelease = prerelease(right);
+	if (leftprerelease.length === 0 || rightprerelease.length === 0) {
+		return leftprerelease.length === rightprerelease.length ? 0 : leftprerelease.length === 0 ? 1 : -1;
+	}
+	for (let index = 0; index < Math.min(leftprerelease.length, rightprerelease.length); index += 1) {
+		const comparison = compareidentifier(leftprerelease[index]!, rightprerelease[index]!);
+		if (comparison !== 0) return comparison;
+	}
+	return leftprerelease.length - rightprerelease.length;
+}
 
 export function asserteffectkey(value: string): void {
 	if (!effectkeypattern.test(value)) throw new TypeError("effect.key: expected lowercase stable key");
