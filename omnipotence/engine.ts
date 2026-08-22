@@ -169,6 +169,21 @@ export class orchestrationengine {
 			this.store.releaserun(rootrunid, owner, epoch);
 		}
 	}
+
+	private async withrunsnapshot<result extends { run: runrecord }>(
+		runid: string,
+		operation: () => Promise<result>,
+	): Promise<result> {
+		return this.withrootlease(runid, async () => {
+			const result = await operation();
+			const current = this.store.getrun(runid);
+			if (!current) throw new Error(`run ${runid} does not exist`);
+			return {
+				...result,
+				run: { ...current, leaseowner: null, leaseexpiresat: null },
+			};
+		});
+	}
 	constructor(store: orchestrationstore, hooks = new hookregistry()) {
 		this.store = store;
 		this.hooks = hooks;
@@ -688,21 +703,11 @@ export class orchestrationengine {
 	}
 
 	async halt(runid: string, reason: string): Promise<advanceresult> {
-		const result = await this.withrootlease(runid, async () => this.haltclaimed(runid, reason));
-		const current = this.store.getrun(runid);
-		if (!current) throw new Error(`run ${runid} does not exist`);
-		result.run = current;
-		return result;
+		return this.withrunsnapshot(runid, () => this.haltclaimed(runid, reason));
 	}
 
 	async advance(runid: string): Promise<advanceresult> {
-		return this.withrootlease(runid, async () => {
-			const result = await this.advanceclaimed(runid);
-			const current = this.store.getrun(runid);
-			if (!current) throw new Error(`run ${runid} does not exist`);
-			result.run = { ...current, leaseowner: null, leaseexpiresat: null };
-			return result;
-		});
+		return this.withrunsnapshot(runid, () => this.advanceclaimed(runid));
 	}
 
 	private async advanceclaimed(runid: string): Promise<advanceresult> {
@@ -790,13 +795,7 @@ export class orchestrationengine {
 	}
 
 	async commiteffect(post: enginepost): Promise<effectcommit> {
-		return this.withrootlease(post.rootrunid, async () => {
-			const result = await this.commiteffectclaimed(post);
-			const current = this.store.getrun(post.rootrunid);
-			if (!current) throw new Error(`run ${post.rootrunid} does not exist`);
-			result.run = { ...current, leaseowner: null, leaseexpiresat: null };
-			return result;
-		});
+		return this.withrunsnapshot(post.rootrunid, () => this.commiteffectclaimed(post));
 	}
 
 	private async commiteffectclaimed(post: enginepost): Promise<effectcommit> {
@@ -843,11 +842,7 @@ export class orchestrationengine {
 	}
 
 	async posteffect(post: enginepost): Promise<advanceresult> {
-		const result = await this.withrootlease(post.rootrunid, async () => this.posteffectclaimed(post));
-		const current = this.store.getrun(post.rootrunid);
-		if (!current) throw new Error(`run ${post.rootrunid} does not exist`);
-		result.run = current;
-		return result;
+		return this.withrunsnapshot(post.rootrunid, () => this.posteffectclaimed(post));
 	}
 
 	private async retrypendinghookdeliveries(runid: string): Promise<Set<string>> {
@@ -911,15 +906,11 @@ export class orchestrationengine {
 	}
 
 	async resume(runid: string, response?: jsonvalue): Promise<advanceresult> {
-		const result = await this.withrootlease(runid, async () => this.resumeclaimed(runid, response));
-		const current = this.store.getrun(runid);
-		if (!current) throw new Error(`run ${runid} does not exist`);
-		result.run = current;
-		return result;
+		return this.withrunsnapshot(runid, () => this.resumeclaimed(runid, response));
 	}
 
 	async resolveuncertain(resolution: engineresolution): Promise<advanceresult> {
-		const result = await this.withrootlease(resolution.rootrunid, async () => {
+		return this.withrunsnapshot(resolution.rootrunid, async () => {
 			if (!this.ownsrun(resolution.rootrunid, resolution.runid)) {
 				throw new Error(
 					`effect run ${resolution.runid} is not owned by root run ${resolution.rootrunid}`,
@@ -971,9 +962,5 @@ export class orchestrationengine {
 			}
 			return this.advanceclaimed(resolution.rootrunid);
 		});
-		const current = this.store.getrun(resolution.rootrunid);
-		if (!current) throw new Error(`run ${resolution.rootrunid} does not exist`);
-		result.run = current;
-		return result;
 	}
 }

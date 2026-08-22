@@ -30,6 +30,8 @@ class mutationstore extends orchestrationstore {
 			const run = this.getrun(runid);
 			if (run?.status === "waiting_effect" || run?.status === "running") {
 				this.transitionrun(runid, "blocked", null, "mutation after release");
+			} else if (run) {
+				this.bumpfence(runid);
 			}
 		}
 		return released;
@@ -44,6 +46,31 @@ function openmutationengine() {
 	return { store, engine: new orchestrationengine(store), path };
 }
 
+
+function registersnapshotprocess(engine: orchestrationengine, id: string): void {
+	engine.register(
+		defineprocess({
+			id,
+			version: "1.0.0",
+			input: objectinput,
+			output: objectoutput,
+			async run(ctx) {
+				return ctx.task("work", {});
+			},
+		}),
+	);
+}
+
+async function startsnapshotrun(engine: orchestrationengine, processid: string) {
+	const started = await engine.start({
+		processid,
+		sessionid: `session-${processid}`,
+		mode: "call",
+		input: {},
+	});
+	if (started.status !== "waiting") throw new Error("expected waiting result");
+	return started;
+}
 
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -919,6 +946,112 @@ describe("deterministic process engine", () => {
 		expect(committed.status).toBe("committed");
 		expect(committed.run.status).toBe("running");
 		expect(store.getrun(started.run.id)?.status).toBe("blocked");
+		store.close();
+	});
+
+	test("halt snapshots the run before releasing its lease", async () => {
+		const { store, engine } = openmutationengine();
+		const processid = "delivery.snapshot-halt";
+		registersnapshotprocess(engine, processid);
+		const started = await startsnapshotrun(engine, processid);
+		const initialfence = started.run.fence;
+
+		store.mutateafterrelease = true;
+		const halted = await engine.halt(started.run.id, "operator requested stop");
+
+		expect(halted.status).toBe("halted");
+		expect(halted.run.status).toBe("halted");
+		expect(halted.run.fence).toBe(initialfence + 1);
+		expect(halted.run.leaseowner).toBeNull();
+		expect(halted.run.leaseexpiresat).toBeNull();
+		expect(store.getrun(started.run.id)?.status).toBe("halted");
+		expect(store.getrun(started.run.id)?.fence).toBe(initialfence + 2);
+		store.close();
+	});
+
+	test("posteffect snapshots the run before releasing its lease", async () => {
+		const { store, engine } = openmutationengine();
+		const processid = "delivery.snapshot-posteffect";
+		registersnapshotprocess(engine, processid);
+		const started = await startsnapshotrun(engine, processid);
+		const effect = started.effects[0]!;
+		const initialfence = started.run.fence;
+
+		store.mutateafterrelease = true;
+		const completed = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+
+		expect(completed.status).toBe("completed");
+		expect(completed.run.status).toBe("completed");
+		expect(completed.run.fence).toBe(initialfence);
+		expect(completed.run.leaseowner).toBeNull();
+		expect(completed.run.leaseexpiresat).toBeNull();
+		expect(store.getrun(started.run.id)?.status).toBe("completed");
+		expect(store.getrun(started.run.id)?.fence).toBe(initialfence + 1);
+		store.close();
+	});
+
+	test("resume snapshots the run before releasing its lease", async () => {
+		const { store, engine } = openmutationengine();
+		const processid = "delivery.snapshot-resume";
+		registersnapshotprocess(engine, processid);
+		const started = await startsnapshotrun(engine, processid);
+		const initialfence = started.run.fence;
+
+		store.mutateafterrelease = true;
+		const resumed = await engine.resume(started.run.id);
+
+		expect(resumed.status).toBe("waiting");
+		expect(resumed.run.status).toBe("waiting_effect");
+		expect(resumed.run.fence).toBe(initialfence);
+		expect(resumed.run.leaseowner).toBeNull();
+		expect(resumed.run.leaseexpiresat).toBeNull();
+		expect(store.getrun(started.run.id)?.status).toBe("blocked");
+		expect(store.getrun(started.run.id)?.fence).toBe(initialfence);
+		store.close();
+	});
+
+	test("resolveuncertain snapshots the run before releasing its lease", async () => {
+		const { store, engine } = openmutationengine();
+		const processid = "delivery.snapshot-resolveuncertain";
+		registersnapshotprocess(engine, processid);
+		const started = await startsnapshotrun(engine, processid);
+		const effect = started.effects[0]!;
+		store.posteffect({
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "uncertain",
+			error: { message: "connection closed after dispatch" },
+		});
+		const initialfence = started.run.fence;
+
+		store.mutateafterrelease = true;
+		const resolved = await engine.resolveuncertain({
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			decision: "confirm",
+			value: { done: true },
+		});
+
+		expect(resolved.status).toBe("completed");
+		expect(resolved.run.status).toBe("completed");
+		expect(resolved.run.fence).toBe(initialfence);
+		expect(resolved.run.leaseowner).toBeNull();
+		expect(resolved.run.leaseexpiresat).toBeNull();
+		expect(store.getrun(started.run.id)?.status).toBe("completed");
+		expect(store.getrun(started.run.id)?.fence).toBe(initialfence + 1);
 		store.close();
 	});
 
