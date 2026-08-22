@@ -24,7 +24,7 @@ function hash(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
 }
 
-function fixture(root: string, version: string, migration = false): string {
+function fixture(root: string, version: string, migration = false, engine = ">=1.0.0"): string {
 	const source = join(root, `source-${version}`);
 	const processpath = "processes/review.ts";
 	const hookpath = "hooks/audit.ts";
@@ -40,7 +40,7 @@ function fixture(root: string, version: string, migration = false): string {
 			schema: 1,
 			name: "delivery-pack",
 			version,
-			engine: ">=1.0.0",
+			engine,
 			processes: [{ id: "delivery.review", entry: processpath }],
 			hooks: [{ id: "delivery.audit", entry: hookpath }],
 			files: {
@@ -61,6 +61,16 @@ function openblueprints() {
 	const installroot = join(root, "installed");
 	return { root, store, installroot, blueprints: new blueprintservice(store, installroot) };
 }
+
+test("install enforces blueprint minimum engine versions", () => {
+	const { root, store, blueprints } = openblueprints();
+	expect(blueprints.install(fixture(root, "0.9.0", false, ">=0.9.0")).version).toBe("0.9.0");
+	expect(blueprints.install(fixture(root, "1.0.0", false, ">=1.0.0")).version).toBe("1.0.0");
+	expect(() => blueprints.install(fixture(root, "9.0.0", false, ">=999.0.0"))).toThrow(
+		"blueprint delivery-pack@9.0.0 requires engine >=999.0.0, current engine 1.0.0",
+	);
+	store.close();
+});
 
 describe("local blueprint lifecycle", () => {
 	test("install, update, migrate, rollback, pin, and remove are transactional", () => {

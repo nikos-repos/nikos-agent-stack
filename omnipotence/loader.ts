@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { assertenginecompatibility } from "./blueprints.ts";
 import { defineprocess, jsonvalueof, stablejson } from "./contracts.ts";
 import type { jsonschema, jsonvalue, processcontext, processdefinition } from "./contracts.ts";
 import type { orchestrationengine } from "./engine.ts";
@@ -138,6 +139,9 @@ export async function loadactiveblueprints(
 	const required = store
 		.listblueprints()
 		.filter((record) => record.active || pinned.has(`${record.name}@${record.version}`));
+	for (const blueprint of required) {
+		assertenginecompatibility(blueprint.manifest, blueprint.name, blueprint.version);
+	}
 	for (const blueprint of required) {
 		blueprintcount += 1;
 		const manifest = objectrecord(blueprint.manifest, "blueprint.manifest");

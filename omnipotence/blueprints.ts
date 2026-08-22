@@ -1,3 +1,4 @@
+import packagejson from "../package.json" with { type: "json" };
 import { createHash, randomUUID } from "node:crypto";
 import {
 	copyFileSync,
@@ -54,6 +55,7 @@ const manifestfields: Record<string, true> = {
 	profile: true,
 	migrations: true,
 };
+const engineversion = packagejson.version;
 const terminalstates: Record<string, true> = { completed: true, failed: true, halted: true };
 
 function objectrecord(value: jsonvalue, path: string): Record<string, jsonvalue> {
@@ -65,6 +67,18 @@ function stringfield(record: Record<string, jsonvalue>, field: string, path: str
 	const value = record[field];
 	if (typeof value !== "string") throw new TypeError(`${path}.${field}: expected string`);
 	return value;
+}
+
+export function assertenginecompatibility(manifestvalue: jsonvalue, name: string, version: string): void {
+	const manifest = objectrecord(manifestvalue, "blueprint.manifest");
+	const engine = stringfield(manifest, "engine", "blueprint");
+	const minimum = /^>=(\d+\.\d+\.\d+)$/.exec(engine)?.[1];
+	if (!minimum) throw new TypeError("blueprint.engine: expected minimum semantic version");
+	if (compareversions(engineversion, minimum) < 0) {
+		throw new Error(
+			`blueprint ${name}@${version} requires engine ${engine}, current engine ${engineversion}`,
+		);
+	}
 }
 
 function escapesroot(root: string, path: string): boolean {
@@ -192,6 +206,7 @@ export class blueprintservice {
 		const manifest = validatemanifest(parsejson(readFileSync(manifestpath, "utf8"), "blueprint manifest"));
 		const name = stringfield(manifest, "name", "blueprint");
 		const version = stringfield(manifest, "version", "blueprint");
+		assertenginecompatibility(manifest, name, version);
 		const declared = objectrecord(manifest.files, "blueprint.files");
 		const files: Record<string, string> = {};
 		for (const [path, expected] of Object.entries(declared)) {
@@ -232,6 +247,7 @@ export class blueprintservice {
 		}
 		const existing = this.store.getblueprint(inspected.name, inspected.version);
 		if (existing) {
+			assertenginecompatibility(existing.manifest, existing.name, existing.version);
 			if (existing.contenthash !== inspected.contenthash) {
 				throw new Error(`blueprint ${inspected.name}@${inspected.version} content changed`);
 			}
@@ -351,6 +367,7 @@ export class blueprintservice {
 		const index = records.findIndex((record) => record.version === active.version);
 		const previous = records[index - 1];
 		if (!previous) throw new Error(`blueprint ${name}@${active.version} has no previous version`);
+		assertenginecompatibility(previous.manifest, previous.name, previous.version);
 		return this.store.activateblueprint(name, previous.version);
 	}
 
