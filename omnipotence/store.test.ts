@@ -20,7 +20,7 @@ function openstore(): { store: orchestrationstore; path: string } {
 	return { store: new orchestrationstore(path), path };
 }
 
-function createrun(store: orchestrationstore, sessionid = "session-1") {
+function createrun(store: orchestrationstore, sessionid: string | null = "session-1") {
 	return store.createrun({
 		processid: "delivery.review",
 		processversion: "1.0.0",
@@ -220,6 +220,104 @@ describe("authoritative orchestration store", () => {
 		expect(() => store.unbindsession("session-new")).toThrow(
 			`run ${run.id} has dispatched effect ${pending.id}; resolve it before session ownership changes`,
 		);
+		store.close();
+	});
+	test("a dispatched descendant blocks an atomic session rebind", () => {
+		const { store } = openstore();
+		const root = createrun(store, "session-old");
+		const child = createrun(store, null);
+		const nested = createrun(store, null);
+		const rootchild = store.requesteffect(root.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const childnested = store.requesteffect(child.id, {
+			key: "nested",
+			kind: "subprocess",
+			input: { childrunid: nested.id },
+		});
+		const childwork = store.requesteffect(child.id, {
+			key: "work",
+			kind: "task",
+			input: {},
+		});
+		store.markeffectdispatching(child.id, childwork.id, childwork.fence);
+		store.markeffectdispatched(child.id, childwork.id, childwork.fence);
+
+		expect(() => store.bindsession("session-new", root.id)).toThrow(
+			`run ${child.id} has dispatched effect ${childwork.id}; resolve it before session ownership changes`,
+		);
+		expect(store.getrun(root.id)?.fence).toBe(root.fence);
+		expect(store.getrun(child.id)?.fence).toBe(child.fence);
+		expect(store.getrun(nested.id)?.fence).toBe(nested.fence);
+		expect(store.geteffect(root.id, rootchild.id)?.fence).toBe(rootchild.fence);
+		expect(store.geteffect(child.id, childnested.id)?.fence).toBe(childnested.fence);
+		expect(store.geteffect(child.id, childwork.id)?.fence).toBe(childwork.fence);
+		expect(store.getsessionrun("session-old")?.id).toBe(root.id);
+		store.close();
+	});
+
+	test("a safe session rebind refences every owned run and requested effect", () => {
+		const { store } = openstore();
+		const root = createrun(store, "session-old");
+		const child = createrun(store, null);
+		const nested = createrun(store, null);
+		const rootchild = store.requesteffect(root.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const rootwork = store.requesteffect(root.id, {
+			key: "work",
+			kind: "task",
+			input: {},
+		});
+		const childnested = store.requesteffect(child.id, {
+			key: "nested",
+			kind: "subprocess",
+			input: { childrunid: nested.id },
+		});
+		const childwork = store.requesteffect(child.id, {
+			key: "work",
+			kind: "task",
+			input: {},
+		});
+		const nestedwork = store.requesteffect(nested.id, {
+			key: "work",
+			kind: "task",
+			input: {},
+		});
+
+		const rebound = store.bindsession("session-new", root.id);
+		expect(rebound.fence).toBe(root.fence + 1);
+		expect(store.getrun(root.id)?.fence).toBe(root.fence + 1);
+		expect(store.getrun(child.id)?.fence).toBe(child.fence + 1);
+		expect(store.getrun(nested.id)?.fence).toBe(nested.fence + 1);
+		for (const effect of [rootchild, rootwork]) {
+			expect(store.geteffect(root.id, effect.id)?.fence).toBe(root.fence + 1);
+			expect(store.geteffect(root.id, effect.id)?.dispatchingat).toBeNull();
+			expect(store.geteffect(root.id, effect.id)?.dispatchedat).toBeNull();
+		}
+		for (const effect of [childnested, childwork]) {
+			expect(store.geteffect(child.id, effect.id)?.fence).toBe(child.fence + 1);
+			expect(store.geteffect(child.id, effect.id)?.dispatchingat).toBeNull();
+			expect(store.geteffect(child.id, effect.id)?.dispatchedat).toBeNull();
+		}
+		expect(store.geteffect(nested.id, nestedwork.id)?.fence).toBe(nested.fence + 1);
+		expect(store.events(root.id).filter((event) => event.type === "effect_refenced")).toHaveLength(2);
+		expect(store.events(child.id).filter((event) => event.type === "effect_refenced")).toHaveLength(2);
+		expect(store.events(nested.id).filter((event) => event.type === "effect_refenced")).toHaveLength(1);
+		expect(() =>
+			store.posteffect({
+				runid: nested.id,
+				effectid: nestedwork.id,
+				fence: nestedwork.fence,
+				inputhash: nestedwork.inputhash,
+				status: "ok",
+				value: null,
+			}),
+		).toThrow("stale fence");
 		store.close();
 	});
 	test("doctor detects projection drift and repair restores it from events", () => {

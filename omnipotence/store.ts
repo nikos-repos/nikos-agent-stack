@@ -841,32 +841,56 @@ export class orchestrationstore {
 		return run;
 	}
 
+	private ownedrunids(rootrunid: string): string[] {
+		const pending = [rootrunid];
+		const seen = new Set<string>();
+		while (pending.length > 0) {
+			const runid = pending.pop();
+			if (!runid || seen.has(runid)) continue;
+			seen.add(runid);
+			for (const effect of this.listeffects(runid)) {
+				if (effect.kind !== "subprocess") continue;
+				const input = objectvalue(effect.input, `effect ${effect.key} input`);
+				if (typeof input.childrunid === "string") pending.push(input.childrunid);
+			}
+		}
+		return [...seen];
+	}
+
 	private refenceinside(run: runrecord): runrecord {
-		const fence = run.fence + 1;
-		const updatedat = now();
-		const pending = this.listeffects(run.id).filter((effect) => effect.status === "requested");
-		const dispatched = pending.find(
-			(effect) => effect.dispatchedat !== null || effect.dispatchingat !== null,
-		);
-		if (dispatched) {
-			throw new Error(
-				`run ${run.id} has dispatched effect ${dispatched.id}; resolve it before session ownership changes`,
+		const ownedruns = this.ownedrunids(run.id).map((runid) => this.requiredrun(runid));
+		const pending = new Map<string, effectrecord[]>();
+		for (const ownedrun of ownedruns) {
+			const requested = this.listeffects(ownedrun.id).filter((effect) => effect.status === "requested");
+			const dispatched = requested.find(
+				(effect) => effect.dispatchedat !== null || effect.dispatchingat !== null,
 			);
+			if (dispatched) {
+				throw new Error(
+					`run ${ownedrun.id} has dispatched effect ${dispatched.id}; resolve it before session ownership changes`,
+				);
+			}
+			pending.set(ownedrun.id, requested);
 		}
-		this.data.query("update runs set fence = ?, updated_at = ? where id = ?").run(fence, updatedat, run.id);
-		this.data
-			.query(
-				"update effects set fence = ?, dispatched_at = null, dispatching_at = null, updated_at = ? where run_id = ? and status = 'requested'",
-			)
-			.run(fence, updatedat, run.id);
-		for (const effect of pending) {
-			const refenced = this.geteffect(run.id, effect.id);
-			if (!refenced) throw new Error(`effect ${effect.id} disappeared`);
-			this.appendevent(run.id, "effect_refenced", jsonvalueof(refenced));
+
+		const updatedat = now();
+		for (const ownedrun of ownedruns) {
+			const fence = ownedrun.fence + 1;
+			this.data.query("update runs set fence = ?, updated_at = ? where id = ?").run(fence, updatedat, ownedrun.id);
+			this.data
+				.query(
+					"update effects set fence = ?, dispatched_at = null, dispatching_at = null, updated_at = ? where run_id = ? and status = 'requested'",
+				)
+				.run(fence, updatedat, ownedrun.id);
+			for (const effect of pending.get(ownedrun.id) ?? []) {
+				const refenced = this.geteffect(ownedrun.id, effect.id);
+				if (!refenced) throw new Error(`effect ${effect.id} disappeared`);
+				this.appendevent(ownedrun.id, "effect_refenced", jsonvalueof(refenced));
+			}
+			const refenced = this.requiredrun(ownedrun.id);
+			this.appendevent(ownedrun.id, "run_status", jsonvalueof(refenced));
 		}
-		const refenced = this.requiredrun(run.id);
-		this.appendevent(run.id, "run_status", jsonvalueof(refenced));
-		return refenced;
+		return this.requiredrun(run.id);
 	}
 
 	getsessionrun(sessionid: string): runrecord | null {

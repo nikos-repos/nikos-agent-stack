@@ -270,6 +270,82 @@ describe("deterministic process engine", () => {
 		store.close();
 	});
 
+	test("rebinding a root fences every subprocess descendant before stale results", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.fence-leaf",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("leaf-work", {});
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.fence-nested",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("leaf", "delivery.fence-leaf", {});
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.fence-root",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("nested", "delivery.fence-nested", {});
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.fence-root",
+			sessionid: "session-fence-old",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected leaf waiting result");
+		const leaf = started.effects[0]!;
+		const rootchild = store.geteffectbykey(started.run.id, "nested");
+		if (!rootchild) throw new Error("expected root subprocess effect");
+		const child = store
+			.listruns()
+			.find((candidate) => candidate.id !== started.run.id && candidate.id !== leaf.runid);
+		if (!child) throw new Error("expected child run");
+		const childnested = store.geteffectbykey(child.id, "leaf");
+		if (!childnested) throw new Error("expected nested subprocess effect");
+		const nested = store.getrun(leaf.runid);
+		if (!nested) throw new Error("expected nested run");
+
+		store.bindsession("session-fence-new", started.run.id);
+		expect(store.getrun(started.run.id)?.fence).toBe(started.run.fence + 1);
+		expect(store.getrun(child.id)?.fence).toBe(child.fence + 1);
+		expect(store.getrun(nested.id)?.fence).toBe(nested.fence + 1);
+		expect(store.geteffect(started.run.id, rootchild.id)?.fence).toBe(rootchild.fence + 1);
+		expect(store.geteffect(child.id, childnested.id)?.fence).toBe(childnested.fence + 1);
+		expect(store.geteffect(nested.id, leaf.id)?.fence).toBe(leaf.fence + 1);
+		await expect(
+			engine.commiteffect({
+				rootrunid: started.run.id,
+				runid: leaf.runid,
+				effectid: leaf.id,
+				fence: leaf.fence,
+				inputhash: leaf.inputhash,
+				status: "ok",
+				value: { done: true },
+			}),
+		).rejects.toThrow("stale fence");
+		expect(store.geteffect(nested.id, leaf.id)?.status).toBe("requested");
+		store.close();
+	});
 	test("an exhausted turn budget blocks before another effect", async () => {
 		const { store, engine } = openengine();
 		const original = defineprocess({
