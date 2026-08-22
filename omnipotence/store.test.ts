@@ -448,10 +448,14 @@ describe("authoritative orchestration store", () => {
 		expect(store.claimrun(run.id, "new-engine", 60_000)).toBe(epoch + 1);
 		store.close();
 	});
-	test("lease claims stay outside event projection and survive repair", () => {
+	test("lease claims emit durable events and survive repair", () => {
 		const { store } = openstore();
 		const run = createrun(store, null);
 		const epoch = store.claimrun(run.id, "old-engine", 60_000);
+		const events = store.events(run.id);
+		expect(events.map((event) => event.type)).toEqual(["run_created", "lease_claimed"]);
+		expect(events[1]?.payload).toEqual({ runid: run.id, leaseepoch: epoch });
+		expect(events[1]?.previoushash).toBe(events[0]?.hash);
 		expect(store.releaserun(run.id, "old-engine", epoch)).toBe(true);
 
 		expect(store.doctor()).toEqual({ ok: true, issues: [] });
@@ -465,48 +469,32 @@ describe("authoritative orchestration store", () => {
 		expect(store.claimrun(run.id, "new-engine", 60_000)).toBe(epoch + 1);
 		store.close();
 	});
-	test("doctor rejects a projection epoch below the durable event maximum", () => {
-		const { store, path } = openstore();
-		const run = createrun(store, null);
-		store.transitionrun(run.id, "running");
+	test("doctor rejects lowered and raised projection epochs", () => {
+		for (const corruptedepoch of [0, 2]) {
+			const { store, path } = openstore();
+			const run = createrun(store, null);
+			const epoch = store.claimrun(run.id, "old-engine", 60_000);
+			const events = store.events(run.id);
+			expect(events[1]?.type).toBe("lease_claimed");
+			expect(events[1]?.previoushash).toBe(events[0]?.hash);
 
-		const external = new Database(path);
-		const events = external
-			.query("select seq, type, payload_json, previous_hash from events where run_id = ? order by seq")
-			.all(run.id) as Array<{
-			seq: number;
-			type: string;
-			payload_json: string;
-			previous_hash: string | null;
-		}>;
-		if (events.length !== 2) throw new Error("expected run creation and status events");
-		const firstpayload = JSON.parse(events[0].payload_json) as Record<string, unknown>;
-		firstpayload.leaseepoch = 5;
-		const firstpayloadjson = stablejson(firstpayload);
-		const firsthash = createHash("sha256")
-			.update(`${run.id}\n${events[0].seq}\n${events[0].type}\n${firstpayloadjson}\n${events[0].previous_hash ?? ""}`)
-			.digest("hex");
-		external
-			.query("update events set payload_json = ?, hash = ? where run_id = ? and seq = ?")
-			.run(firstpayloadjson, firsthash, run.id, events[0].seq);
-		const second = events[1];
-		const secondhash = createHash("sha256")
-			.update(`${run.id}\n${second.seq}\n${second.type}\n${second.payload_json}\n${firsthash}`)
-			.digest("hex");
-		external
-			.query("update events set previous_hash = ?, hash = ? where run_id = ? and seq = ?")
-			.run(firsthash, secondhash, run.id, second.seq);
-		external.query("update runs set lease_epoch = ? where id = ?").run(2, run.id);
-		external.close();
+			const external = new Database(path);
+			external.query("update runs set lease_epoch = ? where id = ?").run(corruptedepoch, run.id);
+			external.close();
 
-		const report = store.doctor();
-		expect(report.ok).toBe(false);
-		expect(report.issues).toContain(`run ${run.id} projection leaseepoch 2 is below durable event minimum 5`);
+			const report = store.doctor();
+			expect(report.ok).toBe(false);
+			expect(report.issues).toEqual([
+				`run ${run.id} projection leaseepoch ${corruptedepoch} does not match durable claim epoch ${epoch}`,
+			]);
 
-		store.repair();
-		expect(store.getrun(run.id)?.leaseepoch).toBe(5);
-		expect(store.doctor()).toEqual({ ok: true, issues: [] });
-		store.close();
+			store.repair();
+			expect(store.getrun(run.id)?.leaseepoch).toBe(epoch);
+			expect(store.releaserun(run.id, "old-engine", epoch)).toBe(false);
+			expect(store.claimrun(run.id, "new-engine", 60_000)).toBe(epoch + 1);
+			expect(store.doctor()).toEqual({ ok: true, issues: [] });
+			store.close();
+		}
 	});
 
 

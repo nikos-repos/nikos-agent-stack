@@ -717,6 +717,14 @@ export class orchestrationstore {
 					const payload = objectvalue(parsejson(event.payload_json), "event payload");
 					runstatusbyid.set(event.run_id, stringfield(payload, "status", "event payload"));
 				}
+				if (event.type === "lease_claimed") {
+					const payload = objectvalue(parsejson(event.payload_json), "event payload");
+					const runid = stringfield(payload, "runid", "event payload");
+					numberfield(payload, "leaseepoch", "event payload");
+					if (runid !== event.run_id) {
+						issues.push(`run ${event.run_id} event ${event.seq} lease claim run identity mismatch`);
+					}
+				}
 				if (event.type.startsWith("effect_")) {
 					const payload = objectvalue(parsejson(event.payload_json), "event payload");
 					effectstatusbyid.set(
@@ -1697,7 +1705,9 @@ export class orchestrationstore {
 					set lease_owner = ?, lease_epoch = lease_epoch + 1, lease_expires_at = ?
 					where id = ?`)
 				.run(owner, expires, runid);
-			return this.requiredrun(runid).leaseepoch;
+			const claimed = this.requiredrun(runid);
+			this.appendevent(runid, "lease_claimed", { runid, leaseepoch: claimed.leaseepoch });
+			return claimed.leaseepoch;
 		});
 	}
 
@@ -1795,7 +1805,9 @@ export class orchestrationstore {
 			.all() as eventrow[];
 		const previousbyrun = new Map<string, string | null>();
 		const runprojectionbyid = new Map<string, projectionrecord>();
-		const runleaseepochbyid = new Map<string, number>();
+		const runlegacyleaseepochbyid = new Map<string, number>();
+		const runclaimepochbyid = new Map<string, number>();
+		const claimruns = new Set<string>();
 		const effectprojectionbyid = new Map<string, projectionrecord>();
 		for (const row of rows) {
 			const expectedprevious = previousbyrun.get(row.run_id) ?? null;
@@ -1814,11 +1826,20 @@ export class orchestrationstore {
 				const projection = eventrunprojection(payload);
 				runprojectionbyid.set(row.run_id, projection);
 				if (typeof projection.leaseepoch === "number") {
-					runleaseepochbyid.set(
+					runlegacyleaseepochbyid.set(
 						row.run_id,
-						Math.max(runleaseepochbyid.get(row.run_id) ?? 0, projection.leaseepoch),
+						Math.max(runlegacyleaseepochbyid.get(row.run_id) ?? 0, projection.leaseepoch),
 					);
 				}
+			}
+			if (row.type === "lease_claimed") {
+				const runid = stringfield(payload, "runid", "event payload");
+				const leaseepoch = numberfield(payload, "leaseepoch", "event payload");
+				if (runid !== row.run_id) {
+					issues.push(`run ${row.run_id} event ${row.seq} lease claim run identity mismatch`);
+				}
+				claimruns.add(row.run_id);
+				runclaimepochbyid.set(row.run_id, Math.max(runclaimepochbyid.get(row.run_id) ?? 0, leaseepoch));
 			}
 			if (row.type.startsWith("effect_")) {
 				const effectid = stringfield(payload, "id", "event payload");
@@ -1838,8 +1859,16 @@ export class orchestrationstore {
 				continue;
 			}
 			compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
-			const durableleaseepoch = runleaseepochbyid.get(row.id) ?? 0;
-			if (row.lease_epoch < durableleaseepoch) {
+			const durableleaseepoch = claimruns.has(row.id)
+				? runclaimepochbyid.get(row.id) ?? 0
+				: runlegacyleaseepochbyid.get(row.id) ?? 0;
+			if (claimruns.has(row.id)) {
+				if (row.lease_epoch !== durableleaseepoch) {
+					issues.push(
+						`run ${row.id} projection leaseepoch ${row.lease_epoch} does not match durable claim epoch ${durableleaseepoch}`,
+					);
+				}
+			} else if (row.lease_epoch < durableleaseepoch) {
 				issues.push(
 					`run ${row.id} projection leaseepoch ${row.lease_epoch} is below durable event minimum ${durableleaseepoch}`,
 				);
@@ -1954,6 +1983,25 @@ export class orchestrationstore {
 					(row) => [row.id, row.lease_epoch] as const,
 				),
 			);
+			const claimleaseepochs = new Map<string, number>();
+			for (const row of rows) {
+				const payload = objectvalue(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
+				if (row.type === "run_created" || row.type === "run_status") {
+					const id = stringfield(payload, "id", "event payload");
+					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
+					leaseepochs.set(
+						id,
+						Math.max(leaseepochs.get(id) ?? 0, typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0),
+					);
+				}
+				if (row.type === "lease_claimed") {
+					const runid = stringfield(payload, "runid", "event payload");
+					if (runid !== row.run_id) throw new Error(`event ${row.id} lease claim run identity mismatch`);
+					const leaseepoch = numberfield(payload, "leaseepoch", "event payload");
+					claimleaseepochs.set(runid, Math.max(claimleaseepochs.get(runid) ?? 0, leaseepoch));
+				}
+			}
+			for (const [runid, leaseepoch] of claimleaseepochs) leaseepochs.set(runid, leaseepoch);
 			this.data.query("delete from sessions").run();
 			this.data.query("delete from effects").run();
 			this.data.query("delete from runs").run();
@@ -1978,10 +2026,6 @@ export class orchestrationstore {
 					const status = stringfield(payload, "status", "event payload");
 					assertmode(mode);
 					assertstatus(status);
-					leaseepochs.set(
-						id,
-						Math.max(leaseepochs.get(id) ?? 0, typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0),
-					);
 					this.data
 						.query(`insert into runs(
 							id, session_id, process_id, process_version, process_hash,
