@@ -510,4 +510,157 @@ describe("deterministic process engine", () => {
 		expect((await firstadvance).status).toBe("completed");
 		store.close();
 	});
+	test("same-engine advances reject a competing operation before duplicate hooks", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.same-engine-lease",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					await ctx.task("work", {});
+					return { done: true };
+				},
+			}),
+		);
+		const started = await engine.start({
+			processid: "delivery.same-engine-lease",
+			sessionid: "session-same-engine-lease",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const effect = started.effects[0]!;
+		store.posteffect({
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: {},
+		});
+
+		let beforeadvance = 0;
+		const entered = Promise.withResolvers<void>();
+		const release = Promise.withResolvers<void>();
+		engine.hooks.register(
+			definehook({
+				id: "audit.same-engine-lease",
+				version: "1.0.0",
+				phase: "before_advance",
+				timeoutms: 1_000,
+				async run() {
+					beforeadvance += 1;
+					entered.resolve();
+					await release.promise;
+					return null;
+				},
+			}),
+		);
+
+		const first = engine.advance(started.run.id);
+		await entered.promise;
+		const second = engine.advance(started.run.id);
+		release.resolve();
+
+		await expect(second).rejects.toThrow(`run ${started.run.id} is leased by another engine`);
+		const completed = await first;
+		expect(completed.status).toBe("completed");
+		expect(beforeadvance).toBe(1);
+		const terminalevents = store.events(started.run.id).filter(
+			(event) =>
+				event.type === "run_status" &&
+				event.payload !== null &&
+				typeof event.payload === "object" &&
+				!Array.isArray(event.payload) &&
+				"status" in event.payload &&
+				event.payload.status === "completed",
+		);
+		expect(terminalevents).toHaveLength(1);
+		store.close();
+	});
+
+	test("same-engine uncertain recovery runs hooks once while holding the root lease", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.same-engine-recovery",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("work", {});
+				},
+			}),
+		);
+		const started = await engine.start({
+			processid: "delivery.same-engine-recovery",
+			sessionid: "session-same-engine-recovery",
+			mode: "call",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const effect = started.effects[0]!;
+		store.posteffect({
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "uncertain",
+			error: { message: "connection closed after dispatch" },
+		});
+
+		let recoveryhooks = 0;
+		let resolvedhooks = 0;
+		const recoveryentered = Promise.withResolvers<void>();
+		const releaserecovery = Promise.withResolvers<void>();
+		engine.hooks.register(
+			definehook({
+				id: "audit.same-engine-recovery",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 1_000,
+				async run() {
+					recoveryhooks += 1;
+					recoveryentered.resolve();
+					await releaserecovery.promise;
+					return null;
+				},
+			}),
+		);
+		engine.hooks.register(
+			definehook({
+				id: "audit.same-engine-recovery-resolved",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 1_000,
+				async run() {
+					resolvedhooks += 1;
+					return null;
+				},
+			}),
+		);
+
+		const resolution = {
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			decision: "confirm" as const,
+			value: { published: true },
+		};
+		const first = engine.resolveuncertain(resolution);
+		await recoveryentered.promise;
+		const second = engine.resolveuncertain(resolution);
+		releaserecovery.resolve();
+
+		await expect(second).rejects.toThrow(`run ${started.run.id} is leased by another engine`);
+		const completed = await first;
+		expect(completed.status).toBe("completed");
+		expect(recoveryhooks).toBe(1);
+		expect(resolvedhooks).toBe(1);
+		store.close();
+	});
 });

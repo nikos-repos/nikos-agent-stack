@@ -144,8 +144,22 @@ export class orchestrationengine {
 	readonly store: orchestrationstore;
 	readonly hooks: hookregistry;
 	private readonly processes = new Map<string, Readonly<processdefinition>>();
-	private readonly leaseowner = `${process.pid}:${randomUUID()}`;
+	private operationowner(): string {
+		return `${process.pid}:${randomUUID()}`;
+	}
 
+	private async withrootlease<result>(
+		runid: string,
+		operation: (owner: string, epoch: number) => Promise<result>,
+	): Promise<result> {
+		const owner = this.operationowner();
+		const epoch = this.store.claimrun(runid, owner);
+		try {
+			return await operation(owner, epoch);
+		} finally {
+			this.store.releaserun(runid, owner, epoch);
+		}
+	}
 	constructor(store: orchestrationstore, hooks = new hookregistry()) {
 		this.store = store;
 		this.hooks = hooks;
@@ -570,13 +584,7 @@ export class orchestrationengine {
 	}
 
 	async advance(runid: string): Promise<advanceresult> {
-		const epoch = this.store.claimrun(runid, this.leaseowner);
-		let result: advanceresult;
-		try {
-			result = await this.advanceclaimed(runid);
-		} finally {
-			this.store.releaserun(runid, this.leaseowner, epoch);
-		}
+		const result = await this.withrootlease(runid, async () => this.advanceclaimed(runid));
 		const current = this.store.getrun(runid);
 		if (!current) throw new Error(`run ${runid} does not exist`);
 		result.run = current;
@@ -668,13 +676,9 @@ export class orchestrationengine {
 	}
 
 	async commiteffect(post: enginepost): Promise<effectcommit> {
-		const epoch = this.store.claimrun(post.rootrunid, this.leaseowner);
-		let result: effectcommit;
-		try {
-			result = await this.commiteffectclaimed(post);
-		} finally {
-			this.store.releaserun(post.rootrunid, this.leaseowner, epoch);
-		}
+		const result = await this.withrootlease(post.rootrunid, async () =>
+			this.commiteffectclaimed(post),
+		);
 		const current = this.store.getrun(post.rootrunid);
 		if (!current) throw new Error(`run ${post.rootrunid} does not exist`);
 		result.run = current;
@@ -715,8 +719,8 @@ export class orchestrationengine {
 		return { status: duplicate ? "duplicate" : "committed", run, effect };
 	}
 
-	async posteffect(post: enginepost): Promise<advanceresult> {
-		const committed = await this.commiteffect(post);
+	private async posteffectclaimed(post: enginepost): Promise<advanceresult> {
+		const committed = await this.commiteffectclaimed(post);
 		if (committed.status === "blocked") {
 			return {
 				status: "blocked",
@@ -724,10 +728,19 @@ export class orchestrationengine {
 				reason: committed.reason ?? "run blocked",
 			};
 		}
-		return this.advance(post.rootrunid);
+		const result = await this.advanceclaimed(post.rootrunid);
+		return result;
 	}
 
-	async resume(runid: string, response?: jsonvalue): Promise<advanceresult> {
+	async posteffect(post: enginepost): Promise<advanceresult> {
+		const result = await this.withrootlease(post.rootrunid, async () => this.posteffectclaimed(post));
+		const current = this.store.getrun(post.rootrunid);
+		if (!current) throw new Error(`run ${post.rootrunid} does not exist`);
+		result.run = current;
+		return result;
+	}
+
+	private async resumeclaimed(runid: string, response?: jsonvalue): Promise<advanceresult> {
 		const run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);
 		const terminal = terminalresult(run);
@@ -746,7 +759,7 @@ export class orchestrationengine {
 			const breakpoint = breakpoints[0];
 			if (!breakpoint) throw new Error(`run ${runid} has no pending breakpoint`);
 			if (response === undefined) throw new Error(`run ${runid} requires a breakpoint response`);
-			return this.posteffect({
+			return this.posteffectclaimed({
 				rootrunid: runid,
 				runid: breakpoint.runid,
 				effectid: breakpoint.id,
@@ -763,58 +776,72 @@ export class orchestrationengine {
 			}
 			this.store.transitionrun(runid, "running");
 		}
-		return this.advance(runid);
+		return this.advanceclaimed(runid);
+	}
+
+	async resume(runid: string, response?: jsonvalue): Promise<advanceresult> {
+		const result = await this.withrootlease(runid, async () => this.resumeclaimed(runid, response));
+		const current = this.store.getrun(runid);
+		if (!current) throw new Error(`run ${runid} does not exist`);
+		result.run = current;
+		return result;
 	}
 
 	async resolveuncertain(resolution: engineresolution): Promise<advanceresult> {
-		if (!this.ownsrun(resolution.rootrunid, resolution.runid)) {
-			throw new Error(
-				`effect run ${resolution.runid} is not owned by root run ${resolution.rootrunid}`,
-			);
-		}
-		const targetrun = this.store.getrun(resolution.runid);
-		if (!targetrun) throw new Error(`run ${resolution.runid} does not exist`);
-		if (targetrun.fence !== resolution.fence) {
-			throw new Error(`stale fence ${resolution.fence}; current fence is ${targetrun.fence}`);
-		}
-		const effect = this.store.geteffect(resolution.runid, resolution.effectid);
-		if (!effect) throw new Error(`effect ${resolution.effectid} does not exist`);
-		if (effect.status !== "uncertain") throw new Error(`effect ${effect.id} is not uncertain`);
-		if (effect.fence !== resolution.fence) {
-			throw new Error(`stale effect fence ${effect.fence}; current fence is ${resolution.fence}`);
-		}
-		if (effect.inputhash !== resolution.inputhash) {
-			throw new Error(`effect ${effect.id} input hash mismatch`);
-		}
-		const root = this.store.getrun(resolution.rootrunid);
-		if (!root) throw new Error(`run ${resolution.rootrunid} does not exist`);
-		try {
-			await this.dispatchphase(resolution.rootrunid, "recovery", {
-				runid: resolution.runid,
-				effectid: resolution.effectid,
-				decision: resolution.decision,
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return this.block(resolution.rootrunid, message);
-		}
-		if (root.turns >= root.maxturns) {
-			this.store.extendturnbudget(
-				root.id,
-				Math.max(1, root.turns + 1 - root.maxturns),
-			);
-		}
-		const resolved = this.store.resolveuncertain(resolution);
-		try {
-			await this.dispatchphase(resolution.runid, "effect_resolved", {
-				runid: resolution.runid,
-				effectid: resolution.effectid,
-				status: resolved.status,
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			return this.block(resolution.rootrunid, message);
-		}
-		return this.advance(resolution.rootrunid);
+		const result = await this.withrootlease(resolution.rootrunid, async () => {
+			if (!this.ownsrun(resolution.rootrunid, resolution.runid)) {
+				throw new Error(
+					`effect run ${resolution.runid} is not owned by root run ${resolution.rootrunid}`,
+				);
+			}
+			const targetrun = this.store.getrun(resolution.runid);
+			if (!targetrun) throw new Error(`run ${resolution.runid} does not exist`);
+			if (targetrun.fence !== resolution.fence) {
+				throw new Error(`stale fence ${resolution.fence}; current fence is ${targetrun.fence}`);
+			}
+			const effect = this.store.geteffect(resolution.runid, resolution.effectid);
+			if (!effect) throw new Error(`effect ${resolution.effectid} does not exist`);
+			if (effect.status !== "uncertain") throw new Error(`effect ${effect.id} is not uncertain`);
+			if (effect.fence !== resolution.fence) {
+				throw new Error(`stale effect fence ${effect.fence}; current fence is ${resolution.fence}`);
+			}
+			if (effect.inputhash !== resolution.inputhash) {
+				throw new Error(`effect ${effect.id} input hash mismatch`);
+			}
+			const root = this.store.getrun(resolution.rootrunid);
+			if (!root) throw new Error(`run ${resolution.rootrunid} does not exist`);
+			try {
+				await this.dispatchphase(resolution.rootrunid, "recovery", {
+					runid: resolution.runid,
+					effectid: resolution.effectid,
+					decision: resolution.decision,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return this.block(resolution.rootrunid, message);
+			}
+			if (root.turns >= root.maxturns) {
+				this.store.extendturnbudget(
+					root.id,
+					Math.max(1, root.turns + 1 - root.maxturns),
+				);
+			}
+			const resolved = this.store.resolveuncertain(resolution);
+			try {
+				await this.dispatchphase(resolution.runid, "effect_resolved", {
+					runid: resolution.runid,
+					effectid: resolution.effectid,
+					status: resolved.status,
+				});
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				return this.block(resolution.rootrunid, message);
+			}
+			return this.advanceclaimed(resolution.rootrunid);
+		});
+		const current = this.store.getrun(resolution.rootrunid);
+		if (!current) throw new Error(`run ${resolution.rootrunid} does not exist`);
+		result.run = current;
+		return result;
 	}
 }
