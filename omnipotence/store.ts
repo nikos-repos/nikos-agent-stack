@@ -425,7 +425,6 @@ const runprojectionfields = [
 	"maxturns",
 	"turns",
 	"fence",
-	"leaseepoch",
 	"createdat",
 	"updatedat",
 ] as const;
@@ -1903,6 +1902,11 @@ export class orchestrationstore {
 			const rows = this.data
 				.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by id")
 				.all() as eventrow[];
+			const leaseepochs = new Map(
+				(this.data.query("select id, lease_epoch from runs").all() as Array<{ id: string; lease_epoch: number }>).map(
+					(row) => [row.id, row.lease_epoch] as const,
+				),
+			);
 			this.data.query("delete from sessions").run();
 			this.data.query("delete from effects").run();
 			this.data.query("delete from runs").run();
@@ -1978,7 +1982,10 @@ export class orchestrationstore {
 							numberfield(payload, "turns", "event payload"),
 							numberfield(payload, "fence", "event payload"),
 							null,
-							typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0,
+							Math.max(
+								typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0,
+								leaseepochs.get(id) ?? 0,
+							),
 							null,
 							stringfield(payload, "createdat", "event payload"),
 							stringfield(payload, "updatedat", "event payload"),

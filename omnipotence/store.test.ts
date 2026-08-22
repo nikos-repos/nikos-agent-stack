@@ -405,6 +405,23 @@ describe("authoritative orchestration store", () => {
 		expect(store.claimrun(run.id, "new-engine", 60_000)).toBe(epoch + 1);
 		store.close();
 	});
+	test("lease claims stay outside event projection and survive repair", () => {
+		const { store } = openstore();
+		const run = createrun(store, null);
+		const epoch = store.claimrun(run.id, "old-engine", 60_000);
+		expect(store.releaserun(run.id, "old-engine", epoch)).toBe(true);
+
+		expect(store.doctor()).toEqual({ ok: true, issues: [] });
+
+		store.repair();
+		expect(store.getrun(run.id)).toMatchObject({
+			leaseowner: null,
+			leaseexpiresat: null,
+			leaseepoch: epoch,
+		});
+		expect(store.claimrun(run.id, "new-engine", 60_000)).toBe(epoch + 1);
+		store.close();
+	});
 
 	test("doctor detects session binding disagreement", () => {
 		const { store, path } = openstore();
