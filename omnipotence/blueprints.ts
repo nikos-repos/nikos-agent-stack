@@ -389,11 +389,12 @@ export class blueprintservice {
 		const remaining = this.list(name)
 			.filter((entry) => entry.version !== version)
 			.sort((left, right) => compareversions(left.version, right.version));
-		const replacement = record.active ? remaining.at(-1)?.version : undefined;
+		const replacement = record.active ? remaining.at(-1) : undefined;
+		if (replacement) assertenginecompatibility(replacement.manifest, replacement.name, replacement.version);
 		const tomb = `${record.installpath}.remove-${randomUUID()}`;
 		if (existsSync(record.installpath)) renameSync(record.installpath, tomb);
 		try {
-			if (!this.store.deleteblueprint(name, version, replacement)) {
+			if (!this.store.deleteblueprint(name, version, replacement?.version)) {
 				throw new Error(`blueprint ${name}@${version} disappeared`);
 			}
 			rmSync(tomb, { recursive: true, force: true });

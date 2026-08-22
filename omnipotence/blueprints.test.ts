@@ -114,6 +114,27 @@ describe("local blueprint lifecycle", () => {
 		expect(blueprints.active("delivery-pack")?.version).toBe("2.0.0");
 		store.close();
 	});
+	test("remove rejects an incompatible replacement before mutating active state", () => {
+		const { root, store, blueprints } = openblueprints();
+		const legacy = blueprints.install(fixture(root, "1.0.0"));
+		const active = blueprints.install(fixture(root, "2.0.0"));
+		const manifestpath = join(legacy.installpath, "omnipotence.blueprint.json");
+		const manifest = JSON.parse(readFileSync(manifestpath, "utf8")) as Record<string, unknown>;
+		manifest.engine = ">=999.0.0";
+		writeFileSync(manifestpath, JSON.stringify(manifest));
+		store.writeblueprint({ ...legacy, manifest, active: false });
+
+		expect(() => blueprints.remove("delivery-pack", active.version)).toThrow(
+			"blueprint delivery-pack@1.0.0 requires engine >=999.0.0, current engine 1.0.0",
+		);
+		expect(blueprints.active("delivery-pack")?.version).toBe(active.version);
+		expect(existsSync(active.installpath)).toBe(true);
+		expect(readFileSync(join(active.installpath, "processes/review.ts"), "utf8")).toContain(
+			'version = "2.0.0"',
+		);
+		store.close();
+	});
+
 	test("rollback selects the previous prerelease before its stable release", () => {
 		const { root, store, blueprints } = openblueprints();
 		blueprints.install(fixture(root, "1.0.0-rc.1"));
