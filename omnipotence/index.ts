@@ -338,14 +338,12 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	pi.registerCommand("omnipotence-status", {
 		description: "show the active native orchestration run",
 		async handler(_args: unknown, context: extensioncontext) {
-			await ensureloaded();
 			notify(context, store.getsessionrun(sessionid(context)) ?? { status: "inactive" });
 		},
 	});
 	pi.registerCommand("omnipotence-stop", {
 		description: "halt the active native orchestration run",
 		async handler(args: unknown, context: extensioncontext) {
-			await ensureloaded();
 			const run = store.getsessionrun(sessionid(context));
 			if (!run) throw new Error("this session has no active omnipotence run");
 			const reason = String(args ?? "").trim() || "halted by user";

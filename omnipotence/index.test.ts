@@ -121,7 +121,7 @@ async function fire(
 	return result;
 }
 
-function context(sessionid: string, root: string) {
+function context(sessionid: string, root: string, notifications: unknown[] = []) {
 	return {
 		cwd: root,
 		hasUI: false,
@@ -130,7 +130,11 @@ function context(sessionid: string, root: string) {
 				return sessionid;
 			},
 		},
-		ui: { notify() {} },
+		ui: {
+			notify(value: unknown) {
+				notifications.push(value);
+			},
+		},
 	};
 }
 
@@ -199,6 +203,61 @@ describe("omnipotence omp extension", () => {
 		expect(halted?.blockedreason).toBe(reason);
 		expect(halted?.fence).toBe(run.fence + 1);
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+		store.close();
+	});
+
+	test("registered status and stop survive a corrupt active blueprint", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-corrupt-controls-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const first = fakepi();
+		Reflect.apply(activate, undefined, [first.api]);
+		const owner = context("session-corrupt-controls", root);
+		const start = first.commands.get("omnipotence");
+		if (!start) throw new Error("omnipotence command was not registered");
+		await start.handler("delivery.extension {}", owner);
+		await fire(first.handlers, "session_shutdown", { type: "session_shutdown" }, owner);
+
+		writeFileSync(
+			join(paths.blueprintroot, "extension-pack", "1.0.0", "processes/extension.ts"),
+			"export default null;\n",
+		);
+
+		const second = fakepi();
+		Reflect.apply(activate, undefined, [second.api]);
+		const notifications: unknown[] = [];
+		const context2 = context("session-corrupt-controls", root, notifications);
+		const status = second.commands.get("omnipotence-status");
+		const stop = second.commands.get("omnipotence-stop");
+		const start2 = second.commands.get("omnipotence");
+		if (!status || !stop || !start2) throw new Error("omnipotence controls were not registered");
+		const store = new orchestrationstore(paths.dbpath);
+		const active = store.getsessionrun("session-corrupt-controls");
+		if (!active) throw new Error("expected active corrupt-blueprint run");
+
+		await expect(status.handler("", context2)).resolves.toBeUndefined();
+		expect(JSON.parse(String(notifications.at(-1)))).toMatchObject({
+			id: active.id,
+			status: active.status,
+		});
+
+		const reason = "operator requested stop";
+		await expect(stop.handler(reason, context2)).resolves.toBeUndefined();
+		expect(store.getrun(active.id)).toMatchObject({
+			status: "halted",
+			blockedreason: reason,
+		});
+
+		notifications.length = 0;
+		await expect(status.handler("", context2)).resolves.toBeUndefined();
+		expect(JSON.parse(String(notifications.at(-1)))).toEqual({ status: "inactive" });
+		await expect(start2.handler("delivery.extension {}", context2)).rejects.toThrow(
+			"blueprint extension-pack@1.0.0 file processes/extension.ts hash mismatch",
+		);
+
+		await fire(second.handlers, "session_shutdown", { type: "session_shutdown" }, context2);
 		store.close();
 	});
 
