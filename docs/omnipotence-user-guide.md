@@ -77,7 +77,7 @@ available process primitives:
 - `subprocess` runs a pinned child process and returns its output.
 - `sleep` records a deadline and resumes safely.
 - `breakpoint` waits for explicit user input.
-- `hook` calls one trusted in-process hook.
+- `hook` calls one registered in-process hook.
 - `halt` ends intentionally without a success result.
 
 source: `omnipotence/contracts.ts` and `omnipotence/engine.ts`.

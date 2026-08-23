@@ -83,7 +83,7 @@ omnipotence is a native durable workflow engine for omp. it runs one schema-vali
 features:
 
 - **deterministic process runtime** — stable process ids, semantic versions, input and output schemas, finite turn budgets, source-drift detection, and replay from committed state.
-- **effect primitives** — tasks, bounded parallel groups, pinned subprocesses, durable sleep, user breakpoints, trusted hooks, and intentional halt.
+- **effect primitives** — tasks, bounded parallel groups, pinned subprocesses, durable sleep, user breakpoints, registered hooks, and intentional halt.
 - **native execution modes** — `babysit`, `call`, `plan`, `yolo`, `forever`, and explicit resume use one engine with mode-specific execution and breakpoint policy.
 - **durable recovery** — sqlite events and projections, idempotent result posts, input hashes, lease epochs, fencing, explicit uncertain-effect resolution, doctor, backup, and repair.
 - **tree and session safety** — session-bound result ownership, atomic start reservation, root-tree operation leases, complete-tree re-fencing, child-first halt, and lease-consistent result snapshots.
