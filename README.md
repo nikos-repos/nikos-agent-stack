@@ -78,7 +78,20 @@ uninstall removes the plugin, but it does not remove the user `WATCHDOG.yml` or 
 
 ## omnipotence
 
-omnipotence replaces prompt-forwarded babysitter invocation with a native omp lifecycle loop. install a local blueprint, then start one process:
+omnipotence is a native durable workflow engine for omp. it runs one schema-validated, versioned process as a replayable sequence of committed effects instead of forwarding prompts to a separate orchestrator.
+
+features:
+
+- **deterministic process runtime** — stable process ids, semantic versions, input and output schemas, finite turn budgets, source-drift detection, and replay from committed state.
+- **effect primitives** — tasks, bounded parallel groups, pinned subprocesses, durable sleep, user breakpoints, trusted hooks, and intentional halt.
+- **native execution modes** — `babysit`, `call`, `plan`, `yolo`, `forever`, and explicit resume use one engine with mode-specific execution and breakpoint policy.
+- **durable recovery** — sqlite events and projections, idempotent result posts, input hashes, lease epochs, fencing, explicit uncertain-effect resolution, doctor, backup, and repair.
+- **tree and session safety** — session-bound result ownership, atomic start reservation, root-tree operation leases, complete-tree re-fencing, child-first halt, and lease-consistent result snapshots.
+- **hooks and profiles** — ordered lifecycle hooks with timeouts and retryable resolved-effect delivery, plus versioned user and project profiles merged through json merge patch.
+- **local blueprints** — hash-verified local packages, side-by-side semantic versions, minimum engine checks, pinned active runs, update, rollback, and guarded removal.
+- **operator surfaces** — omp commands and a standalone cli with human or json output, dry-run support for mutations, process planning, run and effect inspection, session controls, and recovery commands.
+
+install a local blueprint, then start one process:
 
 ```sh
 omnipotence --dry-run blueprint install ./delivery-pack
@@ -90,11 +103,9 @@ omnipotence blueprint install ./delivery-pack
 /omnipotence-status
 ```
 
-gate-checker remains the first `session_stop` handler. after a gate accepts the turn, omnipotence schedules the next committed effect through omp's hidden next-turn api. active-run failures block once; sessions without an active run receive no orchestration block.
+gate-checker remains the first `session_stop` handler. after a gate accepts the turn, omnipotence schedules the next committed effect through omp's hidden next-turn api. active-run failures block once; sessions without an active run receive no omnipotence block.
 
-the engine provides versioned process definitions, task and parallel effects, subprocesses, sleep, breakpoints, hooks, profile layering, local blueprints, event replay, fencing, uncertain-effect recovery, doctor, and repair. it preserves behavior rather than the babysitter api or cli.
-
-see the [omnipotence user guide](docs/omnipotence-user-guide.md) for process and blueprint authoring, commands, state, recovery, safety, and migration.
+see the [omnipotence user guide](docs/omnipotence-user-guide.md) for process and blueprint authoring, modes, hooks, profiles, commands, state, recovery, and safety.
 
 ## gates
 
