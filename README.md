@@ -73,8 +73,16 @@ after `/advisor-install`, restart omp:
 
 ## update
 
+the existing omp command updates the omp extensions:
+
 ```sh
 omp plugin install nikos-agent-stack@latest
+```
+
+if you installed `nikos-gates` or `omnipotence` globally with bun, update those global cli shims separately:
+
+```sh
+bun add --global nikos-agent-stack@latest
 ```
 
 then run `/advisor-install` in an omp session and restart the session.
