@@ -162,6 +162,22 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			runstatus: result.run.status,
 		});
 	};
+	const stale = (result: advanceresult): boolean =>
+		closed || (!terminal(result) && terminalstatus(store.getrun(result.run.id)?.status));
+	const blockrun = (runid: string, reason: string) => {
+		let run = store.getrun(runid);
+		if (!run || terminalstatus(run.status)) return null;
+		if (run.status !== "blocked") {
+			try {
+				run = store.transitionrun(run.id, "blocked", null, reason);
+			} catch (error) {
+				const current = store.getrun(runid);
+				if (!current || terminalstatus(current.status)) return null;
+				throw error;
+			}
+		}
+		return run;
+	};
 
 	async function schedulesleep(rootrunid: string, effect: effectrecord): Promise<boolean> {
 		if (closed || sleeptimers.has(effect.id)) return false;
@@ -203,9 +219,8 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			} catch (error) {
 				if (closed) return;
 				const message = error instanceof Error ? error.message : String(error);
-				const run = store.getrun(rootrunid);
-				if (run && !terminalstatus(run.status)) {
-					const blocked = store.transitionrun(rootrunid, "blocked", null, message);
+				const blocked = blockrun(rootrunid, message);
+				if (blocked) {
 					pi.appendEntry(stateentry, { runid: blocked.id, status: blocked.status });
 				}
 			}
@@ -252,17 +267,8 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		if (external.length > 0) {
 			const claimed: effectrecord[] = [];
 			const blockdispatch = (reason: string): boolean => {
-				let run = store.getrun(result.run.id);
-				if (!run || terminalstatus(run.status)) return false;
-				if (run.status !== "blocked") {
-					try {
-						run = store.transitionrun(run.id, "blocked", null, reason);
-					} catch (error) {
-						const current = store.getrun(run.id);
-						if (!current || terminalstatus(current.status)) return false;
-						throw error;
-					}
-				}
+				const run = blockrun(result.run.id, reason);
+				if (!run) return false;
 				appendstate({ status: "blocked", run, reason: run.blockedreason ?? reason });
 				return true;
 			};
@@ -346,7 +352,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				projectprofileversion: profile.projectprofileversion,
 			});
 			await schedule(result);
-			notify(context, result);
+			if (!stale(result)) notify(context, result);
 		};
 
 	pi.registerCommand("omnipotence", {
@@ -373,7 +379,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const text = String(args ?? "").trim();
 			const result = await engine.resume(run.id, text ? parsejson(text, "resume input") : undefined);
 			await schedule(result);
-			notify(context, result);
+			if (!stale(result)) notify(context, result);
 		},
 	});
 	pi.registerCommand("omnipotence-status", {
@@ -458,6 +464,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				};
 			}
 			if (await schedule(result)) return;
+			if (stale(result)) return;
 			if (event.stop_hook_active) return;
 			const missing = result.effects.find(
 				(effect) => effect.status === "requested" && effect.kind !== "sleep" && effect.kind !== "breakpoint",

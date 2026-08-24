@@ -517,6 +517,121 @@ describe("omnipotence omp extension", () => {
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
+	test("a hidden-turn send failure after concurrent terminalization preserves the terminal outcome", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-send-terminal-race-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		let terminalrunid = "";
+		const fake = fakepi(() => {
+			const concurrent = new orchestrationstore(paths.dbpath);
+			const active = concurrent.getsessionrun("session-send-terminal-race");
+			if (!active) {
+				concurrent.close();
+				throw new Error("expected active run during hidden-turn send");
+			}
+			terminalrunid = active.id;
+			try {
+				concurrent.transitionrun(active.id, "halted", { preserved: true }, "concurrent terminal");
+			} finally {
+				concurrent.close();
+			}
+			throw new Error("client rejected hidden turn after terminalization");
+		});
+		Reflect.apply(activate, undefined, [fake.api]);
+		const notifications: unknown[] = [];
+		const ctx = context("session-send-terminal-race", root, notifications);
+		const command = fake.commands.get("omnipotence");
+		if (!command) throw new Error("omnipotence command was not registered");
+		await expect(command.handler("delivery.extension {}", ctx)).resolves.toBeUndefined();
+		expect(fake.messages).toEqual([]);
+		expect(notifications).toEqual([]);
+		const store = new orchestrationstore(paths.dbpath);
+		const run = store.getrun(terminalrunid);
+		expect(run).toMatchObject({
+			status: "halted",
+			output: { preserved: true },
+			blockedreason: "concurrent terminal",
+		});
+		expect(run?.status).not.toBe("blocked");
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+		store.close();
+	});
+	test("session_stop ignores a stale waiting result after concurrent terminalization", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-stop-terminal-race-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		let sendcount = 0;
+		let terminalrunid = "";
+		const fake = fakepi(() => {
+			sendcount += 1;
+			if (sendcount !== 2) return;
+			const concurrent = new orchestrationstore(paths.dbpath);
+			const active = concurrent.getsessionrun("session-stop-terminal-race");
+			if (!active) {
+				concurrent.close();
+				throw new Error("expected active run during session_stop hidden-turn send");
+			}
+			terminalrunid = active.id;
+			try {
+				concurrent.transitionrun(active.id, "halted", { preserved: true }, "concurrent terminal");
+			} finally {
+				concurrent.close();
+			}
+			throw new Error("client rejected hidden turn after terminalization");
+		});
+		Reflect.apply(activate, undefined, [fake.api]);
+		const ctx = context("session-stop-terminal-race", root);
+		const command = fake.commands.get("omnipotence");
+		if (!command) throw new Error("omnipotence command was not registered");
+		await command.handler("delivery.extension {}", ctx);
+		const store = new orchestrationstore(paths.dbpath);
+		const run = store.getsessionrun("session-stop-terminal-race");
+		if (!run) throw new Error("expected active run");
+		const first = store.geteffectbykey(run.id, "first");
+		if (!first) throw new Error("expected first effect");
+		const tool = fake.tools.get("omnipotence_result");
+		if (!tool) throw new Error("result tool was not registered");
+		await tool.execute(
+			"stop-first",
+			{
+				rootrunid: run.id,
+				runid: run.id,
+				effectid: first.id,
+				fence: first.fence,
+				inputhash: first.inputhash,
+				status: "ok",
+				value: { first: true },
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		const stopresult = await fire(
+			fake.handlers,
+			"session_stop",
+			{ type: "session_stop", stop_hook_active: false },
+			ctx,
+		);
+		expect(stopresult).toBeUndefined();
+		expect(sendcount).toBe(2);
+		expect(fake.messages).toHaveLength(1);
+		const terminal = store.getrun(terminalrunid);
+		expect(terminal?.status).toBe("halted");
+		expect(terminal?.blockedreason).toBe("concurrent terminal");
+		expect(terminal?.output).toEqual({ preserved: true });
+		expect(fake.entries).not.toContainEqual(
+			expect.objectContaining({
+				type: "nikos-agent-stack.omnipotence.state",
+				data: expect.objectContaining({ status: "blocked" }),
+			}),
+		);
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+		store.close();
+	});
 
 	test("a future sleep wakes without a model effect turn", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-sleep-"));
