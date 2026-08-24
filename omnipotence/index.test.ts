@@ -655,4 +655,150 @@ describe("omnipotence omp extension", () => {
 		await fire(second.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
+	test("concurrent session recovery claims safe dispatch once", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-restart-concurrent-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const first = fakepi();
+		Reflect.apply(activate, undefined, [first.api]);
+		const owner = context("session-restart-concurrent", root);
+		const start = first.commands.get("omnipotence-forever");
+		if (!start) throw new Error("omnipotence-forever command was not registered");
+		await start.handler("delivery.forever {}", owner);
+		const before = new orchestrationstore(paths.dbpath);
+		const run = before.getsessionrun("session-restart-concurrent");
+		if (!run) throw new Error("expected concurrent recovery run");
+		const effect = before.geteffectbykey(run.id, "first");
+		if (!effect) throw new Error("expected concurrent recovery effect");
+		before.reverteffectdispatch(run.id, effect.id, effect.fence);
+		expect(before.geteffect(run.id, effect.id)).toMatchObject({
+			status: "requested",
+			dispatchingat: null,
+			dispatchedat: null,
+		});
+		const startedbefore = before.events(run.id).filter((entry) => entry.type === "effect_dispatch_started").length;
+		const dispatchedbefore = before.events(run.id).filter((entry) => entry.type === "effect_dispatched").length;
+		before.close();
+		await fire(first.handlers, "session_shutdown", { type: "session_shutdown" }, owner);
+
+		const second = fakepi();
+		const third = fakepi();
+		Reflect.apply(activate, undefined, [second.api]);
+		Reflect.apply(activate, undefined, [third.api]);
+		const restored = context("session-restart-concurrent", root);
+		expect(
+			await Promise.all([
+				fire(second.handlers, "session_start", { type: "session_start" }, restored),
+				fire(third.handlers, "session_start", { type: "session_start" }, restored),
+			]),
+		).toEqual([undefined, undefined]);
+
+		const messages = [...second.messages, ...third.messages];
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.options).toEqual({ deliverAs: "nextTurn", triggerTurn: true });
+		expect(messages[0]?.message).toMatchObject({
+			customType: "nikos-agent-stack.omnipotence.effect",
+			display: false,
+			details: { runid: run.id, effectids: [effect.id] },
+		});
+		const after = new orchestrationstore(paths.dbpath);
+		const recovered = after.getrun(run.id);
+		expect(recovered?.status).not.toBe("blocked");
+		expect(after.geteffect(run.id, effect.id)).toMatchObject({
+			status: "requested",
+			dispatchingat: null,
+		});
+		expect(after.geteffect(run.id, effect.id)?.dispatchedat).not.toBeNull();
+		expect(after.events(run.id).filter((entry) => entry.type === "effect_dispatch_started")).toHaveLength(
+			startedbefore + 1,
+		);
+		expect(after.events(run.id).filter((entry) => entry.type === "effect_dispatched")).toHaveLength(
+			dispatchedbefore + 1,
+		);
+		await fire(second.handlers, "session_shutdown", { type: "session_shutdown" }, restored);
+		await fire(third.handlers, "session_shutdown", { type: "session_shutdown" }, restored);
+		after.close();
+	});
+
+	test("a restarted forever sleep re-arms its durable deadline", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-sleep-restart-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const first = fakepi();
+		Reflect.apply(activate, undefined, [first.api]);
+		const owner = context("session-sleep-restart", root);
+		const start = first.commands.get("omnipotence-forever");
+		if (!start) throw new Error("omnipotence-forever command was not registered");
+		const until = new Date(Date.now() + 500).toISOString();
+		await start.handler(`delivery.sleep ${JSON.stringify({ until })}`, owner);
+		expect(first.messages).toEqual([]);
+		await fire(first.handlers, "session_shutdown", { type: "session_shutdown" }, owner);
+		const before = new orchestrationstore(paths.dbpath);
+		const run = before.getsessionrun("session-sleep-restart");
+		if (!run) throw new Error("expected sleep restart run");
+		expect(run.mode).toBe("forever");
+		const effect = before.geteffectbykey(run.id, "pause");
+		if (!effect) throw new Error("expected sleep restart effect");
+		expect(effect.kind).toBe("sleep");
+		expect(effect.dispatchedat).not.toBeNull();
+		before.close();
+
+		const completed = Promise.withResolvers<void>();
+		const second = fakepi(undefined, (_type, data) => {
+			if (data && typeof data === "object" && "status" in data && data.status === "completed") {
+				completed.resolve();
+			}
+		});
+		Reflect.apply(activate, undefined, [second.api]);
+		const restored = context("session-sleep-restart", root);
+		await fire(second.handlers, "session_start", { type: "session_start" }, restored);
+		expect(second.messages).toEqual([]);
+		await completed.promise;
+		expect(second.messages).toEqual([]);
+		const after = new orchestrationstore(paths.dbpath);
+		expect(after.getrun(run.id)).toMatchObject({ status: "completed", mode: "forever", output: { done: true } });
+		expect(after.geteffect(run.id, effect.id)).toMatchObject({ kind: "sleep", status: "resolved_ok" });
+		expect(after.getsessionrun("session-sleep-restart")).toBeNull();
+		await fire(second.handlers, "session_shutdown", { type: "session_shutdown" }, restored);
+		after.close();
+	});
+
+	test("immediate shutdown near a sleep deadline leaves no uncaught work", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-sleep-shutdown-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const ctx = context("session-sleep-shutdown", root);
+		const start = fake.commands.get("omnipotence-forever");
+		if (!start) throw new Error("omnipotence-forever command was not registered");
+		const until = new Date(Date.now() + 500).toISOString();
+		await start.handler(`delivery.sleep ${JSON.stringify({ until })}`, ctx);
+		const before = new orchestrationstore(paths.dbpath);
+		const run = before.getsessionrun("session-sleep-shutdown");
+		if (!run) throw new Error("expected sleep shutdown run");
+		const effect = before.geteffectbykey(run.id, "pause");
+		if (!effect) throw new Error("expected sleep shutdown effect");
+		expect(effect.kind).toBe("sleep");
+		expect(effect.dispatchedat).not.toBeNull();
+		before.close();
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+		// this real wait exercises the extension's private platform timer; fake timers cannot observe its shutdown race.
+		await new Promise<void>((resolve) => setTimeout(resolve, 600));
+		const after = new orchestrationstore(paths.dbpath);
+		expect(after.geteffect(run.id, effect.id)).toMatchObject({
+			kind: "sleep",
+			status: "requested",
+			dispatchingat: null,
+		});
+		expect(after.geteffect(run.id, effect.id)?.dispatchedat).not.toBeNull();
+		expect(after.getsessionrun("session-sleep-shutdown")).toMatchObject({ id: run.id });
+		after.close();
+	});
 });

@@ -115,8 +115,12 @@ function commandinput(args: unknown, command: string): { processid: string; inpu
 	return { processid, input: parsejson(json, "omnipotence input") };
 }
 
+function terminalstatus(status: string | undefined): boolean {
+	return status === "completed" || status === "failed" || status === "halted";
+}
+
 function terminal(result: advanceresult): boolean {
-	return result.status === "completed" || result.status === "failed" || result.status === "halted";
+	return terminalstatus(result.status);
 }
 
 function pendingmessage(rootrunid: string, effects: effectrecord[], profile: jsonvalue): string {
@@ -160,7 +164,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	};
 
 	async function schedulesleep(rootrunid: string, effect: effectrecord): Promise<boolean> {
-		if (sleeptimers.has(effect.id)) return false;
+		if (closed || sleeptimers.has(effect.id)) return false;
 		if (!effect.input || typeof effect.input !== "object" || Array.isArray(effect.input)) {
 			throw new Error(`sleep effect ${effect.id} has invalid input`);
 		}
@@ -168,8 +172,18 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		if (typeof until !== "string" || !Number.isFinite(Date.parse(until))) {
 			throw new Error(`sleep effect ${effect.id} has invalid deadline`);
 		}
+		let claimed = false;
 		if (effect.dispatchedat === null && effect.dispatchingat === null) {
-			store.markeffectdispatching(effect.runid, effect.id, effect.fence);
+			try {
+				const claim = store.claimeffectdispatching(effect.runid, effect.id, effect.fence);
+				if (!claim.claimed) return false;
+				claimed = true;
+			} catch (error) {
+				const current = store.geteffect(effect.runid, effect.id);
+				const root = store.getrun(rootrunid);
+				if (!current || current.status !== "requested" || !root || terminalstatus(root.status)) return false;
+				throw error;
+			}
 		}
 		const deadline = Date.parse(until);
 		const finish = async (): Promise<void> => {
@@ -183,11 +197,14 @@ export default function omnipotence(pi: ExtensionAPI): void {
 					status: "ok",
 					value: null,
 				});
+				if (closed) return;
 				await schedule(result);
+				if (closed) return;
 			} catch (error) {
+				if (closed) return;
 				const message = error instanceof Error ? error.message : String(error);
 				const run = store.getrun(rootrunid);
-				if (run && run.status !== "completed" && run.status !== "failed" && run.status !== "halted") {
+				if (run && !terminalstatus(run.status)) {
 					const blocked = store.transitionrun(rootrunid, "blocked", null, message);
 					pi.appendEntry(stateentry, { runid: blocked.id, status: blocked.status });
 				}
@@ -207,11 +224,12 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			sleeptimers.set(effect.id, timer);
 		};
 		arm();
-		store.markeffectdispatched(effect.runid, effect.id, effect.fence);
+		if (claimed) store.markeffectdispatched(effect.runid, effect.id, effect.fence);
 		return true;
 	}
 
 	async function schedule(result: advanceresult): Promise<boolean> {
+		if (closed) return false;
 		if (result.status !== "waiting") {
 			appendstate(result);
 			return false;
@@ -219,7 +237,10 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		let scheduled = false;
 		const requested = result.effects.filter((effect) => effect.status === "requested");
 		for (const effect of requested.filter((entry) => entry.kind === "sleep")) {
-			scheduled = (await schedulesleep(result.run.id, effect)) || scheduled;
+			if (closed) return scheduled;
+			const sleepscheduled = await schedulesleep(result.run.id, effect);
+			if (closed) return scheduled;
+			scheduled = sleepscheduled || scheduled;
 		}
 		const external = requested.filter(
 			(effect) =>
@@ -229,55 +250,75 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				effect.dispatchingat === null,
 		);
 		if (external.length > 0) {
-			const marked: effectrecord[] = [];
-			const blockdispatch = (reason: string): void => {
+			const claimed: effectrecord[] = [];
+			const blockdispatch = (reason: string): boolean => {
 				let run = store.getrun(result.run.id);
-				if (run && run.status !== "blocked") {
-					run = store.transitionrun(run.id, "blocked", null, reason);
+				if (!run || terminalstatus(run.status)) return false;
+				if (run.status !== "blocked") {
+					try {
+						run = store.transitionrun(run.id, "blocked", null, reason);
+					} catch (error) {
+						const current = store.getrun(run.id);
+						if (!current || terminalstatus(current.status)) return false;
+						throw error;
+					}
 				}
-				if (run) appendstate({ status: "blocked", run, reason: run.blockedreason ?? reason });
+				appendstate({ status: "blocked", run, reason: run.blockedreason ?? reason });
+				return true;
 			};
-			try {
-				for (const effect of external) {
-					marked.push(store.markeffectdispatching(effect.runid, effect.id, effect.fence));
-				}
-			} catch (error) {
-				for (const effect of marked) {
+			const revertclaims = (): void => {
+				for (const effect of claimed) {
+					const current = store.geteffect(effect.runid, effect.id);
+					const root = store.getrun(result.run.id);
+					if (!current || current.status !== "requested" || !root || terminalstatus(root.status)) continue;
 					store.reverteffectdispatch(effect.runid, effect.id, effect.fence);
 				}
-				const message = error instanceof Error ? error.message : String(error);
-				blockdispatch(`hidden-turn dispatch intent failed: ${message}`);
-				throw error;
-			}
-			try {
-				pi.sendMessage(
-					{
-						customType: effectmessage,
-						content: pendingmessage(result.run.id, marked, result.run.profile),
-						display: false,
-						details: { runid: result.run.id, effectids: marked.map((effect) => effect.id) },
-					},
-					{ deliverAs: "nextTurn", triggerTurn: true },
-				);
-			} catch (error) {
-				for (const effect of marked) {
-					store.reverteffectdispatch(effect.runid, effect.id, effect.fence);
+			};
+			for (const effect of external) {
+				if (closed) return scheduled;
+				try {
+					const claim = store.claimeffectdispatching(effect.runid, effect.id, effect.fence);
+					if (claim.claimed) claimed.push(claim.effect);
+				} catch (error) {
+					const current = store.geteffect(effect.runid, effect.id);
+					const root = store.getrun(result.run.id);
+					if (!current || current.status !== "requested" || !root || terminalstatus(root.status)) continue;
+					revertclaims();
+					const message = error instanceof Error ? error.message : String(error);
+					if (!blockdispatch(`hidden-turn dispatch intent failed: ${message}`)) return scheduled;
+					throw error;
 				}
-				const message = error instanceof Error ? error.message : String(error);
-				blockdispatch(`hidden-turn scheduling failed: ${message}`);
-				throw error;
 			}
-			try {
-				for (const effect of marked) {
-					store.markeffectdispatched(effect.runid, effect.id, effect.fence);
+			if (claimed.length > 0) {
+				try {
+					pi.sendMessage(
+						{
+							customType: effectmessage,
+							content: pendingmessage(result.run.id, claimed, result.run.profile),
+							display: false,
+							details: { runid: result.run.id, effectids: claimed.map((effect) => effect.id) },
+						},
+						{ deliverAs: "nextTurn", triggerTurn: true },
+					);
+				} catch (error) {
+					revertclaims();
+					const message = error instanceof Error ? error.message : String(error);
+					if (blockdispatch(`hidden-turn scheduling failed: ${message}`)) throw error;
+					return scheduled;
 				}
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				blockdispatch(`hidden-turn dispatch acknowledgement failed: ${message}`);
-				throw error;
+				try {
+					for (const effect of claimed) {
+						store.markeffectdispatched(effect.runid, effect.id, effect.fence);
+					}
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					if (blockdispatch(`hidden-turn dispatch acknowledgement failed: ${message}`)) throw error;
+					return scheduled;
+				}
+				scheduled = true;
 			}
-			scheduled = true;
 		}
+		if (closed) return scheduled;
 		appendstate(result);
 		return scheduled;
 	}
@@ -433,7 +474,13 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		const run = store.getsessionrun(sessionid(context));
 		if (!run) return;
 		await ensureloaded();
-		const result = await engine.advance(run.id);
+		let result: advanceresult;
+		try {
+			result = await engine.advance(run.id);
+		} catch (error) {
+			if (error instanceof Error && error.message === `run ${run.id} is leased by another engine`) return;
+			throw error;
+		}
 		if (result.status !== "waiting") return;
 		let unsafe = false;
 		for (const effect of result.effects) {

@@ -106,6 +106,27 @@ describe("authoritative orchestration store", () => {
 		).toThrow("stale fence");
 		store.close();
 	});
+	test("effect dispatch claims serialize across store instances", () => {
+		const { store, path } = openstore();
+		const other = new orchestrationstore(path);
+		const run = createrun(store, "session-dispatch-claim");
+		const effect = store.requesteffect(run.id, {
+			key: "review",
+			kind: "task",
+			input: { scope: "diff" },
+		});
+
+		const first = store.claimeffectdispatching(run.id, effect.id, effect.fence);
+		const second = other.claimeffectdispatching(run.id, effect.id, effect.fence);
+
+		expect(first.claimed).toBe(true);
+		expect(second.claimed).toBe(false);
+		expect(second.effect).toEqual(first.effect);
+		expect(store.events(run.id).filter((event) => event.type === "effect_dispatch_started")).toHaveLength(1);
+		expect(store.markeffectdispatching(run.id, effect.id, effect.fence)).toEqual(first.effect);
+		other.close();
+		store.close();
+	});
 
 	test("uncertain effects block until an explicit recovery decision", () => {
 		const { store } = openstore();
@@ -193,7 +214,6 @@ describe("authoritative orchestration store", () => {
 		expect(recovered.status).toBe("resolved_ok");
 		store.close();
 	});
-
 
 	test("retry refences every pending sibling effect", () => {
 		const { store } = openstore();
@@ -497,7 +517,6 @@ describe("authoritative orchestration store", () => {
 		}
 	});
 
-
 	test("doctor detects session binding disagreement", () => {
 		const { store, path } = openstore();
 		const run = createrun(store);
@@ -506,9 +525,7 @@ describe("authoritative orchestration store", () => {
 		external.close();
 		const report = store.doctor();
 		expect(report.ok).toBe(false);
-		expect(report.issues).toContain(
-			`session session-1 points to run ${run.id} with projection session other-session`,
-		);
+		expect(report.issues).toContain(`session session-1 points to run ${run.id} with projection session other-session`);
 		store.close();
 	});
 
@@ -524,9 +541,11 @@ describe("authoritative orchestration store", () => {
 			maxturns: 10,
 		});
 		const external = new Database(path);
-		const event = external
-			.query("select seq, type, payload_json from events where run_id = ?")
-			.get(run.id) as { seq: number; type: string; payload_json: string } | null;
+		const event = external.query("select seq, type, payload_json from events where run_id = ?").get(run.id) as {
+			seq: number;
+			type: string;
+			payload_json: string;
+		} | null;
 		if (!event) throw new Error("expected legacy event");
 		const parsed: unknown = JSON.parse(event.payload_json);
 		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -540,14 +559,12 @@ describe("authoritative orchestration store", () => {
 		delete payload.leaseepoch;
 		delete payload.leaseexpiresat;
 		const payloadjson = stablejson(payload);
-		const hash = createHash("sha256")
-			.update(`${run.id}\n${event.seq}\n${event.type}\n${payloadjson}\n`)
-			.digest("hex");
+		const hash = createHash("sha256").update(`${run.id}\n${event.seq}\n${event.type}\n${payloadjson}\n`).digest("hex");
 		external
 			.query("update events set payload_json = ?, hash = ? where run_id = ? and seq = ?")
 			.run(payloadjson, hash, run.id, event.seq);
 		external
-			.query("update runs set profile_json = '{\"schema\":1,\"metadata\":{\"corrupt\":true}}' where id = ?")
+			.query('update runs set profile_json = \'{"schema":1,"metadata":{"corrupt":true}}\' where id = ?')
 			.run(run.id);
 		external.close();
 		store.repair();

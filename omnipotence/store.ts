@@ -2,21 +2,8 @@ import { Database as database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import {
-	asserteffectkey,
-	assertprocessid,
-	assertversion,
-	jsonvalueof,
-	parsejson,
-	stablejson,
-} from "./contracts.ts";
-import type {
-	effectkind,
-	effectstatus,
-	jsonvalue,
-	orchestrationmode,
-	runstatus,
-} from "./contracts.ts";
+import { asserteffectkey, assertprocessid, assertversion, jsonvalueof, parsejson, stablejson } from "./contracts.ts";
+import type { effectkind, effectstatus, jsonvalue, orchestrationmode, runstatus } from "./contracts.ts";
 
 export interface runrecord {
 	id: string;
@@ -119,7 +106,6 @@ export interface hookdeliveryrecord {
 }
 
 export type hookdeliveryinput = Omit<hookdeliveryrecord, "state" | "error">;
-
 
 export interface uncertainresolution {
 	runid: string;
@@ -303,12 +289,7 @@ function leaseowneralive(owner: string): boolean {
 		process.kill(pid, 0);
 		return true;
 	} catch (error) {
-		return Boolean(
-			error &&
-				typeof error === "object" &&
-				"code" in error &&
-				error.code === "EPERM",
-		);
+		return Boolean(error && typeof error === "object" && "code" in error && error.code === "EPERM");
 	}
 }
 
@@ -589,7 +570,12 @@ function parseevent(row: eventrow): eventrecord {
 		createdat: row.created_at,
 	};
 }
-function hookdeliverykey(delivery: Pick<hookdeliveryrecord, "runid" | "effectid" | "hookid" | "hookversion" | "blueprintname" | "blueprintversion">): string {
+function hookdeliverykey(
+	delivery: Pick<
+		hookdeliveryrecord,
+		"runid" | "effectid" | "hookid" | "hookversion" | "blueprintname" | "blueprintversion"
+	>,
+): string {
 	return [
 		delivery.runid,
 		delivery.effectid,
@@ -630,7 +616,6 @@ function parsehookdelivery(
 		error,
 	};
 }
-
 
 function parseprofile(row: profilerow): profilerecord {
 	if (!Object.hasOwn(profilescopes, row.scope)) throw new Error(`invalid profile scope ${row.scope}`);
@@ -696,7 +681,9 @@ export class orchestrationstore {
 		if (!tables.has("events") || !tables.has("runs") || !tables.has("effects")) return issues;
 		try {
 			const events = this.data
-				.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq")
+				.query(
+					"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq",
+				)
 				.all() as eventrow[];
 			const previousbyrun = new Map<string, string | null>();
 			const runstatusbyid = new Map<string, string>();
@@ -739,7 +726,10 @@ export class orchestrationstore {
 					issues.push(`run ${row.id} projection status ${row.status} does not match ${expected}`);
 				}
 			}
-			for (const row of this.data.query("select id, status from effects").all() as Array<{ id: string; status: string }>) {
+			for (const row of this.data.query("select id, status from effects").all() as Array<{
+				id: string;
+				status: string;
+			}>) {
 				const expected = effectstatusbyid.get(row.id);
 				if (expected && row.status !== expected) {
 					issues.push(`effect ${row.id} projection status ${row.status} does not match ${expected}`);
@@ -753,7 +743,8 @@ export class orchestrationstore {
 
 	private migrate(): void {
 		const versionrow = this.data.query("pragma user_version").get() as { user_version: number };
-		if (versionrow.user_version > 7) throw new Error(`database schema ${versionrow.user_version} is newer than supported 7`);
+		if (versionrow.user_version > 7)
+			throw new Error(`database schema ${versionrow.user_version} is newer than supported 7`);
 		if (versionrow.user_version > 0) {
 			const issues = this.eventprojectionissues();
 			if (issues.length > 0) {
@@ -980,7 +971,9 @@ export class orchestrationstore {
 
 	private appendevent(runid: string, type: string, payload: jsonvalue): eventrecord {
 		const previous = this.data
-			.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq desc limit 1")
+			.query(
+				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq desc limit 1",
+			)
 			.get(runid) as eventrow | null;
 		const seq = (previous?.seq ?? 0) + 1;
 		const previoushash = previous?.hash ?? null;
@@ -988,7 +981,9 @@ export class orchestrationstore {
 		const createdat = now();
 		const hash = sha256(`${runid}\n${seq}\n${type}\n${payloadjson}\n${previoushash ?? ""}`);
 		this.data
-			.query("insert into events(run_id, seq, type, payload_json, previous_hash, hash, created_at) values (?, ?, ?, ?, ?, ?, ?)")
+			.query(
+				"insert into events(run_id, seq, type, payload_json, previous_hash, hash, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+			)
 			.run(runid, seq, type, payloadjson, previoushash, hash, createdat);
 		const idrow = this.data.query("select last_insert_rowid() as id").get() as { id: number };
 		return { id: Number(idrow.id), runid, seq, type, payload, previoushash, hash, createdat };
@@ -1028,14 +1023,16 @@ export class orchestrationstore {
 			if (this.getrun(id)) throw new Error(`run ${id} already exists`);
 			const createdat = now();
 			this.data
-				.query(`insert into runs(
+				.query(
+					`insert into runs(
 					id, session_id, process_id, process_version, process_hash,
 					blueprint_name, blueprint_version,
 					profile_json, user_profile_version, project_profile_version,
 					mode, status, input_json, output_json, blocked_reason,
 					max_turns, turns, fence, lease_owner, lease_epoch, lease_expires_at,
 					created_at, updated_at
-				) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, null, null, ?, 0, 1, null, 0, null, ?, ?)`)
+				) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?, null, null, ?, 0, 1, null, 0, null, ?, ?)`,
+				)
 				.run(
 					id,
 					input.sessionid,
@@ -1069,9 +1066,7 @@ export class orchestrationstore {
 	}
 
 	getrun(runid: string): runrecord | null {
-		const row = this.data
-			.query("select * from runs where id = ?")
-			.get(runid) as runrow | null;
+		const row = this.data.query("select * from runs where id = ?").get(runid) as runrow | null;
 		return row ? parserun(row) : null;
 	}
 
@@ -1135,9 +1130,7 @@ export class orchestrationstore {
 				);
 			}
 			const requested = effects.filter((effect) => effect.status === "requested");
-			const dispatched = requested.find(
-				(effect) => effect.dispatchedat !== null || effect.dispatchingat !== null,
-			);
+			const dispatched = requested.find((effect) => effect.dispatchedat !== null || effect.dispatchingat !== null);
 			if (dispatched) {
 				throw new Error(
 					`run ${ownedrun.id} has dispatched effect ${dispatched.id}; resolve it before session ownership changes`,
@@ -1221,7 +1214,9 @@ export class orchestrationstore {
 
 	events(runid: string): eventrecord[] {
 		const rows = this.data
-			.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq")
+			.query(
+				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq",
+			)
 			.all(runid) as eventrow[];
 		return rows.map(parseevent);
 	}
@@ -1268,13 +1263,15 @@ export class orchestrationstore {
 				)
 				.run(scope, projectroot, version, documentjson, sourcehash, updatedat);
 			this.data
-				.query(`insert into profiles(scope, project_root, version, document_json, source_hash, updated_at)
+				.query(
+					`insert into profiles(scope, project_root, version, document_json, source_hash, updated_at)
 					values (?, ?, ?, ?, ?, ?)
 					on conflict(scope, project_root) do update set
 						version = excluded.version,
 						document_json = excluded.document_json,
 						source_hash = excluded.source_hash,
-						updated_at = excluded.updated_at`)
+						updated_at = excluded.updated_at`,
+				)
 				.run(scope, projectroot, version, documentjson, sourcehash, updatedat);
 			const written = this.getprofile(scope, projectroot);
 			if (!written) throw new Error(`${scope} profile was not stored`);
@@ -1284,9 +1281,7 @@ export class orchestrationstore {
 
 	listblueprints(name?: string): blueprintrecord[] {
 		const rows = name
-			? (this.data
-					.query("select * from blueprints where name = ? order by version")
-					.all(name) as blueprintrow[])
+			? (this.data.query("select * from blueprints where name = ? order by version").all(name) as blueprintrow[])
 			: (this.data.query("select * from blueprints order by name, version").all() as blueprintrow[]);
 		return rows.map(parseblueprint);
 	}
@@ -1307,7 +1302,8 @@ export class orchestrationstore {
 			if (input.active) this.data.query("update blueprints set active = 0 where name = ?").run(input.name);
 			const installedat = now();
 			this.data
-				.query(`insert into blueprints(
+				.query(
+					`insert into blueprints(
 					name, version, source_path, install_path, content_hash, manifest_json, active, config_json, installed_at
 				) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
 				on conflict(name, version) do update set
@@ -1317,7 +1313,8 @@ export class orchestrationstore {
 					manifest_json = excluded.manifest_json,
 					active = excluded.active,
 					config_json = excluded.config_json,
-					installed_at = excluded.installed_at`)
+					installed_at = excluded.installed_at`,
+				)
 				.run(
 					input.name,
 					input.version,
@@ -1407,7 +1404,12 @@ export class orchestrationstore {
 		return [...latest.values()];
 	}
 
-	private findhookdeliveryinside(delivery: Pick<hookdeliveryrecord, "runid" | "effectid" | "hookid" | "hookversion" | "blueprintname" | "blueprintversion">): hookdeliveryrecord | null {
+	private findhookdeliveryinside(
+		delivery: Pick<
+			hookdeliveryrecord,
+			"runid" | "effectid" | "hookid" | "hookversion" | "blueprintname" | "blueprintversion"
+		>,
+	): hookdeliveryrecord | null {
 		const key = hookdeliverykey(delivery);
 		return this.listhookdeliveriesinside().find((entry) => hookdeliverykey(entry) === key) ?? null;
 	}
@@ -1489,10 +1491,12 @@ export class orchestrationstore {
 			const id = randomUUID();
 			const createdat = now();
 			this.data
-				.query(`insert into effects(
+				.query(
+					`insert into effects(
 					id, run_id, effect_key, kind, input_json, input_hash, status, fence,
 					value_json, error_json, dispatched_at, dispatching_at, created_at, updated_at
-				) values (?, ?, ?, ?, ?, ?, 'requested', ?, null, null, null, null, ?, ?)`)
+				) values (?, ?, ?, ?, ?, ?, 'requested', ?, null, null, null, null, ?, ?)`,
+				)
 				.run(id, runid, request.key, request.kind, inputjson, inputhash, run.fence, createdat, createdat);
 			const effect = this.geteffect(runid, id);
 			if (!effect) throw new Error(`effect ${id} was not stored`);
@@ -1502,7 +1506,7 @@ export class orchestrationstore {
 		});
 	}
 
-	markeffectdispatching(runid: string, effectid: string, fence: number): effectrecord {
+	claimeffectdispatching(runid: string, effectid: string, fence: number): { effect: effectrecord; claimed: boolean } {
 		return this.transact(() => {
 			const run = this.requiredrun(runid);
 			if (run.fence !== fence) throw new Error(`stale fence ${fence}; current fence is ${run.fence}`);
@@ -1510,7 +1514,7 @@ export class orchestrationstore {
 			if (!effect) throw new Error(`effect ${effectid} does not exist`);
 			if (effect.fence !== fence) throw new Error(`stale effect fence ${effect.fence}; current fence is ${fence}`);
 			if (effect.status !== "requested") throw new Error(`effect ${effectid} is not pending`);
-			if (effect.dispatchedat || effect.dispatchingat) return effect;
+			if (effect.dispatchedat || effect.dispatchingat) return { effect, claimed: false };
 			const dispatchingat = now();
 			this.data
 				.query("update effects set dispatching_at = ?, updated_at = ? where id = ?")
@@ -1518,8 +1522,12 @@ export class orchestrationstore {
 			const dispatching = this.geteffect(runid, effectid);
 			if (!dispatching) throw new Error(`effect ${effectid} disappeared`);
 			this.appendevent(runid, "effect_dispatch_started", jsonvalueof(dispatching));
-			return dispatching;
+			return { effect: dispatching, claimed: true };
 		});
+	}
+
+	markeffectdispatching(runid: string, effectid: string, fence: number): effectrecord {
+		return this.claimeffectdispatching(runid, effectid, fence).effect;
 	}
 
 	markeffectdispatched(runid: string, effectid: string, fence: number): effectrecord {
@@ -1571,7 +1579,8 @@ export class orchestrationstore {
 			if (post.inputhash !== effect.inputhash) {
 				throw new Error(`effect ${effect.id} input hash mismatch`);
 			}
-			if (effect.fence !== post.fence) throw new Error(`stale effect fence ${effect.fence}; current fence is ${post.fence}`);
+			if (effect.fence !== post.fence)
+				throw new Error(`stale effect fence ${effect.fence}; current fence is ${post.fence}`);
 			const status: effectstatus =
 				post.status === "ok" ? "resolved_ok" : post.status === "error" ? "resolved_error" : post.status;
 			const value = post.value === undefined ? null : jsonvalueof(post.value, "effect.value");
@@ -1637,9 +1646,7 @@ export class orchestrationstore {
 			}
 			if (resolution.decision === "retry") {
 				const fence = run.fence + 1;
-				this.data
-					.query("update runs set fence = ?, updated_at = ? where id = ?")
-					.run(fence, updatedat, run.id);
+				this.data.query("update runs set fence = ?, updated_at = ? where id = ?").run(fence, updatedat, run.id);
 				const siblings = this.listeffects(run.id).filter((entry) => entry.status === "requested");
 				this.data
 					.query(
@@ -1701,9 +1708,11 @@ export class orchestrationstore {
 			}
 			const expires = current + ttlms;
 			this.data
-				.query(`update runs
+				.query(
+					`update runs
 					set lease_owner = ?, lease_epoch = lease_epoch + 1, lease_expires_at = ?
-					where id = ?`)
+					where id = ?`,
+				)
 				.run(owner, expires, runid);
 			const claimed = this.requiredrun(runid);
 			this.appendevent(runid, "lease_claimed", { runid, leaseepoch: claimed.leaseepoch });
@@ -1714,9 +1723,11 @@ export class orchestrationstore {
 	releaserun(runid: string, owner: string, epoch: number): boolean {
 		return this.transact(() => {
 			const result = this.data
-				.query(`update runs
+				.query(
+					`update runs
 					set lease_owner = null, lease_expires_at = null
-					where id = ? and lease_owner = ? and lease_epoch = ?`)
+					where id = ? and lease_owner = ? and lease_epoch = ?`,
+				)
 				.run(runid, owner, epoch);
 			return Number(result.changes) > 0;
 		});
@@ -1742,16 +1753,19 @@ export class orchestrationstore {
 			const run = this.requiredrun(runid);
 			const maxturns = run.maxturns + additional;
 			const updatedat = now();
-			this.data
-				.query("update runs set max_turns = ?, updated_at = ? where id = ?")
-				.run(maxturns, updatedat, runid);
+			this.data.query("update runs set max_turns = ?, updated_at = ? where id = ?").run(maxturns, updatedat, runid);
 			const updated = this.requiredrun(runid);
 			this.appendevent(runid, "run_status", jsonvalueof(updated));
 			return updated;
 		});
 	}
 
-	transitionrun(runid: string, status: runstatus, output: jsonvalue | null = null, reason: string | null = null): runrecord {
+	transitionrun(
+		runid: string,
+		status: runstatus,
+		output: jsonvalue | null = null,
+		reason: string | null = null,
+	): runrecord {
 		return this.transact(() => this.transitioninside(this.requiredrun(runid), status, output, reason));
 	}
 
@@ -1772,7 +1786,11 @@ export class orchestrationstore {
 			.query("update runs set status = ?, output_json = ?, blocked_reason = ?, turns = ?, updated_at = ? where id = ?")
 			.run(
 				status,
-				normalizedoutput === null ? run.output === null ? null : stablejson(run.output) : stablejson(normalizedoutput),
+				normalizedoutput === null
+					? run.output === null
+						? null
+						: stablejson(run.output)
+					: stablejson(normalizedoutput),
 				reason,
 				turns,
 				updatedat,
@@ -1801,7 +1819,9 @@ export class orchestrationstore {
 			if (row.integrity_check !== "ok") issues.push(`sqlite integrity: ${row.integrity_check}`);
 		}
 		const rows = this.data
-			.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq")
+			.query(
+				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq",
+			)
 			.all() as eventrow[];
 		const previousbyrun = new Map<string, string | null>();
 		const runprojectionbyid = new Map<string, projectionrecord>();
@@ -1860,8 +1880,8 @@ export class orchestrationstore {
 			}
 			compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
 			const durableleaseepoch = claimruns.has(row.id)
-				? runclaimepochbyid.get(row.id) ?? 0
-				: runlegacyleaseepochbyid.get(row.id) ?? 0;
+				? (runclaimepochbyid.get(row.id) ?? 0)
+				: (runlegacyleaseepochbyid.get(row.id) ?? 0);
 			if (claimruns.has(row.id)) {
 				if (row.lease_epoch !== durableleaseepoch) {
 					issues.push(
@@ -1894,9 +1914,10 @@ export class orchestrationstore {
 		}
 
 		const runbyid = new Map(runrows.map((row) => [row.id, row]));
-		const sessionrows = this.data
-			.query("select session_id, run_id from sessions order by session_id")
-			.all() as Array<{ session_id: string; run_id: string }>;
+		const sessionrows = this.data.query("select session_id, run_id from sessions order by session_id").all() as Array<{
+			session_id: string;
+			run_id: string;
+		}>;
 		const sessionbyrun = new Map<string, string>();
 		for (const binding of sessionrows) {
 			sessionbyrun.set(binding.run_id, binding.session_id);
@@ -1966,9 +1987,7 @@ export class orchestrationstore {
 		const backup = `${this.path}.backup-${Date.now()}`;
 		this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
 		const eventissues = this.eventprojectionissues().filter(
-			(issue) =>
-				issue.includes(" event ") ||
-				issue.startsWith("event projection verification failed:"),
+			(issue) => issue.includes(" event ") || issue.startsWith("event projection verification failed:"),
 		);
 		if (eventissues.length > 0) {
 			throw new Error(`repair event verification failed: ${eventissues.join("; ")}`);
@@ -2007,14 +2026,16 @@ export class orchestrationstore {
 			this.data.query("delete from runs").run();
 			this.data.query("delete from profiles").run();
 			this.data
-				.query(`insert into profiles(scope, project_root, version, document_json, source_hash, updated_at)
+				.query(
+					`insert into profiles(scope, project_root, version, document_json, source_hash, updated_at)
 					select history.scope, history.project_root, history.version, history.document_json, history.source_hash, history.updated_at
 					from profile_versions as history
 					where history.version = (
 						select max(candidate.version)
 						from profile_versions as candidate
 						where candidate.scope = history.scope and candidate.project_root = history.project_root
-					)`)
+					)`,
+				)
 				.run();
 
 			for (const row of rows) {
@@ -2027,7 +2048,8 @@ export class orchestrationstore {
 					assertmode(mode);
 					assertstatus(status);
 					this.data
-						.query(`insert into runs(
+						.query(
+							`insert into runs(
 							id, session_id, process_id, process_version, process_hash,
 							blueprint_name, blueprint_version,
 							profile_json, user_profile_version, project_profile_version,
@@ -2056,7 +2078,8 @@ export class orchestrationstore {
 							lease_owner = excluded.lease_owner,
 							lease_epoch = excluded.lease_epoch,
 							lease_expires_at = excluded.lease_expires_at,
-							updated_at = excluded.updated_at`)
+							updated_at = excluded.updated_at`,
+						)
 						.run(
 							id,
 							typeof payload.sessionid === "string" ? payload.sessionid : null,
@@ -2092,7 +2115,8 @@ export class orchestrationstore {
 					assertkind(kind);
 					asserteffectstatus(status);
 					this.data
-						.query(`insert into effects(
+						.query(
+							`insert into effects(
 							id, run_id, effect_key, kind, input_json, input_hash, status, fence,
 							value_json, error_json, dispatched_at, dispatching_at, created_at, updated_at
 						) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -2108,7 +2132,8 @@ export class orchestrationstore {
 							error_json = excluded.error_json,
 							dispatched_at = excluded.dispatched_at,
 							dispatching_at = excluded.dispatching_at,
-							updated_at = excluded.updated_at`)
+							updated_at = excluded.updated_at`,
+						)
 						.run(
 							effectid,
 							runid,
