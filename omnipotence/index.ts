@@ -147,8 +147,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	const engine = new orchestrationengine(store);
 	const profiles = new profileservice(store);
 	let loaded: Promise<loadsummary> | undefined;
-	const ensureloaded = (): Promise<loadsummary> =>
-		(loaded ??= loadactiveblueprints(store, engine));
+	const ensureloaded = (): Promise<loadsummary> => (loaded ??= loadactiveblueprints(store, engine));
 	let closed = false;
 	const sleeptimers = new Map<string, Timer>();
 
@@ -287,42 +286,43 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		context.ui?.notify?.(stablejson(jsonvalueof(value)), "info");
 	};
 
-	const startcommand = (command: string, mode: orchestrationmode) => async (args: unknown, context: extensioncontext) => {
-		await ensureloaded();
-		const request = commandinput(args, command);
-		const process = engine.resolveprocess(request.processid);
-		const profile = profiles.snapshot(
-			context.cwd,
-			process.profiledefaults ?? { schema: 1 },
-			{ schema: 1 },
-		);
-		const result = await engine.start({
-			processid: request.processid,
-			processversion: process.version,
-			blueprintname: process.blueprint?.name,
-			blueprintversion: process.blueprint?.version,
-			sessionid: sessionid(context),
-			mode,
-			input: request.input,
-			profile: profile.effective,
-			userprofileversion: profile.userprofileversion,
-			projectprofileversion: profile.projectprofileversion,
-		});
-		await schedule(result);
-		notify(context, result);
-	};
+	const startcommand =
+		(command: string, mode: orchestrationmode) => async (args: unknown, context: extensioncontext) => {
+			await ensureloaded();
+			const request = commandinput(args, command);
+			const process = engine.resolveprocess(request.processid);
+			const profile = profiles.snapshot(context.cwd, process.profiledefaults ?? { schema: 1 }, { schema: 1 });
+			const result = await engine.start({
+				processid: request.processid,
+				processversion: process.version,
+				blueprintname: process.blueprint?.name,
+				blueprintversion: process.blueprint?.version,
+				sessionid: sessionid(context),
+				mode,
+				input: request.input,
+				profile: profile.effective,
+				userprofileversion: profile.userprofileversion,
+				projectprofileversion: profile.projectprofileversion,
+			});
+			await schedule(result);
+			notify(context, result);
+		};
 
 	pi.registerCommand("omnipotence", {
 		description: "start one native orchestration run",
 		handler: startcommand("omnipotence", "babysit"),
 	});
-	for (const mode of ["call", "plan", "yolo", "forever"] as const) {
+	for (const mode of ["call", "plan", "yolo"] as const) {
 		const command = `omnipotence-${mode}`;
 		pi.registerCommand(command, {
 			description: `start one native ${mode} run`,
 			handler: startcommand(command, mode),
 		});
 	}
+	pi.registerCommand("omnipotence-forever", {
+		description: "start one unbounded native orchestration run",
+		handler: startcommand("omnipotence-forever", "forever"),
+	});
 	pi.registerCommand("omnipotence-resume", {
 		description: "resume the active native orchestration run",
 		async handler(args: unknown, context: extensioncontext) {
@@ -364,7 +364,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const run = store.getsessionrun(sessionid(context));
 			if (!run) throw new Error("this session has no active omnipotence run");
 			if (run.id !== post.rootrunid) {
-				throw new Error(`omnipotence result root run ${post.rootrunid} does not match this session's active run ${run.id}`);
+				throw new Error(
+					`omnipotence result root run ${post.rootrunid} does not match this session's active run ${run.id}`,
+				);
 			}
 			const result = await engine.commiteffect(post);
 			pi.appendEntry(stateentry, {
@@ -379,53 +381,53 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on("session_stop", async (event: sessionstopevent, context: extensioncontext): Promise<sessionstopresult | void> => {
-		const run = store.getsessionrun(sessionid(context));
-		if (!run) return;
-		await ensureloaded();
-		const result = await engine.advance(run.id);
-		if (terminal(result)) {
-			appendstate(result);
-			return;
-		}
-		if (result.status === "blocked") {
-			appendstate(result);
+	pi.on(
+		"session_stop",
+		async (event: sessionstopevent, context: extensioncontext): Promise<sessionstopresult | void> => {
+			const run = store.getsessionrun(sessionid(context));
+			if (!run) return;
+			await ensureloaded();
+			const result = await engine.advance(run.id);
+			if (terminal(result)) {
+				appendstate(result);
+				return;
+			}
+			if (result.status === "blocked") {
+				appendstate(result);
+				if (event.stop_hook_active) return;
+				return { decision: "block", reason: result.reason };
+			}
+			if (result.run.status === "waiting_for_user") {
+				appendstate(result);
+				return;
+			}
+			const dispatching = result.effects.find(
+				(effect) =>
+					effect.status === "requested" &&
+					effect.kind !== "sleep" &&
+					effect.kind !== "breakpoint" &&
+					effect.dispatchingat !== null &&
+					effect.dispatchedat === null,
+			);
+			if (dispatching) {
+				if (event.stop_hook_active) return;
+				return {
+					decision: "block",
+					reason: `active omnipotence run ${result.run.id} has unknown scheduling outcome for effect ${dispatching.id}`,
+				};
+			}
+			if (await schedule(result)) return;
 			if (event.stop_hook_active) return;
-			return { decision: "block", reason: result.reason };
-		}
-		if (result.run.status === "waiting_for_user") {
-			appendstate(result);
-			return;
-		}
-		const dispatching = result.effects.find(
-			(effect) =>
-				effect.status === "requested" &&
-				effect.kind !== "sleep" &&
-				effect.kind !== "breakpoint" &&
-				effect.dispatchingat !== null &&
-				effect.dispatchedat === null,
-		);
-		if (dispatching) {
-			if (event.stop_hook_active) return;
+			const missing = result.effects.find(
+				(effect) => effect.status === "requested" && effect.kind !== "sleep" && effect.kind !== "breakpoint",
+			);
+			if (!missing) return;
 			return {
 				decision: "block",
-				reason: `active omnipotence run ${result.run.id} has unknown scheduling outcome for effect ${dispatching.id}`,
+				reason: `active omnipotence run ${result.run.id} still needs result for effect ${missing.id}`,
 			};
-		}
-		if (await schedule(result)) return;
-		if (event.stop_hook_active) return;
-		const missing = result.effects.find(
-			(effect) =>
-				effect.status === "requested" &&
-				effect.kind !== "sleep" &&
-				effect.kind !== "breakpoint",
-		);
-		if (!missing) return;
-		return {
-			decision: "block",
-			reason: `active omnipotence run ${result.run.id} still needs result for effect ${missing.id}`,
-		};
-	});
+		},
+	);
 
 	const recover = async (_event: unknown, context: extensioncontext): Promise<void> => {
 		const run = store.getsessionrun(sessionid(context));
@@ -433,6 +435,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		await ensureloaded();
 		const result = await engine.advance(run.id);
 		if (result.status !== "waiting") return;
+		let unsafe = false;
 		for (const effect of result.effects) {
 			if (effect.status !== "requested") continue;
 			if (effect.kind === "sleep") {
@@ -441,6 +444,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			}
 			if (effect.kind === "breakpoint") continue;
 			if (effect.dispatchingat !== null && effect.dispatchedat === null) {
+				unsafe = true;
 				const reason = `hidden-turn scheduling outcome is unknown for effect ${effect.id}`;
 				await engine.commiteffect({
 					rootrunid: run.id,
@@ -452,14 +456,12 @@ export default function omnipotence(pi: ExtensionAPI): void {
 					error: { message: reason },
 				});
 				const current = store.getrun(run.id);
-				const blocked =
-					current?.status === "blocked"
-						? current
-						: store.transitionrun(run.id, "blocked", null, reason);
+				const blocked = current?.status === "blocked" ? current : store.transitionrun(run.id, "blocked", null, reason);
 				pi.appendEntry(stateentry, { runid: blocked.id, status: blocked.status });
 				continue;
 			}
 			if (effect.dispatchedat === null) continue;
+			unsafe = true;
 			await engine.posteffect({
 				rootrunid: run.id,
 				runid: effect.runid,
@@ -471,6 +473,16 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			});
 		}
 		const recovered = store.getrun(run.id);
+		if (
+			!unsafe &&
+			recovered &&
+			recovered.status !== "blocked" &&
+			recovered.status !== "completed" &&
+			recovered.status !== "failed" &&
+			recovered.status !== "halted"
+		) {
+			await schedule(result);
+		}
 		if (recovered) pi.appendEntry(stateentry, { runid: recovered.id, status: recovered.status });
 	};
 	pi.on("session_start", recover);

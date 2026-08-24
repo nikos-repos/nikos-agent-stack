@@ -30,9 +30,25 @@ function installfixture(root: string): { dbpath: string; blueprintroot: string }
 	mkdirSync(join(source, "processes"), { recursive: true });
 	const contracts = new URL("./contracts.ts", import.meta.url).href;
 	const processcontent = `import { defineprocess } from ${JSON.stringify(contracts)};\nexport default defineprocess({\n  id: "delivery.extension",\n  version: "1.0.0",\n  input: { type: "object", additionalproperties: true },\n  output: { type: "object", additionalproperties: true },\n  async run(ctx) {\n    const first = await ctx.task("first", { step: 1 });\n    return ctx.task("second", { first });\n  }\n});\n\nexport const sleeping = defineprocess({\n  id: "delivery.sleep",\n  version: "1.0.0",\n  input: {\n    type: "object",\n    required: ["until"],\n    additionalproperties: false,\n    properties: { until: { type: "string" } }\n  },\n  output: {\n    type: "object",\n    required: ["done"],\n    additionalproperties: false,\n    properties: { done: { type: "boolean" } }\n  },\n  async run(ctx, input) {\n    await ctx.sleep("pause", input.until);\n    return { done: true };\n  }\n});\n`;
+	const forevercontent = `import { defineprocess } from ${JSON.stringify(contracts)};
+export default defineprocess({
+  id: "delivery.forever",
+  version: "1.0.0",
+  maxturns: 1,
+  input: { type: "object", additionalproperties: true },
+  output: { type: "object", additionalproperties: true },
+  async run(ctx) {
+    await ctx.breakpoint("optional", { required: false });
+    const first = await ctx.task("first", { step: 1 });
+    const second = await ctx.task("second", { first });
+    return { first, second };
+  }
+});
+`;
 	const breakpointcontent = `import { defineprocess } from ${JSON.stringify(contracts)};\nexport default defineprocess({\n  id: "delivery.breakpoint",\n  version: "1.0.0",\n  input: { type: "object", additionalproperties: true },\n  output: { type: "object", additionalproperties: true },\n  async run(ctx) { return ctx.breakpoint("approval", { required: true }); }\n});\n`;
 	writeFileSync(join(source, "processes/extension.ts"), processcontent);
 	writeFileSync(join(source, "processes/breakpoint.ts"), breakpointcontent);
+	writeFileSync(join(source, "processes/forever.ts"), forevercontent);
 	writeFileSync(
 		join(source, "omnipotence.blueprint.json"),
 		JSON.stringify({
@@ -42,6 +58,7 @@ function installfixture(root: string): { dbpath: string; blueprintroot: string }
 			engine: ">=1.0.0",
 			processes: [
 				{ id: "delivery.extension", entry: "processes/extension.ts" },
+				{ id: "delivery.forever", entry: "processes/forever.ts" },
 				{ id: "delivery.sleep", entry: "processes/extension.ts", export: "sleeping" },
 				{ id: "delivery.breakpoint", entry: "processes/breakpoint.ts" },
 			],
@@ -49,6 +66,7 @@ function installfixture(root: string): { dbpath: string; blueprintroot: string }
 			files: {
 				"processes/extension.ts": hash(processcontent),
 				"processes/breakpoint.ts": hash(breakpointcontent),
+				"processes/forever.ts": hash(forevercontent),
 			},
 			config: {},
 			migrations: [],
@@ -75,7 +93,7 @@ function fakepi(
 	onentry?: (type: string, data: unknown) => void,
 ) {
 	const handlers = new Map<string, Array<(event: unknown, context: unknown) => unknown>>();
-	const commands = new Map<string, { handler: (args: unknown, context: unknown) => unknown }>();
+	const commands = new Map<string, { description: string; handler: (args: unknown, context: unknown) => unknown }>();
 	const tools = new Map<string, faketool>();
 	const messages: Array<{ message: unknown; options: unknown }> = [];
 	const entries: Array<{ type: string; data: unknown }> = [];
@@ -85,7 +103,10 @@ function fakepi(
 			existing.push(handler);
 			handlers.set(event, existing);
 		},
-		registerCommand(name: string, command: { handler: (args: unknown, context: unknown) => unknown }) {
+		registerCommand(
+			name: string,
+			command: { description: string; handler: (args: unknown, context: unknown) => unknown },
+		) {
 			commands.set(name, command);
 		},
 		registerTool(tool: faketool & { name: string }) {
@@ -150,9 +171,8 @@ describe("omnipotence omp extension", () => {
 		const ctx = context("session-command-usage", root);
 		const command = fake.commands.get("omnipotence-forever");
 		if (!command) throw new Error("omnipotence-forever command was not registered");
-		await expect(command.handler("", ctx)).rejects.toThrow(
-			"usage: /omnipotence-forever <process-id> [json-input]",
-		);
+		expect(command.description).toBe("start one unbounded native orchestration run");
+		await expect(command.handler("", ctx)).rejects.toThrow("usage: /omnipotence-forever <process-id> [json-input]");
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 	});
 
@@ -165,12 +185,7 @@ describe("omnipotence omp extension", () => {
 		const fake = fakepi();
 		Reflect.apply(activate, undefined, [fake.api]);
 		const ctx = context("session-inactive", root);
-		const result = await fire(
-			fake.handlers,
-			"session_stop",
-			{ type: "session_stop", stop_hook_active: false },
-			ctx,
-		);
+		const result = await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx);
 		expect(result).toBeUndefined();
 		expect(fake.messages).toEqual([]);
 		expect(fake.entries).toEqual([]);
@@ -189,10 +204,10 @@ describe("omnipotence omp extension", () => {
 		const fake = fakepi();
 		Reflect.apply(activate, undefined, [fake.api]);
 		const ctx = context("session-stop-engine", root);
-		const start = fake.commands.get("omnipotence");
+		const start = fake.commands.get("omnipotence-forever");
 		const stop = fake.commands.get("omnipotence-stop");
 		if (!start || !stop) throw new Error("omnipotence commands were not registered");
-		await start.handler("delivery.extension {}", ctx);
+		await start.handler("delivery.forever {}", ctx);
 		const store = new orchestrationstore(paths.dbpath);
 		const run = store.getsessionrun("session-stop-engine");
 		if (!run) throw new Error("expected active stop run");
@@ -202,6 +217,7 @@ describe("omnipotence omp extension", () => {
 		expect(halted?.status).toBe("halted");
 		expect(halted?.blockedreason).toBe(reason);
 		expect(halted?.fence).toBe(run.fence + 1);
+		expect(store.getsessionrun("session-stop-engine")).toBeNull();
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
@@ -327,28 +343,111 @@ describe("omnipotence omp extension", () => {
 		if (!second) throw new Error("expected second effect");
 		expect(store.geteffect(run.id, second.id)?.dispatchedat).not.toBeNull();
 
-		const missing = await fire(
-			fake.handlers,
-			"session_stop",
-			{ type: "session_stop", stop_hook_active: false },
-			ctx,
-		);
+		const missing = await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx);
 		expect(missing).toEqual({
 			decision: "block",
 			reason: `active omnipotence run ${run.id} still needs result for effect ${second.id}`,
 		});
-		const repeated = await fire(
-			fake.handlers,
-			"session_stop",
-			{ type: "session_stop", stop_hook_active: true },
-			ctx,
-		);
+		const repeated = await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: true }, ctx);
 		expect(repeated).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
-
+	test("forever command continues past its finite budget through result turns", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-forever-chain-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const ctx = context("session-forever-chain", root);
+		const command = fake.commands.get("omnipotence-forever");
+		if (!command) throw new Error("omnipotence-forever command was not registered");
+		await command.handler("delivery.forever {}", ctx);
+		const store = new orchestrationstore(paths.dbpath);
+		const run = store.getsessionrun("session-forever-chain");
+		if (!run) throw new Error("expected active forever run");
+		expect(run.mode).toBe("forever");
+		expect(run.maxturns).toBe(1);
+		expect(run.turns).toBe(1);
+		expect(fake.messages).toHaveLength(1);
+		expect(fake.messages[0]?.options).toEqual({ deliverAs: "nextTurn", triggerTurn: true });
+		const first = store.geteffectbykey(run.id, "first");
+		if (!first) throw new Error("expected first forever effect");
+		expect(first.kind).toBe("task");
+		expect(first.dispatchedat).not.toBeNull();
+		expect(store.geteffectbykey(run.id, "optional")).toBeNull();
+		expect(fake.messages[0]?.message).toMatchObject({
+			customType: "nikos-agent-stack.omnipotence.effect",
+			display: false,
+			details: { runid: run.id, effectids: [first.id] },
+		});
+		const tool = fake.tools.get("omnipotence_result");
+		if (!tool) throw new Error("result tool was not registered");
+		await tool.execute(
+			"forever-first",
+			{
+				rootrunid: run.id,
+				runid: run.id,
+				effectid: first.id,
+				fence: first.fence,
+				inputhash: first.inputhash,
+				status: "ok",
+				value: { first: true },
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(fake.messages).toHaveLength(1);
+		expect(store.getrun(run.id)).toMatchObject({ status: "running", turns: 2, maxturns: 1 });
+		expect(
+			await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx),
+		).toBeUndefined();
+		expect(fake.messages).toHaveLength(2);
+		const second = store.geteffectbykey(run.id, "second");
+		if (!second) throw new Error("expected second forever effect");
+		expect(second.kind).toBe("task");
+		expect(second.dispatchedat).not.toBeNull();
+		expect(fake.messages[1]?.options).toEqual({ deliverAs: "nextTurn", triggerTurn: true });
+		expect(fake.messages[1]?.message).toMatchObject({
+			customType: "nikos-agent-stack.omnipotence.effect",
+			display: false,
+			details: { runid: run.id, effectids: [second.id] },
+		});
+		await tool.execute(
+			"forever-second",
+			{
+				rootrunid: run.id,
+				runid: run.id,
+				effectid: second.id,
+				fence: second.fence,
+				inputhash: second.inputhash,
+				status: "ok",
+				value: { second: true },
+			},
+			undefined,
+			undefined,
+			ctx,
+		);
+		expect(fake.messages).toHaveLength(2);
+		expect(store.getrun(run.id)).toMatchObject({ status: "running", turns: 3, maxturns: 1 });
+		expect(
+			await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx),
+		).toBeUndefined();
+		expect(fake.messages).toHaveLength(2);
+		expect(store.getrun(run.id)).toMatchObject({
+			status: "completed",
+			turns: 3,
+			maxturns: 1,
+			output: { first: { first: true }, second: { second: true } },
+		});
+		expect(store.getsessionrun("session-forever-chain")).toBeNull();
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+		store.close();
+	});
 
 	test("result tool is bound to the calling session", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-result-session-"));
@@ -406,9 +505,7 @@ describe("omnipotence omp extension", () => {
 		const ctx = context("session-send-failure", root);
 		const command = fake.commands.get("omnipotence");
 		if (!command) throw new Error("omnipotence command was not registered");
-		await expect(command.handler("delivery.extension {}", ctx)).rejects.toThrow(
-			"client rejected hidden turn",
-		);
+		await expect(command.handler("delivery.extension {}", ctx)).rejects.toThrow("client rejected hidden turn");
 		const store = new orchestrationstore(paths.dbpath);
 		const run = store.getsessionrun("session-send-failure");
 		if (!run) throw new Error("expected failed-schedule run");
@@ -416,9 +513,7 @@ describe("omnipotence omp extension", () => {
 		const [effect] = store.listeffects(run.id);
 		expect(effect?.status).toBe("requested");
 		expect(effect?.dispatchedat).toBeNull();
-		expect(run.blockedreason).toBe(
-			"hidden-turn scheduling failed: client rejected hidden turn",
-		);
+		expect(run.blockedreason).toBe("hidden-turn scheduling failed: client rejected hidden turn");
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
@@ -452,7 +547,7 @@ describe("omnipotence omp extension", () => {
 		store.close();
 	});
 
-	test("required breakpoints wait for explicit resume instead of model scheduling", async () => {
+	test("required forever breakpoints wait for explicit resume instead of model scheduling", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-breakpoint-"));
 		roots.push(root);
 		const paths = installfixture(root);
@@ -461,7 +556,7 @@ describe("omnipotence omp extension", () => {
 		const fake = fakepi();
 		Reflect.apply(activate, undefined, [fake.api]);
 		const ctx = context("session-breakpoint-extension", root);
-		const start = fake.commands.get("omnipotence");
+		const start = fake.commands.get("omnipotence-forever");
 		const resume = fake.commands.get("omnipotence-resume");
 		if (!start || !resume) throw new Error("omnipotence commands were not registered");
 		await start.handler("delivery.breakpoint {}", ctx);
@@ -469,22 +564,62 @@ describe("omnipotence omp extension", () => {
 		const store = new orchestrationstore(paths.dbpath);
 		const run = store.getsessionrun("session-breakpoint-extension");
 		if (!run) throw new Error("expected breakpoint run");
+		expect(run.mode).toBe("forever");
 		const [effect] = store.listeffects(run.id);
 		expect(run.status).toBe("waiting_for_user");
 		expect(effect?.kind).toBe("breakpoint");
 		expect(effect?.dispatchedat).toBeNull();
 		expect(
-			await fire(
-				fake.handlers,
-				"session_stop",
-				{ type: "session_stop", stop_hook_active: false },
-				ctx,
-			),
+			await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		await resume.handler('{"approved":true}', ctx);
 		expect(store.getsessionrun("session-breakpoint-extension")).toBeNull();
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
+	});
+	test("a restarted session schedules safe never-dispatched work once", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-restart-safe-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const first = fakepi();
+		Reflect.apply(activate, undefined, [first.api]);
+		const owner = context("session-restart-safe", root);
+		const command = first.commands.get("omnipotence-forever");
+		if (!command) throw new Error("omnipotence-forever command was not registered");
+		await command.handler("delivery.forever {}", owner);
+		const before = new orchestrationstore(paths.dbpath);
+		const run = before.getsessionrun("session-restart-safe");
+		if (!run) throw new Error("expected safe-recovery run");
+		const effect = before.geteffectbykey(run.id, "first");
+		if (!effect) throw new Error("expected safe-recovery effect");
+		before.reverteffectdispatch(run.id, effect.id, effect.fence);
+		expect(before.geteffect(run.id, effect.id)).toMatchObject({
+			status: "requested",
+			dispatchingat: null,
+			dispatchedat: null,
+		});
+		before.close();
+		await fire(first.handlers, "session_shutdown", { type: "session_shutdown" }, owner);
+
+		const second = fakepi();
+		Reflect.apply(activate, undefined, [second.api]);
+		const restored = context("session-restart-safe", root);
+		await fire(second.handlers, "session_start", { type: "session_start" }, restored);
+		const after = new orchestrationstore(paths.dbpath);
+		const recovered = after.getsessionrun("session-restart-safe");
+		if (!recovered) throw new Error("expected recovered safe-recovery run");
+		const dispatched = after.geteffect(recovered.id, effect.id);
+		expect(second.messages).toHaveLength(1);
+		expect(second.messages[0]?.options).toEqual({ deliverAs: "nextTurn", triggerTurn: true });
+		expect(dispatched).toMatchObject({
+			status: "requested",
+			dispatchingat: null,
+		});
+		expect(dispatched?.dispatchedat).not.toBeNull();
+		await fire(second.handlers, "session_shutdown", { type: "session_shutdown" }, restored);
+		after.close();
 	});
 	test("a restarted session fences a dispatched effect as uncertain", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-restart-"));
@@ -498,6 +633,7 @@ describe("omnipotence omp extension", () => {
 		const command = first.commands.get("omnipotence");
 		if (!command) throw new Error("omnipotence command was not registered");
 		await command.handler("delivery.extension {}", ctx);
+		expect(first.messages).toHaveLength(1);
 		await fire(first.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 
 		const second = fakepi();
@@ -507,6 +643,14 @@ describe("omnipotence omp extension", () => {
 		const run = store.getsessionrun("session-restart");
 		if (!run) throw new Error("expected restarted run");
 		expect(run.status).toBe("blocked");
+		expect(second.messages).toEqual([]);
+		expect(store.listeffects(run.id)[0]).toMatchObject({
+			status: "uncertain",
+			dispatchingat: null,
+		});
+		expect(store.listeffects(run.id)[0]?.dispatchedat).not.toBeNull();
+		await fire(second.handlers, "session_start", { type: "session_start" }, ctx);
+		expect(second.messages).toEqual([]);
 		expect(store.listeffects(run.id)[0]?.status).toBe("uncertain");
 		await fire(second.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();

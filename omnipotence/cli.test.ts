@@ -21,14 +21,22 @@ function objectvalue(value: unknown, path: string): Record<string, unknown> {
 	return value as Record<string, unknown>;
 }
 
-function processfixture(root: string, marker?: string): string {
+function processfixture(root: string, marker?: string, maxturns = 64): string {
 	const source = join(root, "blueprint-source");
 	mkdirSync(join(source, "processes"), { recursive: true });
 	const contracts = new URL("./contracts.ts", import.meta.url).href;
 	const sideeffect = marker
-		? `import { writeFileSync } from \"node:fs\";\nwriteFileSync(${JSON.stringify(marker)}, \"loaded\");\n`
+		? `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(marker)}, "loaded");\n`
 		: "";
-	const processcontent = `${sideeffect}import { defineprocess } from ${JSON.stringify(contracts)};\nexport default defineprocess({\n  id: "delivery.cli",\n  version: "1.0.0",\n  input: { type: "object", additionalproperties: true },\n  output: { type: "object", additionalproperties: true },\n  async run(ctx) { return ctx.task(\"work\", { request: \"cli\" }); }\n});\n`;
+	const processcontent = `${sideeffect}import { defineprocess } from ${JSON.stringify(contracts)};\nexport default defineprocess({
+  id: "delivery.cli",
+  version: "1.0.0",
+  maxturns: ${maxturns},
+  input: { type: "object", additionalproperties: true },
+  output: { type: "object", additionalproperties: true },
+  async run(ctx) { return ctx.task("work", { request: "cli" }); }
+});
+`;
 	writeFileSync(join(source, "processes/cli.ts"), processcontent);
 	writeFileSync(
 		join(source, "omnipotence.blueprint.json"),
@@ -110,13 +118,7 @@ describe("omnipotence cli", () => {
 		expect(objectvalue(objectvalue(preview.parsed, "preview").data, "preview.data").action).toBe("install");
 		if (!options.dbpath) throw new Error("expected cli database path");
 		expect(existsSync(options.dbpath)).toBe(false);
-		const rejected = await invoke(options, [
-			"--json",
-			"blueprint",
-			"install",
-			source,
-			"--network",
-		]);
+		const rejected = await invoke(options, ["--json", "blueprint", "install", source, "--network"]);
 		expect(rejected.code).toBe(2);
 		expect(existsSync(options.dbpath)).toBe(false);
 
@@ -124,9 +126,7 @@ describe("omnipotence cli", () => {
 		expect(installed.code).toBe(0);
 		const processes = await invoke(options, ["--json", "process", "list"]);
 		const processdata = objectvalue(objectvalue(processes.parsed, "processes").data, "processes.data");
-		expect(processdata.processes).toEqual([
-			{ blueprint: "cli-pack@1.0.0", id: "delivery.cli", version: "1.0.0" },
-		]);
+		expect(processdata.processes).toEqual([{ blueprint: "cli-pack@1.0.0", id: "delivery.cli", version: "1.0.0" }]);
 
 		const started = await invoke(options, [
 			"--json",
@@ -142,9 +142,7 @@ describe("omnipotence cli", () => {
 		const startdata = objectvalue(objectvalue(started.parsed, "started").data, "started.data");
 		expect(startdata.status).toBe("waiting");
 		const run = objectvalue(startdata.run, "started.run");
-		expect(objectvalue(objectvalue(run.profile, "started.profile").metadata, "started.metadata").blueprint).toBe(
-			true,
-		);
+		expect(objectvalue(objectvalue(run.profile, "started.profile").metadata, "started.metadata").blueprint).toBe(true);
 		const effects = startdata.effects;
 		if (!Array.isArray(effects) || effects.length !== 1) throw new Error("expected one effect");
 		const effect = objectvalue(effects[0], "started.effect");
@@ -166,13 +164,108 @@ describe("omnipotence cli", () => {
 			"--value",
 			'{"done":true}',
 		]);
+
 		expect(completed.code).toBe(0);
-		expect(objectvalue(objectvalue(completed.parsed, "completed").data, "completed.data").status).toBe(
-			"completed",
-		);
+		expect(objectvalue(objectvalue(completed.parsed, "completed").data, "completed.data").status).toBe("completed");
 
 		const status = await invoke(options, ["--json", "run", "status", String(run.id)]);
 		expect(objectvalue(objectvalue(status.parsed, "status").data, "status.data").status).toBe("completed");
+	});
+	test("forever mode crosses the cli process turn budget", async () => {
+		const { root, options } = opencli();
+		const source = processfixture(root, undefined, 1);
+		expect((await invoke(options, ["--json", "blueprint", "install", source])).code).toBe(0);
+
+		const finite = await invoke(options, [
+			"--json",
+			"run",
+			"start",
+			"delivery.cli",
+			"--mode",
+			"call",
+			"--session",
+			"cli-finite-budget",
+			"--input",
+			"{}",
+		]);
+		expect(finite.code).toBe(0);
+		expect(finite.stdout.trim().split("\n")).toHaveLength(1);
+		const finitedata = objectvalue(objectvalue(finite.parsed, "finite").data, "finite.data");
+		const finiterun = objectvalue(finitedata.run, "finite.run");
+		expect(finiterun.mode).toBe("call");
+		expect(finiterun.maxturns).toBe(1);
+		const finiteeffects = finitedata.effects;
+		if (!Array.isArray(finiteeffects) || finiteeffects.length !== 1) throw new Error("expected one finite effect");
+		const finiteeffect = objectvalue(finiteeffects[0], "finite.effect");
+		const finitepost = await invoke(options, [
+			"--json",
+			"effect",
+			"post",
+			String(finiterun.id),
+			String(finiteeffect.id),
+			"--root",
+			String(finiterun.id),
+			"--fence",
+			String(finiteeffect.fence),
+			"--input-hash",
+			String(finiteeffect.inputhash),
+			"--status",
+			"ok",
+			"--value",
+			'{"done":true}',
+		]);
+		expect(finitepost.code).toBe(3);
+		expect(finitepost.stdout.trim().split("\n")).toHaveLength(1);
+		const finitepostdata = objectvalue(objectvalue(finitepost.parsed, "finitepost").data, "finitepost.data");
+		expect(finitepostdata.status).toBe("blocked");
+		expect(objectvalue(finitepostdata.run, "finitepost.run").blockedreason).toBe("turn budget 1 exhausted");
+
+		const forever = await invoke(options, [
+			"--json",
+			"run",
+			"start",
+			"delivery.cli",
+			"--mode",
+			"forever",
+			"--session",
+			"cli-forever-budget",
+			"--input",
+			"{}",
+		]);
+		expect(forever.code).toBe(0);
+		expect(forever.stdout.trim().split("\n")).toHaveLength(1);
+		const foreverdata = objectvalue(objectvalue(forever.parsed, "forever").data, "forever.data");
+		const foreverrun = objectvalue(foreverdata.run, "forever.run");
+		expect(foreverrun.mode).toBe("forever");
+		expect(foreverrun.maxturns).toBe(1);
+		const forevereffects = foreverdata.effects;
+		if (!Array.isArray(forevereffects) || forevereffects.length !== 1) throw new Error("expected one forever effect");
+		const forevereffect = objectvalue(forevereffects[0], "forever.effect");
+		const foreverpost = await invoke(options, [
+			"--json",
+			"effect",
+			"post",
+			String(foreverrun.id),
+			String(forevereffect.id),
+			"--root",
+			String(foreverrun.id),
+			"--fence",
+			String(forevereffect.fence),
+			"--input-hash",
+			String(forevereffect.inputhash),
+			"--status",
+			"ok",
+			"--value",
+			'{"done":true}',
+		]);
+		expect(foreverpost.code).toBe(0);
+		expect(foreverpost.stdout.trim().split("\n")).toHaveLength(1);
+		const foreverpostdata = objectvalue(objectvalue(foreverpost.parsed, "foreverpost").data, "foreverpost.data");
+		expect(foreverpostdata.status).toBe("completed");
+		const completedrun = objectvalue(foreverpostdata.run, "foreverpost.run");
+		expect(completedrun.mode).toBe("forever");
+		expect(completedrun.maxturns).toBe(1);
+		expect(completedrun.turns).toBe(2);
 	});
 	test("run halt uses the engine and preserves the halt fence", async () => {
 		const { root, options } = opencli();
@@ -192,14 +285,7 @@ describe("omnipotence cli", () => {
 		const startdata = objectvalue(objectvalue(started.parsed, "started").data, "started.data");
 		const run = objectvalue(startdata.run, "started.run");
 		const reason = "operator requested stop";
-		const halted = await invoke(options, [
-			"--json",
-			"run",
-			"halt",
-			String(run.id),
-			"--reason",
-			reason,
-		]);
+		const halted = await invoke(options, ["--json", "run", "halt", String(run.id), "--reason", reason]);
 		expect(halted.code).toBe(0);
 		const haltedrun = objectvalue(objectvalue(halted.parsed, "halted").data, "halted.data");
 		expect(haltedrun.status).toBe("halted");
@@ -243,9 +329,7 @@ describe("omnipotence cli", () => {
 
 		const invalid = await invoke(options, ["--json", "run", "status", "missing"]);
 		expect(invalid.code).toBe(1);
-		expect(objectvalue(objectvalue(invalid.parsed, "invalid").error, "invalid.error").code).toBe(
-			"operational_error",
-		);
+		expect(objectvalue(objectvalue(invalid.parsed, "invalid").error, "invalid.error").code).toBe("operational_error");
 	});
 
 	test("doctor does not execute active blueprint modules", async () => {
@@ -368,5 +452,4 @@ describe("omnipotence cli", () => {
 		]);
 		expect(valid.code).toBe(0);
 	});
-
 });
