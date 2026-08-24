@@ -49,7 +49,7 @@ omnipotence combines these public capabilities:
 - deterministic process replay from sqlite events and projections.
 - schema-validated process input and output with semantic process versions and finite turn budgets.
 - task, bounded parallel, subprocess, sleep, breakpoint, hook, and halt primitives.
-- `babysit`, `call`, `plan`, `yolo`, `forever`, and resume policies on one engine.
+- `babysit`, `plan`, `yolo`, `forever`, and resume policies on one engine.
 - session-bound result ownership, root-tree operation leases, fencing, idempotent posts, and explicit uncertain-effect recovery.
 - ordered lifecycle hooks and versioned user and project profile layers.
 - hash-verified local blueprints with semantic selection, minimum engine versions, update, rollback, and guarded removal.
@@ -157,7 +157,7 @@ source: `omnipotence/contracts.ts` and `omnipotence/engine.ts`.
 
 ### start-command format
 
-the five start commands use the same format:
+the four start commands use the same format:
 
 ```text
 /<command> <process-id> [json-input]
@@ -176,7 +176,6 @@ source: `omnipotence/index.ts`.
 | what you want | command | mode |
 | --- | --- | --- |
 | run normally and pause when the recipe asks | `/omnipotence` | `babysit` |
-| use the current alternative name for the same behavior | `/omnipotence-call` | `call` |
 | preview the first step without doing it | `/omnipotence-plan` | `plan` |
 | do the work with fewer optional pauses | `/omnipotence-yolo` | `yolo` |
 | select the persistent policy label | `/omnipotence-forever` | `forever` |
@@ -191,15 +190,10 @@ it performs the real work in the process. when the process reaches an optional o
 /omnipotence delivery.review {"request":"review this change"}
 ```
 
-### call mode
+### schema 8 upgrade note
 
-`call` mode currently behaves exactly like `babysit` mode. it performs the real work and waits at optional and required breakpoints. it is not faster, less interactive, or limited to one step.
+existing stored `call` runs become `babysit` automatically. historical event output may still show `call`; replay and recovery remain supported.
 
-the command exists as a separate mode name, but the current release gives `call` and `babysit` the same execution policy.
-
-```text
-/omnipotence-call delivery.review {"request":"run directly"}
-```
 
 ### plan mode
 
