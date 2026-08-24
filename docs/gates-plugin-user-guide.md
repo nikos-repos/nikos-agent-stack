@@ -580,24 +580,42 @@ source: [scratchpad tool and identity coverage](../gate-checker/index.ts), [reco
 
 ## command-line tools
 
-the manifest declares one executable, `nikos-gates`. installing or linking the
-plugin publishes it. run it from any directory:
+`omp plugin install` and `omp plugin link` register omp extensions only. they do
+not install shell commands.
+
+to install the published shell commands, run:
+
+```sh
+bun add --global nikos-agent-stack
+```
+
+to register shell commands from a local checkout, run `bun link` from the
+repository root:
+
+```sh
+bun link
+```
+
+prepend the bun global bin directory to your path in the current shell before
+running the bare commands:
+
+```sh
+export PATH="$(bun pm bin -g):$PATH"
+```
+
+both installations provide `nikos-gates` and `omnipotence`. run them from any
+directory:
 
 ```sh
 nikos-gates <command>
+omnipotence --help
 ```
 
-supported commands are `audit`, `cutover`, and `stats`. an unknown command
-prints the usage summary.
-
-if the shell cannot find the name, call the published binary directly:
-
-```sh
-~/.omp/plugins/node_modules/.bin/nikos-gates <command>
-```
+supported `nikos-gates` commands are `audit`, `cutover`, and `stats`. an unknown
+command prints the usage summary.
 
 from a repository checkout, `bun run gate-checker/gate-cli.js <command>` runs
-the same interface without an installed plugin.
+the same interface without a global install or link.
 
 ### cutover
 
@@ -714,9 +732,10 @@ source: [declared extension entries](../package.json)
 
 ### the nikos-gates command is not found
 
-the executable arrives with the plugin. confirm the installation first, then
-call `~/.omp/plugins/node_modules/.bin/nikos-gates` directly, or run
-`bun run gate-checker/gate-cli.js` from a repository checkout.
+install the shell commands with `bun add --global nikos-agent-stack`, or run
+`bun link` from a repository checkout. ensure the directory reported by
+`bun pm bin -g` is on your path. from a checkout, use
+`bun run gate-checker/gate-cli.js <command>` as the direct fallback.
 
 source: [declared executable](../package.json), [cli entry point](../gate-checker/gate-cli.js)
 

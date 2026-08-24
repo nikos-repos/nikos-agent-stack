@@ -27,6 +27,13 @@ published install:
 omp plugin install nikos-agent-stack
 ```
 
+this registers omp extensions only. if you need the `nikos-gates` or `omnipotence` shell commands, also install the published package globally:
+
+```sh
+bun add --global nikos-agent-stack
+export PATH="$(bun pm bin -g):$PATH"
+```
+
 then start an omp session and run the installed plugin setup command:
 
 ```text
@@ -44,7 +51,11 @@ local development install, from a clone of this repository:
 
 ```sh
 omp plugin link .
+bun link
+PATH="$(bun pm bin -g):$PATH" omnipotence --help
 ```
+
+`omp plugin link .` registers omp extensions only. `bun link` registers shell commands from this checkout. the verification command prepends bun's global bin directory to `path` for this invocation, so it works even when that directory was not already on `path`.
 
 then start an omp session and run `/advisor-install`.
 

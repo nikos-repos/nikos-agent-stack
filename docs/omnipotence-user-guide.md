@@ -15,12 +15,28 @@ source: `package.json#engines`, `package.json#omp.extensions`, and `package.json
 
 ## install
 
-install or link nikos-agent-stack by using the existing repository instructions. the package registers the omnipotence extension after gate-checker and exposes the `omnipotence` binary.
+published install:
+
+```sh
+omp plugin install nikos-agent-stack
+```
+
+this registers omp extensions only. if you need the `nikos-gates` or `omnipotence` shell commands, also install the published package globally:
+
+```sh
+bun add --global nikos-agent-stack
+export PATH="$(bun pm bin -g):$PATH"
+```
+
+local checkout install:
 
 ```sh
 omp plugin link .
-omnipotence --help
+bun link
+PATH="$(bun pm bin -g):$PATH" omnipotence --help
 ```
+
+`omp plugin link .` registers omp extensions only. `bun link` registers shell commands from this checkout. the verification command prepends bun's global bin directory to `path` for this invocation, so it works even when that directory was not already on `path`.
 
 gate-checker remains first in extension order. if a delivery gate requests another turn, omnipotence does not schedule the next process effect until that gate passes.
 
