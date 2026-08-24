@@ -28,7 +28,7 @@ describe("built-in orchestration modes", () => {
 		expect(modepolicy("call")).toEqual({ execute: true, optionalbreakpoints: true, persistent: false });
 		expect(modepolicy("plan")).toEqual({ execute: false, optionalbreakpoints: false, persistent: false });
 		expect(modepolicy("yolo")).toEqual({ execute: true, optionalbreakpoints: false, persistent: false });
-		expect(modepolicy("forever")).toEqual({ execute: true, optionalbreakpoints: true, persistent: true });
+		expect(modepolicy("forever")).toEqual({ execute: true, optionalbreakpoints: false, persistent: true });
 		expect(modepolicy("resume")).toEqual({ execute: true, optionalbreakpoints: true, persistent: false });
 	});
 
@@ -57,7 +57,7 @@ describe("built-in orchestration modes", () => {
 		store.close();
 	});
 
-	test("resume extends an exhausted finite budget and uncertain effects need a decision", async () => {
+	test("finite budget resumes with an extended budget and uncertain effects need a decision", async () => {
 		const { store, engine } = openengine();
 		engine.register(
 			defineprocess({
@@ -75,10 +75,12 @@ describe("built-in orchestration modes", () => {
 		const budgetrun = await engine.start({
 			processid: "delivery.budget",
 			sessionid: "session-budget",
-			mode: "forever",
+			mode: "call",
 			input: {},
 		});
 		if (budgetrun.status !== "waiting") throw new Error("expected budget effect");
+		expect(budgetrun.run.maxturns).toBe(1);
+		expect(budgetrun.run.turns).toBe(1);
 		const budgeteffect = budgetrun.effects[0]!;
 		const blocked = await engine.posteffect({
 			rootrunid: budgetrun.run.id,
@@ -90,8 +92,15 @@ describe("built-in orchestration modes", () => {
 			value: { done: true },
 		});
 		expect(blocked.status).toBe("blocked");
+		if (blocked.status !== "blocked") throw new Error("expected finite budget block");
+		expect(blocked.reason).toBe("turn budget 1 exhausted");
+		expect(blocked.run.maxturns).toBe(1);
+		expect(blocked.run.turns).toBe(2);
 		const resumed = await engine.resume(budgetrun.run.id);
 		expect(resumed.status).toBe("completed");
+		if (resumed.status !== "completed") throw new Error("expected finite budget recovery");
+		expect(resumed.run.maxturns).toBe(3);
+		expect(resumed.run.turns).toBe(3);
 
 		const uncertainrun = await engine.start({
 			processid: "delivery.budget",
@@ -111,6 +120,8 @@ describe("built-in orchestration modes", () => {
 			error: { message: "unknown outcome" },
 		});
 		expect(uncertain.status).toBe("blocked");
+		if (uncertain.status !== "blocked") throw new Error("expected uncertain block");
+		expect(uncertain.reason).toBe(`effect ${uncertaineffect.id} outcome is uncertain`);
 		await expect(engine.resume(uncertainrun.run.id)).rejects.toThrow(
 			"run has an uncertain effect; resolve it explicitly",
 		);

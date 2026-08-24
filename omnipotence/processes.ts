@@ -13,7 +13,7 @@ const policies: Record<publicpolicy, Readonly<modeconfiguration>> = {
 	call: Object.freeze({ execute: true, optionalbreakpoints: true, persistent: false }),
 	plan: Object.freeze({ execute: false, optionalbreakpoints: false, persistent: false }),
 	yolo: Object.freeze({ execute: true, optionalbreakpoints: false, persistent: false }),
-	forever: Object.freeze({ execute: true, optionalbreakpoints: true, persistent: true }),
+	forever: Object.freeze({ execute: true, optionalbreakpoints: false, persistent: true }),
 	resume: Object.freeze({ execute: true, optionalbreakpoints: true, persistent: false }),
 };
 

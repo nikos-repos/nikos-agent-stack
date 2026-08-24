@@ -46,7 +46,6 @@ function openmutationengine() {
 	return { store, engine: new orchestrationengine(store), path };
 }
 
-
 function registersnapshotprocess(engine: orchestrationengine, id: string): void {
 	engine.register(
 		defineprocess({
@@ -327,7 +326,6 @@ describe("deterministic process engine", () => {
 		store.close();
 	});
 
-
 	test("empty parallel groups complete without effects in execute and plan modes", async () => {
 		const { store, engine } = openengine();
 		engine.register(
@@ -539,9 +537,7 @@ describe("deterministic process engine", () => {
 		const leaf = started.effects[0]!;
 		const rootchild = store.geteffectbykey(started.run.id, "nested");
 		if (!rootchild) throw new Error("expected root subprocess effect");
-		const child = store
-			.listruns()
-			.find((candidate) => candidate.id !== started.run.id && candidate.id !== leaf.runid);
+		const child = store.listruns().find((candidate) => candidate.id !== started.run.id && candidate.id !== leaf.runid);
 		if (!child) throw new Error("expected child run");
 		const childnested = store.geteffectbykey(child.id, "leaf");
 		if (!childnested) throw new Error("expected nested subprocess effect");
@@ -603,6 +599,291 @@ describe("deterministic process engine", () => {
 		expect(blocked.status).toBe("blocked");
 		if (blocked.status !== "blocked") throw new Error("expected blocked result");
 		expect(blocked.reason).toBe("turn budget 1 exhausted");
+		store.close();
+	});
+	test("forever runs cross sequential task boundaries without growing maxturns", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.forever-sequence",
+				version: "1.0.0",
+				maxturns: 1,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					const first = await ctx.task("first", {});
+					const second = await ctx.task("second", {});
+					return { first, second };
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.forever-sequence",
+			sessionid: "session-forever-sequence",
+			mode: "forever",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected first forever effect");
+		expect(started.effects.map((effect) => effect.key)).toEqual(["first"]);
+		expect(started.run.turns).toBe(1);
+		expect(started.run.maxturns).toBe(1);
+
+		const first = started.effects[0]!;
+		const middle = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: first.runid,
+			effectid: first.id,
+			fence: first.fence,
+			inputhash: first.inputhash,
+			status: "ok",
+			value: { done: "first" },
+		});
+		if (middle.status !== "waiting") throw new Error("expected second forever effect");
+		expect(middle.effects.map((effect) => effect.key)).toEqual(["second"]);
+		expect(middle.run.turns).toBe(2);
+		expect(middle.run.maxturns).toBe(1);
+
+		const second = middle.effects[0]!;
+		const completed = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: second.runid,
+			effectid: second.id,
+			fence: second.fence,
+			inputhash: second.inputhash,
+			status: "ok",
+			value: { done: "second" },
+		});
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected forever completion");
+		expect(completed.run.turns).toBe(3);
+		expect(completed.run.maxturns).toBe(1);
+		expect(completed.output).toEqual({
+			first: { done: "first" },
+			second: { done: "second" },
+		});
+		store.close();
+	});
+
+	test("forever auto-approves optional breakpoints and waits for required ones", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.forever-optional-breakpoint",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return {
+						approval: await ctx.breakpoint("optional", {
+							question: "continue",
+							required: false,
+						}),
+					};
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.forever-required-breakpoint",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.breakpoint("required", {
+						question: "continue",
+						required: true,
+					});
+				},
+			}),
+		);
+
+		const optional = await engine.start({
+			processid: "delivery.forever-optional-breakpoint",
+			sessionid: "session-forever-optional-breakpoint",
+			mode: "forever",
+			input: {},
+		});
+		expect(optional.status).toBe("completed");
+		if (optional.status !== "completed") throw new Error("expected optional breakpoint approval");
+		expect(optional.output).toEqual({
+			approval: { approved: true, mode: "forever" },
+		});
+		expect(store.listeffects(optional.run.id)).toHaveLength(0);
+
+		const required = await engine.start({
+			processid: "delivery.forever-required-breakpoint",
+			sessionid: "session-forever-required-breakpoint",
+			mode: "forever",
+			input: {},
+		});
+		if (required.status !== "waiting") throw new Error("expected required breakpoint");
+		expect(required.run.status).toBe("waiting_for_user");
+		expect(required.effects.map((effect) => effect.key)).toEqual(["required"]);
+		expect(required.effects[0]?.kind).toBe("breakpoint");
+		store.close();
+	});
+
+	test("forever subprocesses inherit budget persistence and breakpoint policy", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.forever-child",
+				version: "1.0.0",
+				maxturns: 1,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					const approval = await ctx.breakpoint("optional", { required: false });
+					const first = await ctx.task("first", {});
+					const second = await ctx.task("second", {});
+					return { approval, first, second };
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.forever-parent",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("child", "delivery.forever-child", {});
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.forever-parent",
+			sessionid: "session-forever-subprocess",
+			mode: "forever",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected inherited child effect");
+		expect(started.effects.map((effect) => effect.key)).toEqual(["first"]);
+		const child = store.listruns().find((run) => run.processid === "delivery.forever-child");
+		if (!child) throw new Error("expected forever child run");
+		expect(child.mode).toBe("forever");
+		expect(child.maxturns).toBe(1);
+		expect(child.turns).toBe(1);
+
+		const first = started.effects[0]!;
+		const middle = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: first.runid,
+			effectid: first.id,
+			fence: first.fence,
+			inputhash: first.inputhash,
+			status: "ok",
+			value: { done: "first" },
+		});
+		if (middle.status !== "waiting") throw new Error("expected inherited second child effect");
+		expect(middle.effects.map((effect) => effect.key)).toEqual(["second"]);
+		expect(store.getrun(child.id)?.turns).toBe(2);
+		expect(store.getrun(child.id)?.maxturns).toBe(1);
+
+		const second = middle.effects[0]!;
+		const completed = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: second.runid,
+			effectid: second.id,
+			fence: second.fence,
+			inputhash: second.inputhash,
+			status: "ok",
+			value: { done: "second" },
+		});
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected inherited child completion");
+		expect(completed.output).toEqual({
+			approval: { approved: true, mode: "forever" },
+			first: { done: "first" },
+			second: { done: "second" },
+		});
+		expect(store.getrun(child.id)).toMatchObject({
+			status: "completed",
+			mode: "forever",
+			maxturns: 1,
+			turns: 3,
+		});
+		store.close();
+	});
+
+	test("advance recovers only legacy forever budget blocks", async () => {
+		const { store, engine } = openengine();
+		engine.register(
+			defineprocess({
+				id: "delivery.legacy-budget",
+				version: "1.0.0",
+				maxturns: 1,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.task("work", {});
+				},
+			}),
+		);
+
+		const forever = await engine.start({
+			processid: "delivery.legacy-budget",
+			sessionid: "session-legacy-forever",
+			mode: "forever",
+			input: {},
+		});
+		if (forever.status !== "waiting") throw new Error("expected legacy forever effect");
+		const legacyeffect = forever.effects[0]!;
+		store.transitionrun(forever.run.id, "blocked", null, "turn budget 1 exhausted");
+		const recovered = await engine.advance(forever.run.id);
+		if (recovered.status !== "waiting") throw new Error("expected legacy budget recovery");
+		expect(recovered.run.status).toBe("waiting_effect");
+		expect(recovered.run.blockedreason).toBeNull();
+		expect(recovered.run.maxturns).toBe(1);
+		expect(recovered.run.turns).toBe(2);
+		expect(recovered.effects.map((effect) => effect.id)).toEqual([legacyeffect.id]);
+		const completed = await engine.posteffect({
+			rootrunid: forever.run.id,
+			runid: legacyeffect.runid,
+			effectid: legacyeffect.id,
+			fence: legacyeffect.fence,
+			inputhash: legacyeffect.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected recovered forever completion");
+		expect(completed.run.maxturns).toBe(1);
+		expect(completed.run.turns).toBe(3);
+
+		const finite = await engine.start({
+			processid: "delivery.legacy-budget",
+			sessionid: "session-legacy-finite",
+			mode: "call",
+			input: {},
+		});
+		if (finite.status !== "waiting") throw new Error("expected finite effect");
+		store.transitionrun(finite.run.id, "blocked", null, "turn budget 1 exhausted");
+		const finiteblocked = await engine.advance(finite.run.id);
+		expect(finiteblocked.status).toBe("blocked");
+		if (finiteblocked.status !== "blocked") throw new Error("expected finite block to remain");
+		expect(finiteblocked.reason).toBe("turn budget 1 exhausted");
+		expect(finiteblocked.run.maxturns).toBe(1);
+		expect(finiteblocked.run.turns).toBe(1);
+
+		const nonbudget = await engine.start({
+			processid: "delivery.legacy-budget",
+			sessionid: "session-legacy-nonbudget",
+			mode: "forever",
+			input: {},
+		});
+		if (nonbudget.status !== "waiting") throw new Error("expected non-budget effect");
+		const nonbudgeteffect = nonbudget.effects[0]!;
+		store.transitionrun(nonbudget.run.id, "blocked", null, "operator paused");
+		const stillblocked = await engine.advance(nonbudget.run.id);
+		expect(stillblocked.status).toBe("blocked");
+		if (stillblocked.status !== "blocked") throw new Error("expected non-budget block to remain");
+		expect(stillblocked.reason).toBe("operator paused");
+		expect(stillblocked.run.maxturns).toBe(1);
+		expect(stillblocked.run.turns).toBe(1);
+		expect(store.geteffect(nonbudget.run.id, nonbudgeteffect.id)?.status).toBe("requested");
 		store.close();
 	});
 
@@ -743,9 +1024,7 @@ describe("deterministic process engine", () => {
 				status: "ok",
 				value: {},
 			}),
-		).rejects.toThrow(
-			`effect run ${second.run.id} is not owned by root run ${first.run.id}`,
-		);
+		).rejects.toThrow(`effect run ${second.run.id} is not owned by root run ${first.run.id}`);
 		expect(store.geteffect(second.run.id, effect.id)?.status).toBe("requested");
 		store.close();
 	});
@@ -867,15 +1146,17 @@ describe("deterministic process engine", () => {
 		const completed = await first;
 		expect(completed.status).toBe("completed");
 		expect(beforeadvance).toBe(1);
-		const terminalevents = store.events(started.run.id).filter(
-			(event) =>
-				event.type === "run_status" &&
-				event.payload !== null &&
-				typeof event.payload === "object" &&
-				!Array.isArray(event.payload) &&
-				"status" in event.payload &&
-				event.payload.status === "completed",
-		);
+		const terminalevents = store
+			.events(started.run.id)
+			.filter(
+				(event) =>
+					event.type === "run_status" &&
+					event.payload !== null &&
+					typeof event.payload === "object" &&
+					!Array.isArray(event.payload) &&
+					"status" in event.payload &&
+					event.payload.status === "completed",
+			);
 		expect(terminalevents).toHaveLength(1);
 		store.close();
 	});
@@ -1187,9 +1468,7 @@ describe("deterministic process engine", () => {
 		if (!child || !leaf) throw new Error("expected owned descendants");
 		const root = store.getrun(started.run.id);
 		if (!root) throw new Error("expected root run");
-		const initialfences = new Map(
-			[root, child, leaf].map((run) => [run.id, run.fence]),
-		);
+		const initialfences = new Map([root, child, leaf].map((run) => [run.id, run.fence]));
 
 		const entered = Promise.withResolvers<void>();
 		const release = Promise.withResolvers<void>();
@@ -1230,9 +1509,7 @@ describe("deterministic process engine", () => {
 
 		const first = engine.halt(root.id, "operator requested stop");
 		await entered.promise;
-		await expect(engine.advance(child.id)).rejects.toThrow(
-			`run ${root.id} is leased by another engine`,
-		);
+		await expect(engine.advance(child.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
 		expect(beforeadvancehooks).toBe(0);
 		await expect(engine.advance(root.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
 
@@ -1247,15 +1524,17 @@ describe("deterministic process engine", () => {
 		}
 
 		const haltedevent = (runid: string) =>
-			store.events(runid).find(
-				(event) =>
-					event.type === "run_status" &&
-					event.payload &&
-					typeof event.payload === "object" &&
-					!Array.isArray(event.payload) &&
-					"status" in event.payload &&
-					event.payload.status === "halted",
-			);
+			store
+				.events(runid)
+				.find(
+					(event) =>
+						event.type === "run_status" &&
+						event.payload &&
+						typeof event.payload === "object" &&
+						!Array.isArray(event.payload) &&
+						"status" in event.payload &&
+						event.payload.status === "halted",
+				);
 		const leafhalt = haltedevent(leaf.id);
 		const childhalt = haltedevent(child.id);
 		const roothalt = haltedevent(root.id);

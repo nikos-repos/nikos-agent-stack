@@ -19,13 +19,7 @@ import { hookdispatcherror, hookregistry } from "./hooks.ts";
 import type { hookphase, hookresult, hookselector } from "./hooks.ts";
 import { modepolicy } from "./processes.ts";
 import { orchestrationstore } from "./store.ts";
-import type {
-	effectpost,
-	effectrecord,
-	hookdeliveryrecord,
-	runrecord,
-	uncertainresolution,
-} from "./store.ts";
+import type { effectpost, effectrecord, hookdeliveryrecord, runrecord, uncertainresolution } from "./store.ts";
 
 export interface startinput {
 	runid?: string;
@@ -113,7 +107,13 @@ function processkey(process: Readonly<processdefinition>): string {
 	return `${process.id}@${process.version}@${process.blueprint?.name ?? ""}@${process.blueprint?.version ?? ""}`;
 }
 
-function subprocessrunid(parentrunid: string, key: string, processid: string, version: string, input: jsonvalue): string {
+function subprocessrunid(
+	parentrunid: string,
+	key: string,
+	processid: string,
+	version: string,
+	input: jsonvalue,
+): string {
 	const digest = createHash("sha256")
 		.update(`${parentrunid}\n${key}\n${processid}\n${version}\n${stablejson(input)}`)
 		.digest("hex");
@@ -138,6 +138,11 @@ function assertparallelmaxconcurrency(maxconcurrency: number): void {
 function objectinput(value: jsonvalue, path: string): Record<string, jsonvalue> {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path}: expected object`);
 	return value;
+}
+
+function isturnbudgetreason(reason: string | null | undefined): boolean {
+	if (reason === null || reason === undefined) return false;
+	return reason.startsWith("turn budget ");
 }
 
 function terminalresult(run: runrecord): advanceresult | null {
@@ -230,8 +235,7 @@ export class orchestrationengine {
 			.filter((process) => version === undefined || process.version === version)
 			.filter((process) =>
 				blueprint
-					? process.blueprint?.name === blueprint.name &&
-						process.blueprint.version === blueprint.version
+					? process.blueprint?.name === blueprint.name && process.blueprint.version === blueprint.version
 					: process.active,
 			)
 			.sort((left, right) => compareversions(right.version, left.version));
@@ -271,11 +275,7 @@ export class orchestrationengine {
 
 	private async dispatchhookdelivery(delivery: hookdeliveryrecord): Promise<void> {
 		try {
-			const result = await this.hooks.dispatchone(
-				delivery.hookid,
-				delivery.input,
-				this.hookdeliveryselector(delivery),
-			);
+			const result = await this.hooks.dispatchone(delivery.hookid, delivery.input, this.hookdeliveryselector(delivery));
 			this.store.completehookdelivery(delivery);
 			this.store.recordevent(delivery.runid, "hook_completed", jsonvalueof(result));
 		} catch (error) {
@@ -325,7 +325,6 @@ export class orchestrationengine {
 			await this.dispatchhookdelivery(delivery);
 		}
 	}
-
 
 	private async postsafe(runid: string, phase: hookphase, input: jsonvalue): Promise<void> {
 		try {
@@ -393,12 +392,7 @@ export class orchestrationengine {
 		throw new effectpending([effect]);
 	}
 
-	private async ensureeffect(
-		run: runrecord,
-		kind: effectkind,
-		key: string,
-		input: jsonvalue,
-	): Promise<effectrecord> {
+	private async ensureeffect(run: runrecord, kind: effectkind, key: string, input: jsonvalue): Promise<effectrecord> {
 		asserteffectkey(key);
 		const existing = this.store.geteffectbykey(run.id, key);
 		if (!existing) {
@@ -463,12 +457,7 @@ export class orchestrationengine {
 		return effects.map((effect) => this.effectvalue(effect));
 	}
 
-	private async subprocess(
-		run: runrecord,
-		key: string,
-		processid: string,
-		input: jsonvalue,
-	): Promise<jsonvalue> {
+	private async subprocess(run: runrecord, key: string, processid: string, input: jsonvalue): Promise<jsonvalue> {
 		asserteffectkey(key);
 		assertprocessid(processid);
 		let childprocess: Readonly<processdefinition>;
@@ -510,8 +499,7 @@ export class orchestrationengine {
 			childprocess = this.requireprocess(
 				processid,
 				childversion,
-				typeof stored.blueprintname === "string" &&
-					typeof stored.blueprintversion === "string"
+				typeof stored.blueprintname === "string" && typeof stored.blueprintversion === "string"
 					? { name: stored.blueprintname, version: stored.blueprintversion }
 					: undefined,
 			);
@@ -536,7 +524,8 @@ export class orchestrationengine {
 		if (parent.status === "resolved_error" || parent.status === "cancelled") throw new effectexecutionerror(parent);
 		const childresult = await this.advanceclaimed(childrunid);
 		if (childresult.status === "waiting") throw new effectpending(childresult.effects);
-		if (childresult.status === "blocked") throw new processblocked(`child ${childrunid} blocked: ${childresult.reason}`);
+		if (childresult.status === "blocked")
+			throw new processblocked(`child ${childrunid} blocked: ${childresult.reason}`);
 		if (childresult.status === "failed") {
 			await this.resolveinternaleffect(run.id, parent, "error", { childrunid, error: childresult.error });
 			throw new effectexecutionerror(this.store.geteffect(run.id, parent.id) ?? parent);
@@ -579,10 +568,8 @@ export class orchestrationengine {
 			}
 			selector = {
 				version: typeof stored.hookversion === "string" ? stored.hookversion : undefined,
-				blueprintname:
-					typeof stored.blueprintname === "string" ? stored.blueprintname : undefined,
-				blueprintversion:
-					typeof stored.blueprintversion === "string" ? stored.blueprintversion : undefined,
+				blueprintname: typeof stored.blueprintname === "string" ? stored.blueprintname : undefined,
+				blueprintversion: typeof stored.blueprintversion === "string" ? stored.blueprintversion : undefined,
 			};
 		} else {
 			const selected = this.hooks.resolve(
@@ -631,15 +618,13 @@ export class orchestrationengine {
 	}
 
 	private plancontext(run: runrecord): processcontext {
-		const pending = (request: planentry): Promise<never> =>
-			Promise.reject(new planpending([request]));
+		const pending = (request: planentry): Promise<never> => Promise.reject(new planpending([request]));
 		return {
 			runid: run.id,
 			profile: run.profile,
 			task: (key, input) => pending({ key, kind: "task", input }),
 			parallel: (key, requests, maxconcurrency) => {
-				const effectiveconcurrency =
-					maxconcurrency === undefined ? Math.max(1, requests.length) : maxconcurrency;
+				const effectiveconcurrency = maxconcurrency === undefined ? Math.max(1, requests.length) : maxconcurrency;
 				assertparallelmaxconcurrency(effectiveconcurrency);
 				if (requests.length === 0) return Promise.resolve([]);
 				return pending({
@@ -655,8 +640,7 @@ export class orchestrationengine {
 					},
 				});
 			},
-			subprocess: (key, processid, input) =>
-				pending({ key, kind: "subprocess", input: { processid, input } }),
+			subprocess: (key, processid, input) => pending({ key, kind: "subprocess", input: { processid, input } }),
 			sleep: (key, until) => pending({ key, kind: "sleep", input: { until } }),
 			breakpoint: (key, input) => {
 				const record = objectinput(input, "breakpoint input");
@@ -664,8 +648,7 @@ export class orchestrationengine {
 					? Promise.resolve({ approved: true, mode: run.mode })
 					: pending({ key, kind: "breakpoint", input });
 			},
-			hook: (key, hookid, input) =>
-				pending({ key, kind: "hook", input: { hookid, input } }),
+			hook: (key, hookid, input) => pending({ key, kind: "hook", input: { hookid, input } }),
 			halt(reason, payload = null): never {
 				throw new processhalt(reason, jsonvalueof(payload, "halt payload"));
 			},
@@ -713,8 +696,14 @@ export class orchestrationengine {
 	private async advanceclaimed(runid: string): Promise<advanceresult> {
 		let run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);
+		const policy = modepolicy(run.mode);
 		const terminal = terminalresult(run);
-		if (terminal) return terminal;
+		if (terminal) {
+			if (terminal.status !== "blocked" || !policy.persistent || !isturnbudgetreason(run.blockedreason)) {
+				return terminal;
+			}
+			run = this.store.transitionrun(runid, "running");
+		}
 		const process = this.requireprocess(
 			run.processid,
 			run.processversion,
@@ -725,11 +714,10 @@ export class orchestrationengine {
 		if (processhash(process) !== run.processhash) return this.block(runid, "process source changed during replay");
 
 		if (run.status === "created") run = this.store.transitionrun(runid, "running");
-		if (run.status === "running" && run.turns > run.maxturns) {
+		if (!policy.persistent && run.status === "running" && run.turns > run.maxturns) {
 			return this.block(runid, `turn budget ${run.maxturns} exhausted`);
 		}
 
-		const policy = modepolicy(run.mode);
 		try {
 			if (policy.execute) {
 				await this.dispatchphase(runid, "before_advance", {
@@ -859,9 +847,7 @@ export class orchestrationengine {
 		if (!run) throw new Error(`run ${runid} does not exist`);
 		const terminal = terminalresult(run);
 		if (terminal && terminal.status !== "blocked") return terminal;
-		const ownedeffects = this.ownedrunids(runid).flatMap((ownedrunid) =>
-			this.store.listeffects(ownedrunid),
-		);
+		const ownedeffects = this.ownedrunids(runid).flatMap((ownedrunid) => this.store.listeffects(ownedrunid));
 		const uncertain = ownedeffects.find((effect) => effect.status === "uncertain");
 		if (uncertain) throw new Error("run has an uncertain effect; resolve it explicitly");
 
@@ -897,7 +883,7 @@ export class orchestrationengine {
 				const retriedrun = this.store.getrun(retriedrunid);
 				if (retriedrun?.status === "blocked") this.store.transitionrun(retriedrunid, "running");
 			}
-			if (run.blockedreason?.startsWith("turn budget ")) {
+			if (!modepolicy(run.mode).persistent && isturnbudgetreason(run.blockedreason)) {
 				this.store.extendturnbudget(runid, Math.max(1, run.turns + 1 - run.maxturns));
 			}
 			this.store.transitionrun(runid, "running");
@@ -912,9 +898,7 @@ export class orchestrationengine {
 	async resolveuncertain(resolution: engineresolution): Promise<advanceresult> {
 		return this.withrunsnapshot(resolution.rootrunid, async () => {
 			if (!this.ownsrun(resolution.rootrunid, resolution.runid)) {
-				throw new Error(
-					`effect run ${resolution.runid} is not owned by root run ${resolution.rootrunid}`,
-				);
+				throw new Error(`effect run ${resolution.runid} is not owned by root run ${resolution.rootrunid}`);
 			}
 			const targetrun = this.store.getrun(resolution.runid);
 			if (!targetrun) throw new Error(`run ${resolution.runid} does not exist`);
@@ -942,20 +926,12 @@ export class orchestrationengine {
 				const message = error instanceof Error ? error.message : String(error);
 				return this.block(resolution.rootrunid, message);
 			}
-			if (root.turns >= root.maxturns) {
-				this.store.extendturnbudget(
-					root.id,
-					Math.max(1, root.turns + 1 - root.maxturns),
-				);
+			if (!modepolicy(root.mode).persistent && root.turns >= root.maxturns) {
+				this.store.extendturnbudget(root.id, Math.max(1, root.turns + 1 - root.maxturns));
 			}
 			const resolved = this.store.resolveuncertain(resolution);
 			try {
-				await this.dispatchresolvedeffect(
-					resolution.rootrunid,
-					resolution.runid,
-					resolution.effectid,
-					resolved.status,
-				);
+				await this.dispatchresolvedeffect(resolution.rootrunid, resolution.runid, resolution.effectid, resolved.status);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				return this.block(resolution.rootrunid, message);
