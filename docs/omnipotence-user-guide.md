@@ -190,16 +190,6 @@ it performs the real work in the process. when the process reaches an optional o
 /omnipotence delivery.review {"request":"review this change"}
 ```
 
-### version 2 upgrade from call mode
-
-version 2 removes `/omnipotence-call` and the `call` option for new runs. use `/omnipotence` for normal supervised work.
-
-on the first writable startup, omnipotence upgrades schema 7 state to schema 8. it creates a `.migration-v7-<timestamp>` sqlite backup, changes each stored `call` run projection to `babysit`, and appends a `run_mode_migrated` event. it does not edit or delete older events, so historical event output may still show `call` and its original hashes remain valid.
-
-active effects, sessions, fences, leases, and turn counts remain attached to the same run. replay, resume, doctor, and repair continue under `babysit` behavior. if preflight finds an invalid event chain or projection, migration stops before it changes the database.
-
-source: `package.json`, `omnipotence/store.ts`, `omnipotence/contracts.ts`, and `omnipotence/index.ts`.
-
 ### plan mode
 
 `plan` mode is a preview. it follows the recipe until it finds the first step that would need an effect, then it reports that step without doing it. it does not dispatch hooks or effects.
