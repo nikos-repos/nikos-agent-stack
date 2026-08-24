@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
@@ -52,6 +61,66 @@ const oldArtifacts = [
 	"advisor-role/UPSTREAM_BASE",
 ];
 
+const expectedHelp =
+	[
+		"omnipotence commands:",
+		"  run start|status|events|resume|halt|list",
+		"  effect list|show|post|resolve-uncertain",
+		"  session status|bind|unbind",
+		"  process list|show|validate|plan",
+		"  profile show|write|merge|render",
+		"  blueprint list|inspect|install|update|rollback|remove",
+		"  hook list|inspect|probe",
+		"  doctor",
+		"  repair",
+		"",
+		"global flags: --json --dry-run --help --version",
+	].join("\n") + "\n";
+
+test("a local bun link exposes the omnipotence cli", () => {
+	const bunExecutable = Bun.which("bun");
+	expect(bunExecutable).not.toBeNull();
+	expect(existsSync(bunExecutable!)).toBe(true);
+	const buninstall = mkdtempSync(resolve(tmpdir(), "nikos-agent-stack-bun-"));
+	try {
+		const globalroot = resolve(buninstall, "install/global");
+		mkdirSync(globalroot, { recursive: true });
+		writeFileSync(
+			resolve(globalroot, "package.json"),
+			'{"name":"global","dependencies":{}}\n',
+		);
+		const env = {
+			...process.env,
+			BUN_INSTALL: buninstall,
+			BUN_INSTALL_GLOBAL_DIR: globalroot,
+			BUN_INSTALL_BIN: resolve(buninstall, "bin"),
+		};
+		execFileSync("bun", ["link"], {
+			cwd: root,
+			env,
+			encoding: "utf8",
+			stdio: "pipe",
+		});
+		const globalbin = execFileSync("bun", ["pm", "bin", "-g"], {
+			env,
+			encoding: "utf8",
+		}).trim();
+		expect(existsSync(resolve(globalbin, "omnipotence"))).toBe(true);
+		const result = spawnSync("omnipotence", ["--help"], {
+			cwd: root,
+			env: {
+				...env,
+				PATH: [globalbin, dirname(bunExecutable!)].join(delimiter),
+			},
+			encoding: "utf8",
+		});
+
+		expect(result.status).toBe(0);
+		expect(result.stdout).toBe(expectedHelp);
+	} finally {
+		rmSync(buninstall, { recursive: true, force: true });
+	}
+});
 
 test("the package exposes only the declared public surface", async () => {
 	expect(pkg.name).toBe("nikos-agent-stack");
