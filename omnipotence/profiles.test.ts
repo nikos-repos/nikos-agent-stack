@@ -103,6 +103,9 @@ describe("versioned orchestration profiles", () => {
 
 		const store = new orchestrationstore(path);
 		const profiles = new profileservice(store);
+		const migrated = new Database(path);
+		expect(migrated.query("pragma user_version").get()).toEqual({ user_version: 8 });
+		migrated.close();
 		expect(profiles.history("user", "").map((entry) => entry.version)).toEqual([1]);
 		expect(profiles.write("user", "", { schema: 1, instructions: ["current"] }).version).toBe(2);
 		expect(profiles.history("user", "").map((entry) => entry.version)).toEqual([1, 2]);
@@ -159,7 +162,7 @@ describe("versioned orchestration profiles", () => {
 		const result = await engine.start({
 			processid: "delivery.profile",
 			sessionid: "session-profile",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 			profile: snapshot.effective,
 			userprofileversion: snapshot.userprofileversion,

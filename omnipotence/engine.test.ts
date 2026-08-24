@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defineprocess } from "./contracts.ts";
+import { defineprocess, stablejson } from "./contracts.ts";
 import type { jsonschema } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import { definehook } from "./hooks.ts";
@@ -65,12 +66,41 @@ async function startsnapshotrun(engine: orchestrationengine, processid: string) 
 	const started = await engine.start({
 		processid,
 		sessionid: `session-${processid}`,
-		mode: "call",
+		mode: "babysit",
 		input: {},
 	});
 	if (started.status !== "waiting") throw new Error("expected waiting result");
 	return started;
 }
+
+function markcallrun(path: string, runid: string): void {
+	const external = new Database(path);
+	const rows = external
+		.query("select id, seq, type, payload_json from events where run_id = ? order by seq")
+		.all(runid) as Array<{ id: number; seq: number; type: string; payload_json: string }>;
+	let previoushash: string | null = null;
+	for (const row of rows) {
+		let payload: unknown = JSON.parse(row.payload_json);
+		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+			throw new Error("expected event object");
+		}
+		if (row.type === "run_created" || row.type === "run_status") {
+			payload = { ...payload, mode: "call" };
+		}
+		const payloadjson = stablejson(payload);
+		const hash = createHash("sha256")
+			.update(`${runid}\n${row.seq}\n${row.type}\n${payloadjson}\n${previoushash ?? ""}`)
+			.digest("hex");
+		external
+			.query("update events set payload_json = ?, previous_hash = ?, hash = ? where id = ?")
+			.run(payloadjson, previoushash, hash, row.id);
+		previoushash = hash;
+	}
+	external.query("update runs set mode = 'call' where id = ?").run(runid);
+	external.exec("pragma user_version = 7");
+	external.close();
+}
+
 
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -228,7 +258,7 @@ describe("deterministic process engine", () => {
 		const first = await engine.start({
 			processid: "delivery.session-reservation",
 			sessionid: "session-reservation",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (first.status !== "waiting") throw new Error("expected waiting result");
@@ -237,7 +267,7 @@ describe("deterministic process engine", () => {
 			engine.start({
 				processid: "delivery.session-reservation",
 				sessionid: "session-reservation",
-				mode: "call",
+				mode: "babysit",
 				input: {},
 			}),
 		).rejects.toThrow("session session-reservation already has active run");
@@ -259,7 +289,7 @@ describe("deterministic process engine", () => {
 		const failed = await engine.start({
 			processid: "delivery.session-reservation",
 			sessionid: "session-reservation-failure",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		expect(failed.status).toBe("failed");
@@ -294,7 +324,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.parallel",
 			sessionid: "session-2",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -344,8 +374,8 @@ describe("deterministic process engine", () => {
 
 		const executed = await engine.start({
 			processid: "delivery.parallel-empty",
-			sessionid: "session-parallel-empty-call",
-			mode: "call",
+			sessionid: "session-parallel-empty-babysit",
+			mode: "babysit",
 			input: {},
 		});
 		expect(executed.status).toBe("completed");
@@ -380,7 +410,7 @@ describe("deterministic process engine", () => {
 		const invalid = await engine.start({
 			processid: "delivery.parallel-empty-invalid",
 			sessionid: "session-parallel-empty-invalid",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		expect(invalid.status).toBe("failed");
@@ -422,7 +452,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.parallel-limit",
 			sessionid: "session-parallel-limit",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected first limited effect");
@@ -469,7 +499,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.parent",
 			sessionid: "session-3",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected child waiting result");
@@ -532,7 +562,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.fence-root",
 			sessionid: "session-fence-old",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected leaf waiting result");
@@ -622,7 +652,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.source-drift",
 			sessionid: "session-drift",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -697,7 +727,7 @@ describe("deterministic process engine", () => {
 		const halted = await engine.start({
 			processid: "delivery.halt",
 			sessionid: "session-halt",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		expect(halted.status).toBe("halted");
@@ -720,13 +750,13 @@ describe("deterministic process engine", () => {
 		const first = await engine.start({
 			processid: "delivery.ownership",
 			sessionid: "session-owner-one",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		const second = await engine.start({
 			processid: "delivery.ownership",
 			sessionid: "session-owner-two",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (first.status !== "waiting" || second.status !== "waiting") {
@@ -765,7 +795,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.lease",
 			sessionid: "session-lease",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected leased effect");
@@ -826,7 +856,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.same-engine-lease",
 			sessionid: "session-same-engine-lease",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -896,7 +926,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.snapshot-advance",
 			sessionid: "session-snapshot-advance",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -926,7 +956,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.snapshot-commiteffect",
 			sessionid: "session-snapshot-commiteffect",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -1071,7 +1101,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.same-engine-recovery",
 			sessionid: "session-same-engine-recovery",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -1176,7 +1206,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.halt-root",
 			sessionid: "session-halt-root",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting halt tree");
@@ -1313,7 +1343,7 @@ describe("deterministic process engine", () => {
 		const started = await engine.start({
 			processid: "delivery.retry-resolved",
 			sessionid: "session-retry-resolved",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
@@ -1355,5 +1385,104 @@ describe("deterministic process engine", () => {
 		expect(repeated.status).toBe("completed");
 		expect(hookcalls).toBe(2);
 		reopenedstore.close();
+	});
+	test("start, pause, migrate, resume, and complete one real process", async () => {
+		const { store, engine, path } = openengine();
+		const process = defineprocess({
+			id: "delivery.schema-7-active-resume",
+			version: "1.0.0",
+			input: objectinput,
+			output: objectoutput,
+			async run(ctx) {
+				const result = await ctx.task("work", { value: 1 });
+				return { result };
+			},
+		});
+		const sessionid = "session-schema-7-active-resume";
+		engine.register(process);
+		const started = await engine.start({
+			processid: process.id,
+			sessionid,
+			mode: "babysit",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const effect = started.effects[0];
+		if (!effect) throw new Error("expected waiting effect");
+		const runid = started.run.id;
+		const effectid = effect.id;
+		expect(started.run.mode).toBe("babysit");
+		expect(started.run.status).toBe("waiting_effect");
+		expect(store.listeffects(runid)).toHaveLength(1);
+		store.close();
+
+		markcallrun(path, runid);
+		const beforedb = new Database(path, { readonly: true });
+		const before = beforedb
+			.query(
+				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq",
+			)
+			.all(runid);
+		const version = beforedb.query("pragma user_version").get() as { user_version: number };
+		beforedb.close();
+		expect(version.user_version).toBe(7);
+
+		const migratedstore = new orchestrationstore(path);
+		const reopened = new orchestrationengine(migratedstore);
+		reopened.register(process);
+		const migrated = migratedstore.getrun(runid);
+		expect(migrated).toMatchObject({
+			mode: "babysit",
+			status: "waiting_effect",
+			sessionid,
+		});
+		expect(migratedstore.geteffect(runid, effectid)?.id).toBe(effectid);
+		expect(migratedstore.listeffects(runid)).toHaveLength(1);
+		expect(migratedstore.events(runid).filter((event) => event.type === "run_mode_migrated")).toHaveLength(1);
+
+		const afterdb = new Database(path, { readonly: true });
+		const after = afterdb
+			.query(
+				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq",
+			)
+			.all(runid);
+		afterdb.close();
+		expect(after.slice(0, before.length)).toEqual(before);
+
+		const resumed = await reopened.resume(runid);
+		expect(resumed.status).toBe("waiting");
+		if (resumed.status !== "waiting") throw new Error("expected resumed waiting result");
+		expect(resumed.run.mode).toBe("babysit");
+		expect(resumed.effects).toHaveLength(1);
+		expect(resumed.effects[0]?.id).toBe(effectid);
+
+		const committed = await reopened.commiteffect({
+			rootrunid: runid,
+			runid: resumed.effects[0]!.runid,
+			effectid: resumed.effects[0]!.id,
+			fence: resumed.effects[0]!.fence,
+			inputhash: resumed.effects[0]!.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(committed.status).toBe("committed");
+
+		const completed = await reopened.resume(runid);
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected completed result");
+		expect(completed.run.mode).toBe("babysit");
+		expect(completed.run.sessionid).toBe(sessionid);
+		expect(completed.output).toEqual({ result: { done: true } });
+		expect(migratedstore.getsessionrun(sessionid)).toBeNull();
+		expect(migratedstore.getrun(runid)?.sessionid).toBe(sessionid);
+		expect(migratedstore.listeffects(runid)).toHaveLength(1);
+		expect(migratedstore.geteffect(runid, effectid)).toMatchObject({
+			id: effectid,
+			status: "resolved_ok",
+		});
+		expect(migratedstore.events(runid).filter((event) => event.type === "effect_requested")).toHaveLength(1);
+		expect(migratedstore.events(runid).filter((event) => event.type === "effect_resolved")).toHaveLength(1);
+		expect(migratedstore.doctor()).toEqual({ ok: true, issues: [] });
+		migratedstore.close();
 	});
 });

@@ -25,7 +25,6 @@ function openengine() {
 describe("built-in orchestration modes", () => {
 	test("one policy table defines every public mode", () => {
 		expect(modepolicy("babysit")).toEqual({ execute: true, optionalbreakpoints: true, persistent: false });
-		expect(modepolicy("call")).toEqual({ execute: true, optionalbreakpoints: true, persistent: false });
 		expect(modepolicy("plan")).toEqual({ execute: false, optionalbreakpoints: false, persistent: false });
 		expect(modepolicy("yolo")).toEqual({ execute: true, optionalbreakpoints: false, persistent: false });
 		expect(modepolicy("forever")).toEqual({ execute: true, optionalbreakpoints: true, persistent: true });
@@ -96,7 +95,7 @@ describe("built-in orchestration modes", () => {
 		const uncertainrun = await engine.start({
 			processid: "delivery.budget",
 			sessionid: "session-uncertain-mode",
-			mode: "call",
+			mode: "babysit",
 			input: {},
 		});
 		if (uncertainrun.status !== "waiting") throw new Error("expected uncertain effect");

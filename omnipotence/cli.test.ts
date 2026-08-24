@@ -174,6 +174,35 @@ describe("omnipotence cli", () => {
 		const status = await invoke(options, ["--json", "run", "status", String(run.id)]);
 		expect(objectvalue(objectvalue(status.parsed, "status").data, "status.data").status).toBe("completed");
 	});
+	test("run start rejects removed call mode without creating a run", async () => {
+		const { root, options } = opencli();
+		const source = processfixture(root);
+		expect((await invoke(options, ["--json", "blueprint", "install", source])).code).toBe(0);
+
+		const rejected = await invoke(options, [
+			"--json",
+			"run",
+			"start",
+			"delivery.cli",
+			"--mode",
+			"call",
+			"--input",
+			"{}",
+		]);
+		expect(rejected.code).toBe(2);
+		expect(rejected.parsed).toEqual({
+			ok: false,
+			error: {
+				code: "usage_error",
+				message: "unsupported run mode call",
+			},
+		});
+
+		const listed = await invoke(options, ["--json", "run", "list"]);
+		expect(listed.code).toBe(0);
+		const listdata = objectvalue(objectvalue(listed.parsed, "listed").data, "listed.data");
+		expect(listdata.runs).toEqual([]);
+	});
 	test("run halt uses the engine and preserves the halt fence", async () => {
 		const { root, options } = opencli();
 		const source = processfixture(root);

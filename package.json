@@ -1,6 +1,6 @@
 {
   "name": "nikos-agent-stack",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "niko's deterministic omp delivery gates, native orchestration engine, advisor, and questionnaire tooling",
   "type": "module",
   "keywords": [

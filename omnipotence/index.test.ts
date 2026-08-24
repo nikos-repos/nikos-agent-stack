@@ -155,6 +155,22 @@ describe("omnipotence omp extension", () => {
 		);
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 	});
+	test("registers canonical start commands without a call alias", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-command-registry-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		expect(fake.commands.has("omnipotence")).toBe(true);
+		expect(fake.commands.has("omnipotence-plan")).toBe(true);
+		expect(fake.commands.has("omnipotence-yolo")).toBe(true);
+		expect(fake.commands.has("omnipotence-forever")).toBe(true);
+		expect(fake.commands.has("omnipotence-call")).toBe(false);
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, context("session-command-registry", root));
+	});
+
 
 	test("an unbound session stop has no orchestration side effect", async () => {
 		expect(nextsleepdelay(3_000_000_000, 0)).toBe(2_147_483_647);

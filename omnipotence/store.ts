@@ -257,11 +257,12 @@ const runstatuses: Record<runstatus, true> = {
 };
 const modes: Record<orchestrationmode, true> = {
 	babysit: true,
-	call: true,
 	plan: true,
 	yolo: true,
 	forever: true,
 };
+const isrunprojectionevent = (type: string): boolean =>
+	type === "run_created" || type === "run_status" || type === "run_mode_migrated";
 const profilescopes: Record<profilescope, true> = { user: true, project: true };
 const effectkinds: Record<effectkind, true> = {
 	task: true,
@@ -289,6 +290,12 @@ const transitions: Record<runstatus, readonly runstatus[]> = {
 	failed: [],
 	halted: [],
 };
+
+function decodehistoricalmode(value: string): orchestrationmode {
+	if (value === "call") return "babysit";
+	assertmode(value);
+	return value;
+}
 
 function now(): string {
 	return new Date().toISOString();
@@ -467,7 +474,7 @@ function runprojection(row: runrow): projectionrecord {
 		profile: projectionjson(row.profile_json, `run ${row.id} profile`),
 		userprofileversion: row.user_profile_version,
 		projectprofileversion: row.project_profile_version,
-		mode: row.mode,
+		mode: decodehistoricalmode(row.mode),
 		status: row.status,
 		input: projectionjson(row.input_json, `run ${row.id} input`),
 		output: projectionjson(row.output_json, `run ${row.id} output`),
@@ -512,7 +519,7 @@ function eventrunprojection(payload: Record<string, jsonvalue>): projectionrecor
 		profile: payload.profile === undefined ? { schema: 1 } : payload.profile,
 		userprofileversion: payload.userprofileversion === undefined ? null : payload.userprofileversion,
 		projectprofileversion: payload.projectprofileversion === undefined ? null : payload.projectprofileversion,
-		mode: payload.mode,
+		mode: typeof payload.mode === "string" ? decodehistoricalmode(payload.mode) : payload.mode,
 		status: payload.status,
 		input: payload.input,
 		output: payload.output === undefined ? null : payload.output,
@@ -695,12 +702,19 @@ export class orchestrationstore {
 		);
 		if (!tables.has("events") || !tables.has("runs") || !tables.has("effects")) return issues;
 		try {
+			const schemarow = this.data.query("pragma user_version").get() as { user_version: number };
+			const schema = schemarow.user_version;
 			const events = this.data
 				.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq")
 				.all() as eventrow[];
 			const previousbyrun = new Map<string, string | null>();
 			const runstatusbyid = new Map<string, string>();
 			const effectstatusbyid = new Map<string, string>();
+			const runprojectionbyid = new Map<string, projectionrecord>();
+			const runlegacyleaseepochbyid = new Map<string, number>();
+			const runclaimepochbyid = new Map<string, number>();
+			const claimruns = new Set<string>();
+			const effectprojectionbyid = new Map<string, projectionrecord>();
 			for (const event of events) {
 				const previous = previousbyrun.get(event.run_id) ?? null;
 				if (event.previous_hash !== previous) {
@@ -713,36 +727,97 @@ export class orchestrationstore {
 					issues.push(`run ${event.run_id} event ${event.seq} hash mismatch`);
 				}
 				previousbyrun.set(event.run_id, event.hash);
-				if (event.type === "run_created" || event.type === "run_status") {
-					const payload = objectvalue(parsejson(event.payload_json), "event payload");
-					runstatusbyid.set(event.run_id, stringfield(payload, "status", "event payload"));
+				const payload = parsejson(event.payload_json, `event ${event.run_id}/${event.seq}`);
+				if (isrunprojectionevent(event.type)) {
+					const projectionpayload = objectvalue(payload, "event payload");
+					runstatusbyid.set(event.run_id, stringfield(projectionpayload, "status", "event payload"));
+					if (schema >= 7) {
+						const projection = eventrunprojection(projectionpayload);
+						if (projection.id !== event.run_id) {
+							issues.push(`run ${event.run_id} event ${event.seq} run identity mismatch`);
+						}
+						runprojectionbyid.set(event.run_id, projection);
+						if (typeof projection.leaseepoch === "number") {
+							runlegacyleaseepochbyid.set(
+								event.run_id,
+								Math.max(runlegacyleaseepochbyid.get(event.run_id) ?? 0, projection.leaseepoch),
+							);
+						}
+					}
 				}
 				if (event.type === "lease_claimed") {
-					const payload = objectvalue(parsejson(event.payload_json), "event payload");
-					const runid = stringfield(payload, "runid", "event payload");
-					numberfield(payload, "leaseepoch", "event payload");
+					const projectionpayload = objectvalue(payload, "event payload");
+					const runid = stringfield(projectionpayload, "runid", "event payload");
+					const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
 					if (runid !== event.run_id) {
 						issues.push(`run ${event.run_id} event ${event.seq} lease claim run identity mismatch`);
 					}
+					claimruns.add(event.run_id);
+					runclaimepochbyid.set(event.run_id, Math.max(runclaimepochbyid.get(event.run_id) ?? 0, leaseepoch));
 				}
 				if (event.type.startsWith("effect_")) {
-					const payload = objectvalue(parsejson(event.payload_json), "event payload");
-					effectstatusbyid.set(
-						stringfield(payload, "id", "event payload"),
-						stringfield(payload, "status", "event payload"),
-					);
+					const projectionpayload = objectvalue(payload, "event payload");
+					const effectid = stringfield(projectionpayload, "id", "event payload");
+					const status = stringfield(projectionpayload, "status", "event payload");
+					effectstatusbyid.set(effectid, status);
+					if (schema >= 7) effectprojectionbyid.set(effectid, eventeffectprojection(projectionpayload));
 				}
 			}
-			for (const row of this.data.query("select id, status from runs").all() as Array<{ id: string; status: string }>) {
-				const expected = runstatusbyid.get(row.id);
-				if (expected && row.status !== expected) {
-					issues.push(`run ${row.id} projection status ${row.status} does not match ${expected}`);
+			if (schema >= 7) {
+				const seenruns = new Set<string>();
+				const runrows = this.data.query("select * from runs order by id").all() as runrow[];
+				for (const row of runrows) {
+					seenruns.add(row.id);
+					const expected = runprojectionbyid.get(row.id);
+					if (!expected) {
+						issues.push(`run ${row.id} projection has no event record`);
+						continue;
+					}
+					compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
+					const durableleaseepoch = claimruns.has(row.id)
+						? runclaimepochbyid.get(row.id) ?? 0
+						: runlegacyleaseepochbyid.get(row.id) ?? 0;
+					if (claimruns.has(row.id)) {
+						if (row.lease_epoch !== durableleaseepoch) {
+							issues.push(
+								`run ${row.id} projection leaseepoch ${row.lease_epoch} does not match durable claim epoch ${durableleaseepoch}`,
+							);
+						}
+					} else if (row.lease_epoch < durableleaseepoch) {
+						issues.push(
+							`run ${row.id} projection leaseepoch ${row.lease_epoch} is below durable event minimum ${durableleaseepoch}`,
+						);
+					}
 				}
-			}
-			for (const row of this.data.query("select id, status from effects").all() as Array<{ id: string; status: string }>) {
-				const expected = effectstatusbyid.get(row.id);
-				if (expected && row.status !== expected) {
-					issues.push(`effect ${row.id} projection status ${row.status} does not match ${expected}`);
+				for (const runid of runprojectionbyid.keys()) {
+					if (!seenruns.has(runid)) issues.push(`run ${runid} projection is missing`);
+				}
+				const seeneffects = new Set<string>();
+				const effectrows = this.data.query("select * from effects order by id").all() as effectrow[];
+				for (const row of effectrows) {
+					seeneffects.add(row.id);
+					const expected = effectprojectionbyid.get(row.id);
+					if (!expected) {
+						issues.push(`effect ${row.id} projection has no event record`);
+						continue;
+					}
+					compareprojection("effect", row.id, effectprojection(row), expected, effectprojectionfields, issues);
+				}
+				for (const effectid of effectprojectionbyid.keys()) {
+					if (!seeneffects.has(effectid)) issues.push(`effect ${effectid} projection is missing`);
+				}
+			} else {
+				for (const row of this.data.query("select id, status from runs").all() as Array<{ id: string; status: string }>) {
+					const expected = runstatusbyid.get(row.id);
+					if (expected && row.status !== expected) {
+						issues.push(`run ${row.id} projection status ${row.status} does not match ${expected}`);
+					}
+				}
+				for (const row of this.data.query("select id, status from effects").all() as Array<{ id: string; status: string }>) {
+					const expected = effectstatusbyid.get(row.id);
+					if (expected && row.status !== expected) {
+						issues.push(`effect ${row.id} projection status ${row.status} does not match ${expected}`);
+					}
 				}
 			}
 		} catch (error) {
@@ -753,14 +828,106 @@ export class orchestrationstore {
 
 	private migrate(): void {
 		const versionrow = this.data.query("pragma user_version").get() as { user_version: number };
-		if (versionrow.user_version > 7) throw new Error(`database schema ${versionrow.user_version} is newer than supported 7`);
+		if (versionrow.user_version > 8) throw new Error(`database schema ${versionrow.user_version} is newer than supported 8`);
 		if (versionrow.user_version > 0) {
 			const issues = this.eventprojectionissues();
 			if (issues.length > 0) {
 				throw new Error(`database migration blocked: ${issues.join("; ")}`);
 			}
 		}
-		if (versionrow.user_version === 7) return;
+		if (versionrow.user_version === 8) return;
+		if (versionrow.user_version === 7) {
+			const backup = `${this.path}.migration-v7-${Date.now()}`;
+			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
+			this.transact(() => {
+				const tables = new Set(
+					(this.data.query("select name from sqlite_master where type = 'table'").all() as Array<{ name: string }>).map(
+						(row) => row.name,
+					),
+				);
+				const durablecolumns: Record<string, readonly string[]> = {
+					runs: [
+						"id",
+						"session_id",
+						"process_id",
+						"process_version",
+						"process_hash",
+						"blueprint_name",
+						"blueprint_version",
+						"profile_json",
+						"user_profile_version",
+						"project_profile_version",
+						"mode",
+						"status",
+						"input_json",
+						"output_json",
+						"blocked_reason",
+						"max_turns",
+						"turns",
+						"fence",
+						"lease_owner",
+						"lease_epoch",
+						"lease_expires_at",
+						"created_at",
+						"updated_at",
+					],
+					effects: [
+						"id",
+						"run_id",
+						"effect_key",
+						"kind",
+						"input_json",
+						"input_hash",
+						"status",
+						"fence",
+						"value_json",
+						"error_json",
+						"dispatched_at",
+						"dispatching_at",
+						"created_at",
+						"updated_at",
+					],
+					events: ["id", "run_id", "seq", "type", "payload_json", "previous_hash", "hash", "created_at"],
+					sessions: ["session_id", "run_id"],
+					profiles: ["scope", "project_root", "version", "document_json", "source_hash", "updated_at"],
+					profile_versions: ["scope", "project_root", "version", "document_json", "source_hash", "updated_at"],
+				};
+				const hasdurableorchestration = Object.entries(durablecolumns).every(([table, requiredcolumns]) => {
+					if (!tables.has(table)) return false;
+					const columns = new Set(
+						(this.data.query(`pragma table_info(${table})`).all() as Array<{ name: string }>).map(
+							(column) => column.name,
+						),
+					);
+					return requiredcolumns.every((column) => columns.has(column));
+				});
+				if (hasdurableorchestration) {
+					const columns = durablecolumns.runs;
+					if (columns.includes("mode")) {
+						const callruns = this.data.query("select * from runs where mode = 'call' order by id").all() as runrow[];
+						for (const row of callruns) {
+							this.data.query("update runs set mode = 'babysit', updated_at = ? where id = ?").run(now(), row.id);
+							const migrated = this.requiredrun(row.id);
+							this.appendevent(
+								row.id,
+								"run_mode_migrated",
+								jsonvalueof({ ...migrated, previousmode: "call" }),
+							);
+						}
+						const remaining = this.data.query("select count(*) as count from runs where mode = 'call'").get() as {
+							count: number;
+						};
+						if (Number(remaining.count) !== 0) throw new Error("database migration 8 left call runs");
+					}
+					this.data.exec("pragma user_version = 8");
+					const report = this.doctor();
+					if (!report.ok) throw new Error(`database migration 8 verification failed: ${report.issues.join("; ")}`);
+					return;
+				}
+				this.data.exec("pragma user_version = 8");
+			});
+			return;
+		}
 		if (versionrow.user_version === 1) {
 			const backup = `${this.path}.migration-v1-${Date.now()}`;
 			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
@@ -960,7 +1127,7 @@ export class orchestrationstore {
 				primary key(name, version)
 			);
 			create unique index one_active_blueprint on blueprints(name) where active = 1;
-			pragma user_version = 7;
+			pragma user_version = 8;
 		`);
 		const issues = this.eventprojectionissues();
 		if (issues.length > 0) throw new Error(`database migration verification failed: ${issues.join("; ")}`);
@@ -1790,10 +1957,10 @@ export class orchestrationstore {
 	doctor(): doctorreport {
 		const issues: string[] = [];
 		const version = this.data.query("pragma user_version").get() as { user_version: number };
-		if (version.user_version !== 7) {
+		if (version.user_version !== 8) {
 			return {
 				ok: false,
-				issues: [`database schema ${version.user_version} requires migration to 7`],
+				issues: [`database schema ${version.user_version} requires migration to 8`],
 			};
 		}
 		const integrity = this.data.query("pragma integrity_check").all() as Array<{ integrity_check: string }>;
@@ -1819,11 +1986,12 @@ export class orchestrationstore {
 			);
 			if (row.hash !== expectedhash) issues.push(`run ${row.run_id} event ${row.seq} hash mismatch`);
 			previousbyrun.set(row.run_id, row.hash);
-			const payload = objectvalue(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
-			if (row.type === "run_created" || row.type === "run_status") {
-				const status = stringfield(payload, "status", "event payload");
+			const payload = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
+			if (isrunprojectionevent(row.type)) {
+				const projectionpayload = objectvalue(payload, "event payload");
+				const status = stringfield(projectionpayload, "status", "event payload");
 				assertstatus(status);
-				const projection = eventrunprojection(payload);
+				const projection = eventrunprojection(projectionpayload);
 				runprojectionbyid.set(row.run_id, projection);
 				if (typeof projection.leaseepoch === "number") {
 					runlegacyleaseepochbyid.set(
@@ -1833,8 +2001,9 @@ export class orchestrationstore {
 				}
 			}
 			if (row.type === "lease_claimed") {
-				const runid = stringfield(payload, "runid", "event payload");
-				const leaseepoch = numberfield(payload, "leaseepoch", "event payload");
+				const projectionpayload = objectvalue(payload, "event payload");
+				const runid = stringfield(projectionpayload, "runid", "event payload");
+				const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
 				if (runid !== row.run_id) {
 					issues.push(`run ${row.run_id} event ${row.seq} lease claim run identity mismatch`);
 				}
@@ -1842,10 +2011,11 @@ export class orchestrationstore {
 				runclaimepochbyid.set(row.run_id, Math.max(runclaimepochbyid.get(row.run_id) ?? 0, leaseepoch));
 			}
 			if (row.type.startsWith("effect_")) {
-				const effectid = stringfield(payload, "id", "event payload");
-				const status = stringfield(payload, "status", "event payload");
+				const projectionpayload = objectvalue(payload, "event payload");
+				const effectid = stringfield(projectionpayload, "id", "event payload");
+				const status = stringfield(projectionpayload, "status", "event payload");
 				asserteffectstatus(status);
-				effectprojectionbyid.set(effectid, eventeffectprojection(payload));
+				effectprojectionbyid.set(effectid, eventeffectprojection(projectionpayload));
 			}
 		}
 
@@ -1985,19 +2155,24 @@ export class orchestrationstore {
 			);
 			const claimleaseepochs = new Map<string, number>();
 			for (const row of rows) {
-				const payload = objectvalue(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
-				if (row.type === "run_created" || row.type === "run_status") {
-					const id = stringfield(payload, "id", "event payload");
+				const payload = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
+				if (isrunprojectionevent(row.type)) {
+					const projectionpayload = objectvalue(payload, "event payload");
+					const id = stringfield(projectionpayload, "id", "event payload");
 					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
 					leaseepochs.set(
 						id,
-						Math.max(leaseepochs.get(id) ?? 0, typeof payload.leaseepoch === "number" ? payload.leaseepoch : 0),
+						Math.max(
+							leaseepochs.get(id) ?? 0,
+							typeof projectionpayload.leaseepoch === "number" ? projectionpayload.leaseepoch : 0,
+						),
 					);
 				}
 				if (row.type === "lease_claimed") {
-					const runid = stringfield(payload, "runid", "event payload");
+					const projectionpayload = objectvalue(payload, "event payload");
+					const runid = stringfield(projectionpayload, "runid", "event payload");
 					if (runid !== row.run_id) throw new Error(`event ${row.id} lease claim run identity mismatch`);
-					const leaseepoch = numberfield(payload, "leaseepoch", "event payload");
+					const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
 					claimleaseepochs.set(runid, Math.max(claimleaseepochs.get(runid) ?? 0, leaseepoch));
 				}
 			}
@@ -2018,13 +2193,13 @@ export class orchestrationstore {
 				.run();
 
 			for (const row of rows) {
-				const payload = objectvalue(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
-				if (row.type === "run_created" || row.type === "run_status") {
+				const payloadvalue = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
+				if (isrunprojectionevent(row.type)) {
+					const payload = objectvalue(payloadvalue, "event payload");
 					const id = stringfield(payload, "id", "event payload");
 					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
-					const mode = stringfield(payload, "mode", "event payload");
+					const mode = decodehistoricalmode(stringfield(payload, "mode", "event payload"));
 					const status = stringfield(payload, "status", "event payload");
-					assertmode(mode);
 					assertstatus(status);
 					this.data
 						.query(`insert into runs(
@@ -2084,6 +2259,7 @@ export class orchestrationstore {
 						);
 				}
 				if (row.type.startsWith("effect_")) {
+					const payload = objectvalue(payloadvalue, "event payload");
 					const effectid = stringfield(payload, "id", "event payload");
 					const runid = stringfield(payload, "runid", "event payload");
 					if (runid !== row.run_id) throw new Error(`event ${row.id} effect run identity mismatch`);
@@ -2127,11 +2303,13 @@ export class orchestrationstore {
 						);
 				}
 				if (row.type === "session_bound") {
+					const payload = objectvalue(payloadvalue, "event payload");
 					this.data
 						.query("insert or replace into sessions(session_id, run_id) values (?, ?)")
 						.run(stringfield(payload, "sessionid", "event payload"), row.run_id);
 				}
 				if (row.type === "session_unbound") {
+					const payload = objectvalue(payloadvalue, "event payload");
 					this.data
 						.query("delete from sessions where session_id = ?")
 						.run(stringfield(payload, "sessionid", "event payload"));

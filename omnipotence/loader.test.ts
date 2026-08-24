@@ -51,7 +51,7 @@ test("loader retains inactive blueprint versions pinned by active runs", async (
 		processid: "delivery.pinned",
 		processversion: "1.0.0",
 		sessionid: "session-pinned",
-		mode: "call",
+		mode: "babysit",
 		input: {},
 	});
 	if (started.status !== "waiting") throw new Error("expected pinned run");
@@ -95,7 +95,7 @@ test("loader rejects an incompatible legacy active blueprint", async () => {
 	await expect(
 		loadactiveblueprints(store, new orchestrationengine(store)),
 	).rejects.toThrow(
-		"blueprint pinned-pack@1.0.0 requires engine >=999.0.0, current engine 1.0.0",
+		"blueprint pinned-pack@1.0.0 requires engine >=999.0.0, current engine 2.0.0",
 	);
 	store.close();
 });

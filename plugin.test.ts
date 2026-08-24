@@ -124,7 +124,7 @@ test("a local bun link exposes the omnipotence cli", () => {
 
 test("the package exposes only the declared public surface", async () => {
 	expect(pkg.name).toBe("nikos-agent-stack");
-	expect(pkg.version).toBe("1.0.0");
+	expect(pkg.version).toBe("2.0.0");
 	expect(pkg.engines).toEqual({ bun: ">=1.2.22" });
 	expect(pkg.omp.extensions).toEqual(expectedExtensions);
 	expect(pkg.bin).toEqual({

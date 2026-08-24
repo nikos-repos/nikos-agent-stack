@@ -316,7 +316,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		description: "start one native orchestration run",
 		handler: startcommand("omnipotence", "babysit"),
 	});
-	for (const mode of ["call", "plan", "yolo", "forever"] as const) {
+	for (const mode of ["plan", "yolo", "forever"] as const) {
 		const command = `omnipotence-${mode}`;
 		pi.registerCommand(command, {
 			description: `start one native ${mode} run`,
