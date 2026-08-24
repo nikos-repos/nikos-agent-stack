@@ -4,12 +4,12 @@ an official omp plugin that adds deterministic delivery gates, a native durable 
 
 the plugin ships four parts:
 
-| part | kind | what it adds |
-|---|---|---|
-| gate checker | omp extension | deterministic post-turn delivery checks, commands, and a command-line audit surface |
-| omnipotence | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery |
-| ask questionnaire | omp extension | forces one batched questionnaire through the native `ask` tool when a request starts a new project |
-| terra advisor | native omp advisor | a read-only passive watchdog that sends source-backed notes through omp's advisor system |
+| part              | kind                  | what it adds                                                                                       |
+| ----------------- | --------------------- | -------------------------------------------------------------------------------------------------- |
+| gate checker      | omp extension         | deterministic post-turn delivery checks, commands, and a command-line audit surface                |
+| omnipotence       | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery             |
+| ask questionnaire | omp extension         | forces one batched questionnaire through the native `ask` tool when a request starts a new project |
+| terra advisor     | native omp advisor    | a read-only passive watchdog that sends source-backed notes through omp's advisor system           |
 
 ## requirements
 
@@ -60,6 +60,7 @@ PATH="$(bun pm bin -g):$PATH" omnipotence --help
 then start an omp session and run `/advisor-install`.
 
 the setup command merges terra into the user watchdog configuration. no manual file copying and no changes to omp itself are needed. `nikos-gates advisor install` remains available for direct package use outside omp.
+
 ## start the advisor
 
 after `/advisor-install`, restart omp:
@@ -101,13 +102,13 @@ omnipotence is a native durable workflow engine for omp. it runs one schema-vali
 
 features:
 
-- **deterministic process runtime** — stable process ids, semantic versions, input and output schemas, finite turn budgets, source-drift detection, and replay from committed state.
+- **deterministic process runtime** — stable process ids, semantic versions, input and output schemas, finite turn budgets for finite modes, replay-compatible retained budgets for forever runs, source-drift detection, and replay from committed state.
 - **effect primitives** — tasks, bounded parallel groups, pinned subprocesses, durable sleep, user breakpoints, registered hooks, and intentional halt.
-- **native execution modes** — `babysit`, `call`, `plan`, `yolo`, `forever`, and explicit resume use one engine with mode-specific execution and breakpoint policy.
+- **native execution modes** — `babysit`, `call`, `plan`, `yolo`, `forever`, and explicit resume use one engine with mode-specific execution and breakpoint policy; `/omnipotence-forever` starts one unbounded native orchestration run.
 - **durable recovery** — sqlite events and projections, idempotent result posts, input hashes, lease epochs, fencing, explicit uncertain-effect resolution, doctor, backup, and repair.
 - **tree and session safety** — session-bound result ownership, atomic start reservation, root-tree operation leases, complete-tree re-fencing, child-first halt, and lease-consistent result snapshots.
 - **hooks and profiles** — ordered lifecycle hooks with timeouts and retryable resolved-effect delivery, plus versioned user and project profiles merged through json merge patch.
-- **local blueprints** — hash-verified local packages, side-by-side semantic versions, minimum engine checks, pinned active runs, update, rollback, and guarded removal.
+- **local blueprints** — hash-verified local packages, side-by-side semantic versions, minimum engine checks, pinned active runs, including forever runs, update, rollback, and guarded removal.
 - **operator surfaces** — omp commands and a standalone cli with human or json output, dry-run support for mutations, process planning, run and effect inspection, session controls, and recovery commands.
 
 install a local blueprint, then start one process:
@@ -123,6 +124,8 @@ omnipotence blueprint install ./delivery-pack
 ```
 
 gate-checker remains the first `session_stop` handler. after a gate accepts the turn, omnipotence schedules the next committed effect through omp's hidden next-turn api. active-run failures block once; sessions without an active run receive no omnipotence block.
+
+`/omnipotence-forever` starts one unbounded native orchestration run. its policy auto-approves optional process breakpoints but still waits at required breakpoints for `/omnipotence-resume`; normal omp tool approval and point-of-risk confirmation remain. the run ignores, and never extends, its retained finite `maxturns` value; finite modes retain their current budget behavior. `/omnipotence-stop` ends it explicitly. host shutdown pauses durable work and recovery resumes it for the owning session; this is not a daemon and does not automatically restart a process after it returns. recovery schedules requested external work only when both dispatch timestamps are null. acknowledged or unknown outcomes are never resent, remain uncertain, and fail closed until resolved. the standalone cli is one-shot and cannot provide autonomous hidden-turn scheduling. active forever runs pin their blueprint version, and durable replay state grows with each committed cycle.
 
 see the [omnipotence user guide](docs/omnipotence-user-guide.md) for process and blueprint authoring, modes, hooks, profiles, commands, state, recovery, and safety.
 
@@ -151,12 +154,12 @@ engagement levels:
 /gates-disable
 ```
 
-| level | behavior |
-|---|---|
-| `low` | delivery findings warn, but a missing scratchpad record blocks. for exploration and non-git work. |
+| level    | behavior                                                                                                                         |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `low`    | delivery findings warn, but a missing scratchpad record blocks. for exploration and non-git work.                                |
 | `medium` | default. completion, citation, subagent-claim, verify, gate-integrity, and scratchpad failures block. the commit gate stays off. |
-| `high` | every rule blocks, including the commit gate, subagent manifest, and scratchpad coverage. |
-| `off` | all checks and recording stop. set with `/gates-disable`. |
+| `high`   | every rule blocks, including the commit gate, subagent manifest, and scratchpad coverage.                                        |
+| `off`    | all checks and recording stop. set with `/gates-disable`.                                                                        |
 
 slash level changes take effect in the running session and persist to `~/.omp/gate-checker/config.json`. direct config edits are loaded only when omp starts: restart omp before using `/gates-engage` after an external edit, or set the relevant `OMP_*` environment before the session. precedence is the config file, then `OMP_GATES_LEVEL`, then the default `medium`. `OMP_VERIFY_CMD` supplies a verification command when the config file has none. `OMP_GATE_CONFIG`, `OMP_GATE_LEDGER`, and `OMP_GATE_FRUSTRATIONS` relocate persisted paths.
 
@@ -254,29 +257,29 @@ this runs the gate-checker and questionnaire unit tests, the packaged-surface te
 
 ## repository map
 
-| path | purpose |
-|---|---|
-| [`package.json`](package.json) | plugin manifest: extension entry points, exports, binary, and packaged files |
-| [`plugin.test.ts`](plugin.test.ts) | asserts the packaged public surface |
-| [`gate-checker/index.ts`](gate-checker/index.ts) | gate extension: lifecycle hooks, evidence capture, enforcement, and commands |
-| [`gate-checker/config.js`](gate-checker/config.js) | engagement dial, level policies, and persisted configuration |
-| [`gate-checker/frustrations.js`](gate-checker/frustrations.js) | validated scratchpad records, identity coverage, taxonomy, and automatic gate records |
-| [`gate-checker/predicates.js`](gate-checker/predicates.js) | shared deterministic gate predicates |
-| [`gate-checker/scope.js`](gate-checker/scope.js) | canonical repository scopes and baseline capture |
-| [`gate-checker/risks.js`](gate-checker/risks.js) | change-risk classification for audited scopes |
-| [`gate-checker/provenance.js`](gate-checker/provenance.js) | subagent manifest and claim extraction |
-| [`gate-checker/ledger.js`](gate-checker/ledger.js) | append-only record of every gate fire and outcome |
-| [`gate-checker/journal.js`](gate-checker/journal.js) | request journal and recovery state |
-| [`gate-checker/lease.js`](gate-checker/lease.js) | repository mutation lease |
-| [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js) | cutover, audit, telemetry, and advisor setup command-line interface |
-| [`gate-checker/wiring-check.ts`](gate-checker/wiring-check.ts) | end-to-end probe that the gate fires from `session_stop` |
-| [`omnipotence/index.ts`](omnipotence/index.ts) | native omp commands, result tool, session recovery, and hidden-turn scheduling |
-| [`omnipotence/engine.ts`](omnipotence/engine.ts) | deterministic process replay, effects, subprocesses, modes, and terminal behavior |
-| [`omnipotence/store.ts`](omnipotence/store.ts) | sqlite event record, projections, fencing, profiles, blueprints, doctor, and repair |
-| [`omnipotence/cli.ts`](omnipotence/cli.ts) | public `omnipotence` command-line interface |
-| [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts) | questionnaire extension around the native `ask` tool |
-| [`advisor/WATCHDOG.yml`](advisor/WATCHDOG.yml) | native terra advisor watchdog configuration and prompt-enforced evidence rules |
-| [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md) | complete gate user and operator guide |
-| [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire detection, policy, and limitations |
-| [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md) | advisor setup, passive behavior, evidence-note rules, and limitations |
-| [`docs/omnipotence-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/omnipotence-user-guide.md) | native process, blueprint, cli, state, recovery, safety, and migration guide |
+| path                                                                                                                                      | purpose                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [`package.json`](package.json)                                                                                                            | plugin manifest: extension entry points, exports, binary, and packaged files          |
+| [`plugin.test.ts`](plugin.test.ts)                                                                                                        | asserts the packaged public surface                                                   |
+| [`gate-checker/index.ts`](gate-checker/index.ts)                                                                                          | gate extension: lifecycle hooks, evidence capture, enforcement, and commands          |
+| [`gate-checker/config.js`](gate-checker/config.js)                                                                                        | engagement dial, level policies, and persisted configuration                          |
+| [`gate-checker/frustrations.js`](gate-checker/frustrations.js)                                                                            | validated scratchpad records, identity coverage, taxonomy, and automatic gate records |
+| [`gate-checker/predicates.js`](gate-checker/predicates.js)                                                                                | shared deterministic gate predicates                                                  |
+| [`gate-checker/scope.js`](gate-checker/scope.js)                                                                                          | canonical repository scopes and baseline capture                                      |
+| [`gate-checker/risks.js`](gate-checker/risks.js)                                                                                          | change-risk classification for audited scopes                                         |
+| [`gate-checker/provenance.js`](gate-checker/provenance.js)                                                                                | subagent manifest and claim extraction                                                |
+| [`gate-checker/ledger.js`](gate-checker/ledger.js)                                                                                        | append-only record of every gate fire and outcome                                     |
+| [`gate-checker/journal.js`](gate-checker/journal.js)                                                                                      | request journal and recovery state                                                    |
+| [`gate-checker/lease.js`](gate-checker/lease.js)                                                                                          | repository mutation lease                                                             |
+| [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js)                                                                                    | cutover, audit, telemetry, and advisor setup command-line interface                   |
+| [`gate-checker/wiring-check.ts`](gate-checker/wiring-check.ts)                                                                            | end-to-end probe that the gate fires from `session_stop`                              |
+| [`omnipotence/index.ts`](omnipotence/index.ts)                                                                                            | native omp commands, result tool, session recovery, and hidden-turn scheduling        |
+| [`omnipotence/engine.ts`](omnipotence/engine.ts)                                                                                          | deterministic process replay, effects, subprocesses, modes, and terminal behavior     |
+| [`omnipotence/store.ts`](omnipotence/store.ts)                                                                                            | sqlite event record, projections, fencing, profiles, blueprints, doctor, and repair   |
+| [`omnipotence/cli.ts`](omnipotence/cli.ts)                                                                                                | public `omnipotence` command-line interface                                           |
+| [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts)                                                                                | questionnaire extension around the native `ask` tool                                  |
+| [`advisor/WATCHDOG.yml`](advisor/WATCHDOG.yml)                                                                                            | native terra advisor watchdog configuration and prompt-enforced evidence rules        |
+| [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md)           | complete gate user and operator guide                                                 |
+| [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire detection, policy, and limitations                                      |
+| [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md)           | advisor setup, passive behavior, evidence-note rules, and limitations                 |
+| [`docs/omnipotence-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/omnipotence-user-guide.md)             | native process, blueprint, cli, state, recovery, safety, and migration guide          |

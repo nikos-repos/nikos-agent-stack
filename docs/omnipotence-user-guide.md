@@ -47,7 +47,7 @@ source: `package.json#omp.extensions` and `plugin.test.ts`.
 omnipotence combines these public capabilities:
 
 - deterministic process replay from sqlite events and projections.
-- schema-validated process input and output with semantic process versions and finite turn budgets.
+- schema-validated process input and output with semantic process versions; finite modes enforce finite turn budgets, while `forever` retains its configured budget for replay compatibility without enforcing it.
 - task, bounded parallel, subprocess, sleep, breakpoint, hook, and halt primitives.
 - `babysit`, `call`, `plan`, `yolo`, `forever`, and resume policies on one engine.
 - session-bound result ownership, root-tree operation leases, fencing, idempotent posts, and explicit uncertain-effect recovery.
@@ -59,30 +59,30 @@ source: `omnipotence/api.ts`, `omnipotence/engine.ts`, `omnipotence/store.ts`, a
 
 ## create a process
 
-process code uses the native package api. every process declares a stable id, semantic version, finite turn budget, input schema, output schema, and deterministic function. side effects cross the process context.
+process code uses the native package api. every process declares a stable id, semantic version, input schema, output schema, and deterministic function. a process may set a finite `maxturns` budget; finite modes enforce it, while `forever` retains it for replay compatibility and does not block or extend it. side effects cross the process context.
 
 ```ts
 import { defineprocess } from "nikos-agent-stack/omnipotence";
 
 export default defineprocess({
-    id: "delivery.review",
-    version: "1.0.0",
-    maxturns: 32,
-    input: {
-        type: "object",
-        required: ["request"],
-        additionalproperties: false,
-        properties: { request: { type: "string", min: 1 } },
-    },
-    output: {
-        type: "object",
-        required: ["accepted"],
-        additionalproperties: false,
-        properties: { accepted: { type: "boolean" } },
-    },
-    async run(ctx, input) {
-        return ctx.task("review", { request: input.request });
-    },
+	id: "delivery.review",
+	version: "1.0.0",
+	maxturns: 32,
+	input: {
+		type: "object",
+		required: ["request"],
+		additionalproperties: false,
+		properties: { request: { type: "string", min: 1 } },
+	},
+	output: {
+		type: "object",
+		required: ["accepted"],
+		additionalproperties: false,
+		properties: { accepted: { type: "boolean" } },
+	},
+	async run(ctx, input) {
+		return ctx.task("review", { request: input.request });
+	},
 });
 ```
 
@@ -104,19 +104,17 @@ create `omnipotence.blueprint.json` beside the declared files. every file needs 
 
 ```json
 {
-  "schema": 1,
-  "name": "delivery-pack",
-  "version": "1.0.0",
-  "engine": ">=1.0.0",
-  "processes": [
-    { "id": "delivery.review", "entry": "processes/review.ts" }
-  ],
-  "hooks": [],
-  "files": {
-    "processes/review.ts": "<sha-256>"
-  },
-  "config": {},
-  "migrations": []
+	"schema": 1,
+	"name": "delivery-pack",
+	"version": "1.0.0",
+	"engine": ">=1.0.0",
+	"processes": [{ "id": "delivery.review", "entry": "processes/review.ts" }],
+	"hooks": [],
+	"files": {
+		"processes/review.ts": "<sha-256>"
+	},
+	"config": {},
+	"migrations": []
 }
 ```
 
@@ -128,7 +126,7 @@ omnipotence blueprint install ./delivery-pack
 omnipotence blueprint list
 ```
 
-versions install side by side and use semantic ordering, including prereleases. every manifest declares a minimum compatible engine version. incompatible packages fail before installation or activation. active runs retain their pinned blueprint version. rollback changes the active version for new runs. removal refuses while a non-terminal run pins that exact version and validates any replacement before activation. the cli loads active and run-pinned blueprints on each invocation. a running omp session loads them once, so restart that session after install, update, rollback, or removal.
+versions install side by side and use semantic ordering, including prereleases. every manifest declares a minimum compatible engine version. incompatible packages fail before installation or activation. active runs, including forever runs, retain their pinned blueprint version. rollback changes the active version for new runs. removal refuses while a non-terminal run pins that exact version and validates any replacement before activation. the cli loads active and run-pinned blueprints on each invocation. a running omp session loads them once, so restart that session after install, update, rollback, or removal.
 
 source: `omnipotence/blueprints.ts` and `omnipotence/blueprints.test.ts`.
 
@@ -150,8 +148,8 @@ omnipotence runs a process. think of a process as a saved recipe. the recipe lis
 - a **run** is one use of that recipe.
 - an **effect** is one recorded step in the recipe. it can ask an agent to do work, start another process, wait until a time, or call a hook.
 - a **breakpoint** is a pause that asks for a decision or more information.
-- an **optional breakpoint** is a pause that `yolo` mode may pass automatically.
-- a **required breakpoint** always waits for a person, including in `yolo` mode.
+- an **optional breakpoint** is a pause that `yolo` and `forever` modes may pass automatically.
+- a **required breakpoint** always waits for a person, including in `yolo` and `forever` modes.
 
 source: `omnipotence/contracts.ts` and `omnipotence/engine.ts`.
 
@@ -173,13 +171,13 @@ source: `omnipotence/index.ts`.
 
 ### choose a start command
 
-| what you want | command | mode |
-| --- | --- | --- |
-| run normally and pause when the recipe asks | `/omnipotence` | `babysit` |
-| use the current alternative name for the same behavior | `/omnipotence-call` | `call` |
-| preview the first step without doing it | `/omnipotence-plan` | `plan` |
-| do the work with fewer optional pauses | `/omnipotence-yolo` | `yolo` |
-| select the persistent policy label | `/omnipotence-forever` | `forever` |
+| what you want                                          | command                | mode      |
+| ------------------------------------------------------ | ---------------------- | --------- |
+| run normally and pause when the recipe asks            | `/omnipotence`         | `babysit` |
+| use the current alternative name for the same behavior | `/omnipotence-call`    | `call`    |
+| preview the first step without doing it                | `/omnipotence-plan`    | `plan`    |
+| do the work with fewer optional pauses                 | `/omnipotence-yolo`    | `yolo`    |
+| start one unbounded native orchestration run           | `/omnipotence-forever` | `forever` |
 
 ### babysit mode
 
@@ -223,17 +221,43 @@ use this mode when you want to see what the process will ask for first. it is no
 
 ### forever mode
 
-`forever` mode does not currently mean that a process runs without end. its policy sets the `persistent` field to `true`, but the current engine does not use that field to change run behavior.
+`/omnipotence-forever` starts one unbounded native orchestration run and binds it to the current omp session. its policy is `{ execute: true, optionalbreakpoints: false, persistent: true }`.
 
-in this release, `forever` performs work and waits at breakpoints like `babysit` mode. it also keeps the process's finite turn budget. when that budget is exhausted, the run blocks until `/omnipotence-resume` extends it.
+the persistent run ignores its finite `maxturns` budget: the engine retains that value for replay compatibility, but never blocks or extends it for a forever run. finite modes enforce their budgets exactly as before.
 
-do not use `forever` when you need an unlimited loop. use it only when you need the run to carry the `forever` mode name.
+subprocess children inherit the forever policy, so child runs ignore their finite `maxturns` budget and use the same breakpoint and recovery rules.
+
+optional process breakpoints auto-approve in forever. required process breakpoints still wait for `/omnipotence-resume`. this changes process breakpoint handling only; normal omp tool approval and point-of-risk confirmation remain required.
+
+host shutdown pauses execution. durable sleep deadlines are re-armed when omp restores the owning session; in-memory timers do not survive host shutdown. this command is not a daemon and does not restart a process automatically. a normal process return completes once; process code owns repetition and must use deterministic, unique effect keys for every cycle. `/omnipotence-stop` ends the run explicitly.
+
+on lifecycle recovery, a requested external effect is scheduled only when both dispatch timestamps are null. an acknowledged or unknown dispatch outcome is never resent; it remains uncertain and requires an explicit operator decision. required breakpoints remain waiting, and hook failures, source drift, and every other non-budget block stay fail-closed.
+
+a forever run pins its selected blueprint version. updates, rollbacks, and removals do not change that run's blueprint. each cycle adds committed effects and replay records to sqlite, so durable replay state grows with the loop.
 
 ```text
-/omnipotence-forever delivery.review {"request":"run with persistent mode policy"}
+/omnipotence-forever delivery.review {"request":"run with unbounded turns"}
 ```
 
-source: `omnipotence/processes.ts`, `omnipotence/engine.ts`, and `omnipotence/processes.test.ts`.
+one deterministic loop can use input-derived sleep times and unique keys:
+
+```ts
+async run(ctx, input: { start: string; intervalms: number }) {
+    const start = Date.parse(input.start);
+    for (let cycle = 0; ; cycle += 1) {
+        const key = `cycle/${cycle}`;
+        await ctx.task(`${key}/work`, { cycle });
+        await ctx.sleep(
+            `${key}/sleep`,
+            new Date(start + (cycle + 1) * input.intervalms).toISOString(),
+        );
+    }
+}
+```
+
+use a validated utc `input.start` and fixed `input.intervalms`; each sleep timestamp depends only on input and cycle.
+
+source: `omnipotence/processes.ts`, `omnipotence/engine.ts`, `omnipotence/index.ts`, `omnipotence/store.ts`, `omnipotence/blueprints.ts`, `omnipotence/cli.ts`, `omnipotence/processes.test.ts`, `omnipotence/engine.test.ts`, `omnipotence/index.test.ts`, `omnipotence/store.test.ts`, `omnipotence/blueprints.test.ts`, and `omnipotence/cli.test.ts`.
 
 ### inspect, resume, or stop the current run
 
@@ -243,7 +267,7 @@ source: `omnipotence/processes.ts`, `omnipotence/engine.ts`, and `omnipotence/pr
 /omnipotence-status
 ```
 
-`/omnipotence-resume` continues the active run. when the run is waiting at a breakpoint, add a json answer. when the run is blocked by a retryable hook failure or an exhausted turn budget, call it without an answer.
+`/omnipotence-resume` continues the active run. when the run is waiting at a breakpoint, add a json answer. when the run is blocked by a retryable hook failure or an exhausted turn budget, call it without an answer. finite modes keep their current budget behavior: a budget block can extend their finite budget. a legacy forever run blocked only by `turn budget … exhausted` resumes automatically during lifecycle recovery without changing `maxturns`; no other forever block resumes automatically.
 
 ```text
 /omnipotence-resume {"approved":true}
@@ -262,7 +286,7 @@ source: `omnipotence/index.ts` and `omnipotence/engine.ts`.
 
 ### safety and stored state
 
-all start modes store durable sqlite state. `yolo` and `forever` never remove normal omp tool approval or point-of-risk confirmation. the status, resume, and stop commands act only on the active run bound to the current omp session.
+all start modes store durable sqlite state. `yolo` and `forever` never remove normal omp tool approval or point-of-risk confirmation; `forever` auto-approves only optional process breakpoints. the status, resume, and stop commands act only on the active run bound to the current omp session.
 
 source: `omnipotence/index.ts`, `omnipotence/store.ts`, and `omnipotence/engine.ts`.
 
@@ -296,6 +320,8 @@ omnipotence doctor --json
 ```
 
 all mutating commands accept `--dry-run`. all commands accept `--json`. successful json uses `{"ok":true,"data":...}`. errors use `{"ok":false,"error":{"code":"...","message":"..."}}`.
+
+the standalone cli is one-shot. `run start --mode forever` and `run resume` perform one stored-run operation; they do not own autonomous hidden-turn scheduling. use `/omnipotence-forever` in omp for session-bound continuation.
 
 source: `omnipotence/cli.ts` and `omnipotence/cli.test.ts`.
 
@@ -331,10 +357,11 @@ export OMNIPOTENCE_BLUEPRINTS=/path/to/blueprints
 ```
 
 run state, events, effects, session bindings, hook deliveries, lease claims, profile versions, and blueprint registry data use sqlite. each effect carries a stable key, input hash, and fence. duplicate identical result posts are idempotent. stale or conflicting posts fail closed.
+forever runs append every committed effect and replay event to sqlite, so long-running loops grow durable state instead of discarding old cycles.
 
-one session owns one active root run. omp result posts must match that session's active root. each top-level operation claims the owning root lease, so a child operation cannot overlap a root operation. safe session rebinding fences every owned run and requested effect atomically; dispatched or uncertain work blocks rebinding. halt fences and terminates the owned tree child-first. returned operation snapshots are assembled before lease release.
+one session owns one active root run, including a forever run. omp result posts must match that session's active root. each top-level operation claims the owning root lease, so a child operation cannot overlap a root operation. safe session rebinding fences every owned run and requested effect atomically; dispatched or uncertain work blocks rebinding. halt fences and terminates the owned tree child-first. returned operation snapshots are assembled before lease release.
 
-if a session restarts after an effect dispatch, omnipotence marks the effect uncertain. it does not retry an uncertain external mutation. resolve it explicitly:
+during lifecycle recovery, requested external work is scheduled only when both dispatch timestamps are null. an acknowledged or unknown dispatch outcome is never resent; it remains uncertain and must be resolved explicitly:
 
 ```sh
 omnipotence effect resolve-uncertain <run-id> <effect-id> \
