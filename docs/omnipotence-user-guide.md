@@ -124,32 +124,131 @@ resolved-effect hook delivery is recorded durably. if one of these hooks fails a
 
 source: `omnipotence/hooks.ts`, `omnipotence/engine.ts`, and `omnipotence/store.ts`.
 
-## start in omp
+## use slash commands in omp
+
+omnipotence runs a process. think of a process as a saved recipe. the recipe lists the work, the order of the work, and the places where omnipotence must pause.
+
+### words used in this guide
+
+- a **process** is a saved recipe, such as `delivery.review`.
+- a **run** is one use of that recipe.
+- an **effect** is one recorded step in the recipe. it can ask an agent to do work, start another process, wait until a time, or call a hook.
+- a **breakpoint** is a pause that asks for a decision or more information.
+- an **optional breakpoint** is a pause that `yolo` mode may pass automatically.
+- a **required breakpoint** always waits for a person, including in `yolo` mode.
+
+source: `omnipotence/contracts.ts` and `omnipotence/engine.ts`.
+
+### start-command format
+
+the five start commands use the same format:
+
+```text
+/<command> <process-id> [json-input]
+```
+
+`<process-id>` names the recipe. `[json-input]` supplies the information that the recipe needs. the input must be valid json. when input is not needed, omit it or use `{}`.
 
 ```text
 /omnipotence delivery.review {"request":"review this change"}
 ```
 
-other native modes use the same engine:
+source: `omnipotence/index.ts`.
+
+### choose a start command
+
+| what you want | command | mode |
+| --- | --- | --- |
+| run normally and pause when the recipe asks | `/omnipotence` | `babysit` |
+| use the current alternative name for the same behavior | `/omnipotence-call` | `call` |
+| preview the first step without doing it | `/omnipotence-plan` | `plan` |
+| do the work with fewer optional pauses | `/omnipotence-yolo` | `yolo` |
+| select the persistent policy label | `/omnipotence-forever` | `forever` |
+
+### babysit mode
+
+`babysit` is the normal supervised mode. `/omnipotence` starts this mode.
+
+it performs the real work in the process. when the process reaches an optional or required breakpoint, it stops and waits for your answer. use this mode when you want to see every decision point that the process author included.
+
+```text
+/omnipotence delivery.review {"request":"review this change"}
+```
+
+### call mode
+
+`call` mode currently behaves exactly like `babysit` mode. it performs the real work and waits at optional and required breakpoints. it is not faster, less interactive, or limited to one step.
+
+the command exists as a separate mode name, but the current release gives `call` and `babysit` the same execution policy.
 
 ```text
 /omnipotence-call delivery.review {"request":"run directly"}
+```
+
+### plan mode
+
+`plan` mode is a preview. it follows the recipe until it finds the first step that would need an effect, then it reports that step without doing it. it does not dispatch hooks or effects.
+
+use this mode when you want to see what the process will ask for first. it is not a complete preview of every later step.
+
+```text
 /omnipotence-plan delivery.review {"request":"show the first effect plan"}
+```
+
+### yolo mode
+
+`yolo` mode performs the real work but continues past optional breakpoints automatically. it still stops at every required breakpoint.
+
+`yolo` does not bypass omp tool approval or point-of-risk confirmation. use it only when you trust the process and do not need its optional pauses.
+
+```text
 /omnipotence-yolo delivery.review {"request":"skip optional breakpoints"}
+```
+
+### forever mode
+
+`forever` mode does not currently mean that a process runs without end. its policy sets the `persistent` field to `true`, but the current engine does not use that field to change run behavior.
+
+in this release, `forever` performs work and waits at breakpoints like `babysit` mode. it also keeps the process's finite turn budget. when that budget is exhausted, the run blocks until `/omnipotence-resume` extends it.
+
+do not use `forever` when you need an unlimited loop. use it only when you need the run to carry the `forever` mode name.
+
+```text
 /omnipotence-forever delivery.review {"request":"run with persistent mode policy"}
 ```
 
-inspect, resume, or halt the session-bound run:
+source: `omnipotence/processes.ts`, `omnipotence/engine.ts`, and `omnipotence/processes.test.ts`.
+
+### inspect, resume, or stop the current run
+
+`/omnipotence-status` shows the active run for the current omp session. it reports `inactive` when this session has no active run.
 
 ```text
 /omnipotence-status
+```
+
+`/omnipotence-resume` continues the active run. when the run is waiting at a breakpoint, add a json answer. when the run is blocked by a retryable hook failure or an exhausted turn budget, call it without an answer.
+
+```text
 /omnipotence-resume {"approved":true}
+/omnipotence-resume
+```
+
+resume refuses to guess when an external action has an uncertain result. resolve that result explicitly with the cli before resuming.
+
+`/omnipotence-stop` halts the active run and its unfinished child processes. add plain text to record why you stopped it. when you omit the text, the reason is `halted by user`.
+
+```text
 /omnipotence-stop operator requested stop
 ```
 
-`plan` returns the first pending effect plan without dispatching hooks or effects. `yolo` skips optional breakpoints but never bypasses omp tool approval or point-of-risk confirmation. every mode stores durable sqlite state. `forever` marks the run with the persistent mode policy, but it still uses a finite turn budget and requires explicit extension after that budget is exhausted.
+source: `omnipotence/index.ts` and `omnipotence/engine.ts`.
 
-source: `omnipotence/index.ts`, `omnipotence/processes.ts`, and `omnipotence/processes.test.ts`.
+### safety and stored state
+
+all start modes store durable sqlite state. `yolo` and `forever` never remove normal omp tool approval or point-of-risk confirmation. the status, resume, and stop commands act only on the active run bound to the current omp session.
+
+source: `omnipotence/index.ts`, `omnipotence/store.ts`, and `omnipotence/engine.ts`.
 
 ## use the cli
 
