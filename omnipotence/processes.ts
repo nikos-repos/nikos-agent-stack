@@ -10,7 +10,6 @@ export interface modeconfiguration {
 
 const policies: Record<publicpolicy, Readonly<modeconfiguration>> = {
 	babysit: Object.freeze({ execute: true, optionalbreakpoints: true, persistent: false }),
-	call: Object.freeze({ execute: true, optionalbreakpoints: true, persistent: false }),
 	plan: Object.freeze({ execute: false, optionalbreakpoints: false, persistent: false }),
 	yolo: Object.freeze({ execute: true, optionalbreakpoints: false, persistent: false }),
 	forever: Object.freeze({ execute: true, optionalbreakpoints: false, persistent: true }),

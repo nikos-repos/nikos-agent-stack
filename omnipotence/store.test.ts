@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { stablejson } from "./contracts.ts";
+import { defineprocess, stablejson } from "./contracts.ts";
+import { orchestrationengine } from "./engine.ts";
 import { orchestrationstore } from "./store.ts";
 
 const roots: string[] = [];
@@ -30,6 +31,34 @@ function createrun(store: orchestrationstore, sessionid: string | null = "sessio
 		input: { request: "ship" },
 		maxturns: 12,
 	});
+}
+
+function markcallrun(path: string, runid: string, schema = 7): void {
+	const external = new Database(path);
+	const rows = external
+		.query("select id, seq, type, payload_json from events where run_id = ? order by seq")
+		.all(runid) as Array<{ id: number; seq: number; type: string; payload_json: string }>;
+	let previoushash: string | null = null;
+	for (const row of rows) {
+		let payload: unknown = JSON.parse(row.payload_json);
+		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+			throw new Error("expected event object");
+		}
+		if (row.type === "run_created" || row.type === "run_status") {
+			payload = { ...payload, mode: "call" };
+		}
+		const payloadjson = stablejson(payload);
+		const hash = createHash("sha256")
+			.update(`${runid}\n${row.seq}\n${row.type}\n${payloadjson}\n${previoushash ?? ""}`)
+			.digest("hex");
+		external
+			.query("update events set payload_json = ?, previous_hash = ?, hash = ? where id = ?")
+			.run(payloadjson, previoushash, hash, row.id);
+		previoushash = hash;
+	}
+	external.query("update runs set mode = 'call' where id = ?").run(runid);
+	external.exec(`pragma user_version = ${schema}`);
+	external.close();
 }
 
 describe("authoritative orchestration store", () => {
@@ -529,6 +558,196 @@ describe("authoritative orchestration store", () => {
 		store.close();
 	});
 
+	test("schema 7 terminal call migration appends one canonical event and is idempotent", () => {
+		const { store, path } = openstore();
+		const run = createrun(store, "session-terminal-call");
+		store.transitionrun(run.id, "running", { progress: 1 });
+		store.transitionrun(run.id, "completed", { result: "done" });
+		markcallrun(path, run.id);
+		store.close();
+
+		const beforedb = new Database(path, { readonly: true });
+		const before = beforedb
+			.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq")
+			.all(run.id);
+		beforedb.close();
+
+		const migrated = new orchestrationstore(path);
+		expect(migrated.getrun(run.id)).toMatchObject({
+			mode: "babysit",
+			status: "completed",
+			sessionid: "session-terminal-call",
+			turns: 1,
+		});
+		const events = migrated.events(run.id);
+		const migrationevents = events.filter((event) => event.type === "run_mode_migrated");
+		expect(migrationevents).toHaveLength(1);
+		expect(migrationevents[0]?.payload).toMatchObject({
+			id: run.id,
+			mode: "babysit",
+			previousmode: "call",
+			status: "completed",
+		});
+		expect(migrationevents[0]?.previoushash).toBe((before[before.length - 1] as { hash: string }).hash);
+		expect(migrated.doctor()).toEqual({ ok: true, issues: [] });
+		const afterdb = new Database(path, { readonly: true });
+		const after = afterdb
+			.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq")
+			.all(run.id);
+		const version = afterdb.query("pragma user_version").get() as { user_version: number };
+		const callrows = afterdb.query("select count(*) as count from runs where mode = 'call'").get() as { count: number };
+		afterdb.close();
+		expect(after.slice(0, before.length)).toEqual(before);
+		expect(version.user_version).toBe(8);
+		expect(callrows.count).toBe(0);
+		const backups = readdirSync(dirname(path)).filter((name) => name.startsWith("state.sqlite.migration-v7-"));
+		expect(backups).toHaveLength(1);
+		migrated.close();
+
+		const reopened = new orchestrationstore(path);
+		expect(reopened.events(run.id)).toHaveLength(events.length);
+		expect(readdirSync(dirname(path)).filter((name) => name.startsWith("state.sqlite.migration-v7-"))).toHaveLength(1);
+		reopened.close();
+	});
+
+	test("schema 7 active call migration preserves runtime state", async () => {
+		const { store, path } = openstore();
+		const process = defineprocess({
+			id: "delivery.review",
+			version: "1.0.0",
+			input: { type: "object", additionalproperties: true },
+			output: { type: "object", additionalproperties: true },
+			async run(context) {
+				return { result: await context.task("active-call", { value: 1 }) };
+			},
+		});
+		const engine = new orchestrationengine(store);
+		engine.register(process);
+		const started = await engine.start({
+			processid: process.id,
+			sessionid: "session-active-call",
+			mode: "babysit",
+			input: { request: "ship" },
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const run = started.run;
+		const effect = started.effects[0];
+		if (!effect) throw new Error("expected requested effect");
+		const fence = effect.fence;
+		const epoch = store.claimrun(run.id, "engine-active-call", 60_000);
+		const before = store.getrun(run.id);
+		const beforeeffect = store.geteffect(run.id, effect.id);
+		markcallrun(path, run.id);
+		store.close();
+
+		const migrated = new orchestrationstore(path);
+		expect(migrated.getrun(run.id)).toMatchObject({
+			mode: "babysit",
+			sessionid: "session-active-call",
+			status: "waiting_effect",
+			fence,
+			turns: 1,
+			leaseowner: "engine-active-call",
+			leaseepoch: epoch,
+			leaseexpiresat: before?.leaseexpiresat,
+		});
+		expect(migrated.geteffect(run.id, effect.id)).toEqual(beforeeffect);
+		expect(migrated.events(run.id).filter((event) => event.type === "run_mode_migrated")).toHaveLength(1);
+
+		const resolved = migrated.posteffect({
+			runid: run.id,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: { acknowledged: true },
+		});
+		expect(resolved.id).toBe(effect.id);
+		expect(resolved.fence).toBe(effect.fence);
+		expect(resolved.status).toBe("resolved_ok");
+		expect(migrated.listeffects(run.id)).toHaveLength(1);
+		expect(migrated.releaserun(run.id, "engine-active-call", epoch)).toBe(true);
+
+		const resumed = new orchestrationengine(migrated);
+		resumed.register(process);
+		const completed = await resumed.resume(run.id);
+		expect(completed.status).toBe("completed");
+		expect(completed.run.status).toBe("completed");
+		expect(migrated.geteffect(run.id, effect.id)).toMatchObject({
+			id: effect.id,
+			fence: effect.fence,
+			status: "resolved_ok",
+		});
+		expect(migrated.listeffects(run.id)).toHaveLength(1);
+		expect(migrated.doctor()).toEqual({ ok: true, issues: [] });
+		migrated.close();
+	});
+
+	test("schema 7 without call runs migrates without extra events", () => {
+		const { store, path } = openstore();
+		const run = createrun(store, null);
+		const before = store.events(run.id);
+		store.close();
+		const external = new Database(path);
+		external.exec("pragma user_version = 7");
+		external.close();
+
+		const migrated = new orchestrationstore(path);
+		expect(migrated.getrun(run.id)?.mode).toBe("babysit");
+		expect(migrated.events(run.id)).toEqual(before);
+		expect(migrated.events(run.id).some((event) => event.type === "run_mode_migrated")).toBe(false);
+		expect(migrated.doctor()).toEqual({ ok: true, issues: [] });
+		migrated.close();
+	});
+	test("schema 7 migration preserves scalar custom event payload and hash", () => {
+		const { store, path } = openstore();
+		const run = createrun(store, null);
+		const custom = store.recordevent(run.id, "custom_scalar", "scalar custom payload");
+		const before = store.events(run.id);
+		expect(store.doctor()).toEqual({ ok: true, issues: [] });
+		store.close();
+		const external = new Database(path);
+		external.exec("pragma user_version = 7");
+		external.close();
+
+		const migrated = new orchestrationstore(path);
+		expect(migrated.events(run.id)).toEqual(before);
+		const migratedcustom = migrated.events(run.id).find((event) => event.id === custom.id);
+		expect(migratedcustom?.payload).toBe(custom.payload);
+		expect(migratedcustom?.hash).toBe(custom.hash);
+		expect(migrated.doctor()).toEqual({ ok: true, issues: [] });
+		migrated.close();
+
+		const check = new Database(path, { readonly: true });
+		const version = check.query("pragma user_version").get() as { user_version: number };
+		expect(version.user_version).toBe(8);
+		check.close();
+	});
+
+
+	test("schema 7 call migration fails closed on a corrupt event chain", () => {
+		const { store, path } = openstore();
+		const run = createrun(store, null);
+		markcallrun(path, run.id);
+		store.close();
+		const external = new Database(path);
+		external.query("update events set hash = 'corrupt' where run_id = ? and seq = 1").run(run.id);
+		external.close();
+
+		expect(() => new orchestrationstore(path)).toThrow("database migration blocked");
+		const check = new Database(path, { readonly: true });
+		const version = check.query("pragma user_version").get() as { user_version: number };
+		const projection = check.query("select mode from runs where id = ?").get(run.id) as { mode: string };
+		const migrationevents = check
+			.query("select count(*) as count from events where run_id = ? and type = 'run_mode_migrated'")
+			.get(run.id) as { count: number };
+		check.close();
+		expect(version.user_version).toBe(7);
+		expect(projection.mode).toBe("call");
+		expect(migrationevents.count).toBe(0);
+		expect(readdirSync(dirname(path)).filter((name) => name.startsWith("state.sqlite.migration-v7-"))).toHaveLength(0);
+	});
+
 	test("repair replays legacy run events with default profile and lease fields", () => {
 		const { store, path } = openstore();
 		const run = store.createrun({
@@ -536,10 +755,11 @@ describe("authoritative orchestration store", () => {
 			processversion: "1.0.0",
 			processhash: "legacy-hash",
 			sessionid: null,
-			mode: "call",
+			mode: "babysit",
 			input: {},
 			maxturns: 10,
 		});
+		markcallrun(path, run.id, 8);
 		const external = new Database(path);
 		const event = external.query("select seq, type, payload_json from events where run_id = ?").get(run.id) as {
 			seq: number;
@@ -569,6 +789,7 @@ describe("authoritative orchestration store", () => {
 		external.close();
 		store.repair();
 		const repaired = store.getrun(run.id);
+		expect(repaired?.mode).toBe("babysit");
 		expect(repaired?.profile).toEqual({ schema: 1 });
 		expect(repaired?.leaseowner).toBeNull();
 		expect(repaired?.leaseepoch).toBe(0);

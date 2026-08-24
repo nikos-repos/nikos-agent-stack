@@ -34,7 +34,9 @@ bun add --global nikos-agent-stack
 export PATH="$(bun pm bin -g):$PATH"
 ```
 
-then start an omp session and run the installed plugin setup command:
+after installation, start an omp session. `𓂀` appears in the status line while the omnipotence extension is running.
+
+in that session, run the installed plugin setup command:
 
 ```text
 /advisor-install
@@ -104,12 +106,14 @@ features:
 
 - **deterministic process runtime** — stable process ids, semantic versions, input and output schemas, finite turn budgets for finite modes, replay-compatible retained budgets for forever runs, source-drift detection, and replay from committed state.
 - **effect primitives** — tasks, bounded parallel groups, pinned subprocesses, durable sleep, user breakpoints, registered hooks, and intentional halt.
-- **native execution modes** — `babysit`, `call`, `plan`, `yolo`, `forever`, and explicit resume use one engine with mode-specific execution and breakpoint policy; `/omnipotence-forever` starts one unbounded native orchestration run.
+- **native execution modes** — `babysit`, `plan`, `yolo`, and `forever` use one engine with mode-specific execution and breakpoint policy.
 - **durable recovery** — sqlite events and projections, idempotent result posts, input hashes, lease epochs, fencing, explicit uncertain-effect resolution, doctor, backup, and repair.
 - **tree and session safety** — session-bound result ownership, atomic start reservation, root-tree operation leases, complete-tree re-fencing, child-first halt, and lease-consistent result snapshots.
 - **hooks and profiles** — ordered lifecycle hooks with timeouts and retryable resolved-effect delivery, plus versioned user and project profiles merged through json merge patch.
 - **local blueprints** — hash-verified local packages, side-by-side semantic versions, minimum engine checks, pinned active runs, including forever runs, update, rollback, and guarded removal.
 - **operator surfaces** — omp commands and a standalone cli with human or json output, dry-run support for mutations, process planning, run and effect inspection, session controls, and recovery commands.
+
+schema 8 upgrade note: existing stored `call` runs become `babysit` automatically. historical event output may still show `call`; replay and recovery remain supported.
 
 install a local blueprint, then start one process:
 

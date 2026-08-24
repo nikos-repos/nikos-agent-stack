@@ -30,7 +30,7 @@ export type runstatus =
 
 export type effectstatus = "requested" | "resolved_ok" | "resolved_error" | "uncertain" | "cancelled";
 export type effectkind = "task" | "parallel" | "subprocess" | "sleep" | "breakpoint" | "hook";
-export type orchestrationmode = "babysit" | "call" | "plan" | "yolo" | "forever";
+export type orchestrationmode = "babysit" | "plan" | "yolo" | "forever";
 
 export interface effectrequest {
 	key: string;

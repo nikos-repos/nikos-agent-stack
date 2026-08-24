@@ -20,6 +20,7 @@ interface extensioncontext {
 	};
 	ui?: {
 		notify?(message: string, type?: string): void;
+		setStatus?(key: string, text: string): void;
 	};
 }
 
@@ -47,6 +48,7 @@ interface resultparams {
 const stateentry = "nikos-agent-stack.omnipotence.state";
 const effectmessage = "nikos-agent-stack.omnipotence.effect";
 const maximumtimerdelay = 2_147_483_647;
+const sleepleaseretrydelay = 25;
 
 export function nextsleepdelay(deadline: number, current = Date.now()): number {
 	return Math.min(maximumtimerdelay, Math.max(0, deadline - current));
@@ -153,7 +155,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	let loaded: Promise<loadsummary> | undefined;
 	const ensureloaded = (): Promise<loadsummary> => (loaded ??= loadactiveblueprints(store, engine));
 	let closed = false;
-	const sleeptimers = new Map<string, Timer>();
+	const sleeptimers = new Map<string, { timer: Timer; fence: number }>();
 
 	const appendstate = (result: advanceresult): void => {
 		pi.appendEntry(stateentry, {
@@ -180,7 +182,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	};
 
 	async function schedulesleep(rootrunid: string, effect: effectrecord): Promise<boolean> {
-		if (closed || sleeptimers.has(effect.id)) return false;
+		const existing = sleeptimers.get(effect.id);
+		if (closed || existing?.fence === effect.fence) return false;
+		if (existing) clearTimeout(existing.timer);
 		if (!effect.input || typeof effect.input !== "object" || Array.isArray(effect.input)) {
 			throw new Error(`sleep effect ${effect.id} has invalid input`);
 		}
@@ -202,6 +206,21 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			}
 		}
 		const deadline = Date.parse(until);
+		const arm = (delay = nextsleepdelay(deadline)): void => {
+			const timer = setTimeout(async () => {
+				const current = sleeptimers.get(effect.id);
+				if (!current || current.fence !== effect.fence || current.timer !== timer) return;
+				sleeptimers.delete(effect.id);
+				if (closed) return;
+				if (Date.now() < deadline) {
+					arm();
+					return;
+				}
+				await finish();
+			}, delay);
+			timer.unref?.();
+			sleeptimers.set(effect.id, { timer, fence: effect.fence });
+		};
 		const finish = async (): Promise<void> => {
 			try {
 				const result = await engine.posteffect({
@@ -219,24 +238,21 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			} catch (error) {
 				if (closed) return;
 				const message = error instanceof Error ? error.message : String(error);
+				if (/stale .*fence/.test(message)) {
+					const current = store.geteffect(effect.runid, effect.id);
+					if (current?.fence !== effect.fence) return;
+				}
+				if (message === `run ${rootrunid} is leased by another engine`) {
+					const current = store.geteffect(effect.runid, effect.id);
+					if (current?.fence !== effect.fence) return;
+					arm(sleepleaseretrydelay);
+					return;
+				}
 				const blocked = blockrun(rootrunid, message);
 				if (blocked) {
 					pi.appendEntry(stateentry, { runid: blocked.id, status: blocked.status });
 				}
 			}
-		};
-		const arm = (): void => {
-			const timer = setTimeout(async () => {
-				sleeptimers.delete(effect.id);
-				if (closed) return;
-				if (Date.now() < deadline) {
-					arm();
-					return;
-				}
-				await finish();
-			}, nextsleepdelay(deadline));
-			timer.unref?.();
-			sleeptimers.set(effect.id, timer);
 		};
 		arm();
 		if (claimed) store.markeffectdispatched(effect.runid, effect.id, effect.fence);
@@ -359,7 +375,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		description: "start one native orchestration run",
 		handler: startcommand("omnipotence", "babysit"),
 	});
-	for (const mode of ["call", "plan", "yolo"] as const) {
+	for (const mode of ["plan", "yolo"] as const) {
 		const command = `omnipotence-${mode}`;
 		pi.registerCommand(command, {
 			description: `start one native ${mode} run`,
@@ -478,6 +494,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	);
 
 	const recover = async (_event: unknown, context: extensioncontext): Promise<void> => {
+		try {
+			context.ui?.setStatus?.("omnipotence", "𓂀");
+		} catch {}
 		const run = store.getsessionrun(sessionid(context));
 		if (!run) return;
 		await ensureloaded();
@@ -545,7 +564,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	pi.on("session_shutdown", () => {
 		if (closed) return;
 		closed = true;
-		for (const timer of sleeptimers.values()) clearTimeout(timer);
+		for (const entry of sleeptimers.values()) clearTimeout(entry.timer);
 		sleeptimers.clear();
 		store.close();
 	});

@@ -171,6 +171,36 @@ describe("omnipotence cli", () => {
 		const status = await invoke(options, ["--json", "run", "status", String(run.id)]);
 		expect(objectvalue(objectvalue(status.parsed, "status").data, "status.data").status).toBe("completed");
 	});
+	test("run start rejects removed call mode without creating a run", async () => {
+		const { root, options } = opencli();
+		const source = processfixture(root);
+		expect((await invoke(options, ["--json", "blueprint", "install", source])).code).toBe(0);
+
+		const rejected = await invoke(options, [
+			"--json",
+			"run",
+			"start",
+			"delivery.cli",
+			"--mode",
+			"call",
+			"--input",
+			"{}",
+		]);
+		expect(rejected.code).toBe(2);
+		expect(rejected.parsed).toEqual({
+			ok: false,
+			error: {
+				code: "usage_error",
+				message: "unsupported run mode call",
+			},
+		});
+
+		const listed = await invoke(options, ["--json", "run", "list"]);
+		expect(listed.code).toBe(0);
+		const listdata = objectvalue(objectvalue(listed.parsed, "listed").data, "listed.data");
+		expect(listdata.runs).toEqual([]);
+	});
+
 	test("forever mode crosses the cli process turn budget", async () => {
 		const { root, options } = opencli();
 		const source = processfixture(root, undefined, 1);
@@ -182,7 +212,7 @@ describe("omnipotence cli", () => {
 			"start",
 			"delivery.cli",
 			"--mode",
-			"call",
+			"babysit",
 			"--session",
 			"cli-finite-budget",
 			"--input",
@@ -192,7 +222,7 @@ describe("omnipotence cli", () => {
 		expect(finite.stdout.trim().split("\n")).toHaveLength(1);
 		const finitedata = objectvalue(objectvalue(finite.parsed, "finite").data, "finite.data");
 		const finiterun = objectvalue(finitedata.run, "finite.run");
-		expect(finiterun.mode).toBe("call");
+		expect(finiterun.mode).toBe("babysit");
 		expect(finiterun.maxturns).toBe(1);
 		const finiteeffects = finitedata.effects;
 		if (!Array.isArray(finiteeffects) || finiteeffects.length !== 1) throw new Error("expected one finite effect");
