@@ -34,7 +34,9 @@ bun add --global nikos-agent-stack
 export PATH="$(bun pm bin -g):$PATH"
 ```
 
-then start an omp session and run the installed plugin setup command:
+after installation, start an omp session. `𓂀` appears in the status line while the omnipotence extension is running.
+
+in that session, run the installed plugin setup command:
 
 ```text
 /advisor-install

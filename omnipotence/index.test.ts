@@ -121,7 +121,12 @@ async function fire(
 	return result;
 }
 
-function context(sessionid: string, root: string, notifications: unknown[] = []) {
+function context(
+	sessionid: string,
+	root: string,
+	notifications: unknown[] = [],
+	statuses: Array<{ key: string; text: string }> = [],
+) {
 	return {
 		cwd: root,
 		hasUI: false,
@@ -134,11 +139,31 @@ function context(sessionid: string, root: string, notifications: unknown[] = [])
 			notify(value: unknown) {
 				notifications.push(value);
 			},
+			setStatus(key: string, text: string) {
+				statuses.push({ key, text });
+			},
 		},
 	};
 }
 
 describe("omnipotence omp extension", () => {
+	test("shows the observant eye while the extension runs", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-status-line-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const statuses: Array<{ key: string; text: string }> = [];
+		const ctx = context("session-status-line", root, [], statuses);
+
+		await fire(fake.handlers, "session_start", { type: "session_start" }, ctx);
+
+		expect(statuses).toEqual([{ key: "omnipotence", text: "𓂀" }]);
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+	});
+
 	test("mode command usage names the invoked command", async () => {
 		const root = mkdtempSync(join(tmpdir(), "omnipotence-command-usage-"));
 		roots.push(root);

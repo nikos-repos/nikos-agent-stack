@@ -20,6 +20,7 @@ interface extensioncontext {
 	};
 	ui?: {
 		notify?(message: string, type?: string): void;
+		setStatus?(key: string, text: string): void;
 	};
 }
 
@@ -428,6 +429,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	});
 
 	const recover = async (_event: unknown, context: extensioncontext): Promise<void> => {
+		try {
+			context.ui?.setStatus?.("omnipotence", "𓂀");
+		} catch {}
 		const run = store.getsessionrun(sessionid(context));
 		if (!run) return;
 		await ensureloaded();
