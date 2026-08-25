@@ -44,8 +44,8 @@ export interface hookresult {
 
 export interface hookselector {
 	version?: string;
-	blueprintname?: string;
-	blueprintversion?: string;
+	blueprintname?: string | null;
+	blueprintversion?: string | null;
 }
 
 const phases: Record<hookphase, true> = {
@@ -60,7 +60,7 @@ const phases: Record<hookphase, true> = {
 	recovery: true,
 };
 
-class hooktimeout extends Error {}
+class hooktimeout extends Error { }
 
 export class hookdispatcherror extends Error {
 	readonly hookid: string;
@@ -112,22 +112,24 @@ export class hookregistry {
 			.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
 	}
 
-	resolve(hookid: string, selector: hookselector = {}): Readonly<hookdefinition> {
+	resolve(hookid: string, selector?: hookselector): Readonly<hookdefinition> {
+		const selected = selector ?? {};
 		const candidates = [...this.hooks.values()]
 			.filter((hook) => hook.id === hookid)
-			.filter((hook) => selector.version === undefined || hook.version === selector.version)
-			.filter(
-				(hook) =>
-					selector.blueprintname === undefined ||
-					(hook.blueprint?.name === selector.blueprintname &&
-						hook.blueprint.version === selector.blueprintversion),
-			)
-			.filter((hook) => selector.blueprintname !== undefined || hook.active)
+			.filter((hook) => selected.version === undefined || hook.version === selected.version)
+			.filter((hook) => {
+				if (selected.blueprintname === undefined) return true;
+				if (selected.blueprintname === null) {
+					return !hook.blueprint && (selected.blueprintversion === undefined || selected.blueprintversion === null);
+				}
+				return hook.blueprint?.name === selected.blueprintname && hook.blueprint.version === selected.blueprintversion;
+			})
+			.filter((hook) => selected.blueprintname !== undefined || hook.active)
 			.sort((left, right) => compareversions(right.version, left.version));
 		const hook = candidates[0];
 		if (!hook) throw new Error(`hook ${hookid} is not registered`);
 		if (
-			selector.blueprintname === undefined &&
+			selected.blueprintname === undefined &&
 			candidates.length > 1 &&
 			compareversions(hook.version, candidates[1]!.version) === 0
 		) {
@@ -135,16 +137,14 @@ export class hookregistry {
 		}
 		return hook;
 	}
-
-	listfor(phase: hookphase, blueprint?: processblueprint): Readonly<hookdefinition>[] {
+	listfor(phase: hookphase, blueprint?: processblueprint | null): Readonly<hookdefinition>[] {
 		return [...this.hooks.values()]
 			.filter((hook) => hook.phase === phase)
 			.filter((hook) => {
+				if (blueprint === undefined) return hook.active;
 				if (!hook.blueprint) return hook.active;
-				if (blueprint && hook.blueprint.name === blueprint.name) {
-					return hook.blueprint.version === blueprint.version;
-				}
-				return hook.active;
+				if (!blueprint) return false;
+				return hook.blueprint.name === blueprint.name && hook.blueprint.version === blueprint.version;
 			})
 			.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
 	}
@@ -152,7 +152,7 @@ export class hookregistry {
 	async dispatchfor(
 		phase: hookphase,
 		input: jsonvalue,
-		blueprint?: processblueprint,
+		blueprint?: processblueprint | null,
 	): Promise<hookresult[]> {
 		if (!Object.hasOwn(phases, phase)) throw new TypeError(`hook.phase: unsupported phase ${phase}`);
 		return this.execute(this.listfor(phase, blueprint), input);
@@ -166,7 +166,7 @@ export class hookregistry {
 	async dispatchone(
 		hookid: string,
 		input: jsonvalue,
-		selector: hookselector = {},
+		selector?: hookselector,
 	): Promise<hookresult> {
 		const hook = this.resolve(hookid, selector);
 		const [result] = await this.execute([hook], input);

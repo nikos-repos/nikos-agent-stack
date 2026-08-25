@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { asserteffectkey, assertprocessid, assertversion, jsonvalueof, parsejson, stablejson } from "./contracts.ts";
-import type { effectkind, effectstatus, jsonvalue, orchestrationmode, runstatus } from "./contracts.ts";
+import type { effectkind, effectstatus, jsonvalue, orchestrationmode, processparent, runstatus } from "./contracts.ts";
 
 export interface runrecord {
 	id: string;
@@ -650,6 +650,11 @@ function parseblueprint(row: blueprintrow): blueprintrecord {
 	};
 }
 
+interface ownershipgraph {
+	readonly children: ReadonlyMap<string, readonly string[]>;
+	readonly parents: ReadonlyMap<string, effectrecord>;
+}
+
 export interface storeoptions {
 	readonly?: boolean;
 }
@@ -1242,46 +1247,108 @@ export class orchestrationstore {
 		return run;
 	}
 
-	private parentrunid(childrunid: string): string | null {
+	private ownershipgraph(): ownershipgraph {
+		const children = new Map<string, string[]>();
+		const parents = new Map<string, effectrecord>();
 		const rows = this.data
 			.query("select * from effects where kind = 'subprocess' order by created_at, id")
 			.all() as effectrow[];
 		for (const row of rows) {
 			const effect = parseeffect(row);
 			const input = objectvalue(effect.input, `effect ${effect.key} input`);
-			if (input.childrunid === childrunid) return effect.runid;
+			if (typeof input.childrunid !== "string") {
+				throw new Error(`effect ${effect.key} input.childrunid: expected string`);
+			}
+			const parent = this.getrun(effect.runid);
+			if (!parent) throw new Error(`subprocess parent run ${effect.runid} does not exist`);
+			if (!this.getrun(input.childrunid)) {
+				if (effect.status === "requested" && parent.status === "waiting_effect") continue;
+				throw new Error(`subprocess child run ${input.childrunid} does not exist`);
+			}
+			if (parents.has(input.childrunid)) {
+				throw new Error(`run ${input.childrunid} has ambiguous subprocess parents`);
+			}
+			parents.set(input.childrunid, effect);
+			const siblings = children.get(effect.runid) ?? [];
+			siblings.push(input.childrunid);
+			children.set(effect.runid, siblings);
 		}
-		return null;
+		return { children, parents };
+	}
+
+	private strictownership(runid: string): { rootrunid: string; runids: string[] } {
+		this.requiredrun(runid);
+		const graph = this.ownershipgraph();
+		let current = runid;
+		const ancestors = new Set<string>();
+		while (true) {
+			if (ancestors.has(current)) throw new Error(`run ${runid} has cyclic subprocess ownership`);
+			ancestors.add(current);
+			const parent = graph.parents.get(current);
+			if (!parent) break;
+			current = parent.runid;
+		}
+		const rootrunid = current;
+		const ownedrunids: string[] = [];
+		const seen = new Set<string>();
+		const path = new Set<string>();
+		const pending: Array<{ runid: string; leaving: boolean }> = [{ runid, leaving: false }];
+		while (pending.length > 0) {
+			const entry = pending.pop()!;
+			if (entry.leaving) {
+				path.delete(entry.runid);
+				continue;
+			}
+			if (path.has(entry.runid)) throw new Error(`run ${runid} has cyclic subprocess ownership`);
+			if (seen.has(entry.runid)) continue;
+			seen.add(entry.runid);
+			path.add(entry.runid);
+			ownedrunids.push(entry.runid);
+			pending.push({ runid: entry.runid, leaving: true });
+			for (const childrunid of graph.children.get(entry.runid) ?? []) {
+				pending.push({ runid: childrunid, leaving: false });
+			}
+		}
+		return { rootrunid, runids: ownedrunids };
+	}
+
+	parentprocesscontext(childrunid: string): processparent | null {
+		const graph = this.ownershipgraph();
+		const effect = graph.parents.get(childrunid);
+		if (!effect) return null;
+		const child = this.getrun(childrunid);
+		if (!child) throw new Error(`subprocess child run ${childrunid} does not exist`);
+		const parent = this.getrun(effect.runid);
+		if (!parent) throw new Error(`subprocess parent run ${effect.runid} does not exist`);
+		if (parent.id === child.id) throw new Error(`run ${childrunid} has itself as subprocess parent`);
+		asserteffectkey(effect.key);
+		assertprocessid(parent.processid);
+		assertversion(parent.processversion, "run.processversion");
+		const hasblueprintname = parent.blueprintname !== null;
+		const hasblueprintversion = parent.blueprintversion !== null;
+		if (hasblueprintname !== hasblueprintversion) {
+			throw new Error(`run ${parent.id} has incomplete blueprint identity`);
+		}
+		if (hasblueprintname) {
+			assertprocessid(parent.blueprintname!);
+			assertversion(parent.blueprintversion!, "run.blueprintversion");
+		}
+		return {
+			runid: parent.id,
+			effectkey: effect.key,
+			processid: parent.processid,
+			processversion: parent.processversion,
+			blueprintname: parent.blueprintname,
+			blueprintversion: parent.blueprintversion,
+		};
 	}
 
 	rootrunid(runid: string): string {
-		this.requiredrun(runid);
-		let current = runid;
-		const seen = new Set<string>();
-		while (true) {
-			if (seen.has(current)) throw new Error(`run ${runid} has cyclic subprocess ownership`);
-			seen.add(current);
-			const parent = this.parentrunid(current);
-			if (!parent) return current;
-			this.requiredrun(parent);
-			current = parent;
-		}
+		return this.strictownership(runid).rootrunid;
 	}
 
-	private ownedrunids(rootrunid: string): string[] {
-		const pending = [rootrunid];
-		const seen = new Set<string>();
-		while (pending.length > 0) {
-			const runid = pending.pop();
-			if (!runid || seen.has(runid)) continue;
-			seen.add(runid);
-			for (const effect of this.listeffects(runid)) {
-				if (effect.kind !== "subprocess") continue;
-				const input = objectvalue(effect.input, `effect ${effect.key} input`);
-				if (typeof input.childrunid === "string") pending.push(input.childrunid);
-			}
-		}
-		return [...seen];
+	ownedrunids(runid: string): string[] {
+		return this.strictownership(runid).runids;
 	}
 
 	private refenceinside(run: runrecord): runrecord {

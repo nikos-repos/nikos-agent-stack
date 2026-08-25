@@ -54,6 +54,27 @@ function fixture(root: string, version: string, migration = false, engine = ">=1
 	return source;
 }
 
+function nonregularfixture(root: string): string {
+	const source = join(root, "non-regular");
+	const path = "declared-directory";
+	mkdirSync(join(source, path), { recursive: true });
+	writeFileSync(
+		join(source, "omnipotence.blueprint.json"),
+		JSON.stringify({
+			schema: 1,
+			name: "directory-file-pack",
+			version: "1.0.0",
+			engine: ">=1.0.0",
+			processes: [],
+			hooks: [],
+			files: { [path]: hash("") },
+			config: {},
+			migrations: [],
+		}),
+	);
+	return source;
+}
+
 function openblueprints() {
 	const root = mkdtempSync(join(tmpdir(), "omnipotence-blueprints-"));
 	roots.push(root);
@@ -175,6 +196,31 @@ describe("local blueprint lifecycle", () => {
 		expect(() => blueprints.install(linked)).toThrow(
 			"blueprint file processes/review.ts escapes package root",
 		);
+		store.close();
+	});
+
+	test("install accepts an in-root symlink file", () => {
+		const { root, store, blueprints } = openblueprints();
+		const linked = fixture(root, "3.0.0");
+		const target = join(linked, "processes/review.ts");
+		rmSync(target);
+		writeFileSync(join(linked, "processes/source.ts"), `export const version = "3.0.0";\n`);
+		symlinkSync("source.ts", target);
+
+		const installed = blueprints.install(linked);
+		expect(readFileSync(join(installed.installpath, "processes/review.ts"), "utf8")).toBe(
+			`export const version = "3.0.0";\n`,
+		);
+		store.close();
+	});
+
+	test("install rejects an in-root directory file before mutating state", () => {
+		const { root, store, installroot, blueprints } = openblueprints();
+		expect(() => blueprints.install(nonregularfixture(root))).toThrow(
+			"not a regular file",
+		);
+		expect(existsSync(join(installroot, "directory-file-pack", "1.0.0"))).toBe(false);
+		expect(blueprints.list()).toEqual([]);
 		store.close();
 	});
 

@@ -1,8 +1,9 @@
 export type jsonprimitive = string | number | boolean | null;
 export type jsonvalue = jsonprimitive | jsonvalue[] | { [key: string]: jsonvalue };
+export type jsontype = "null" | "boolean" | "number" | "integer" | "string" | "array" | "object";
 
 export interface jsonschema {
-	type?: "null" | "boolean" | "number" | "integer" | "string" | "array" | "object";
+	type?: jsontype | readonly jsontype[];
 	enum?: readonly jsonprimitive[];
 	min?: number;
 	max?: number;
@@ -43,9 +44,19 @@ export interface parallelrequest extends effectrequest {
 	kind: "task";
 }
 
+export interface processparent {
+	readonly runid: string;
+	readonly effectkey: string;
+	readonly processid: string;
+	readonly processversion: string;
+	readonly blueprintname: string | null;
+	readonly blueprintversion: string | null;
+}
+
 export interface processcontext {
 	readonly runid: string;
 	readonly profile: jsonvalue;
+	readonly parent: processparent | null;
 	task(key: string, input: jsonvalue, label?: string): Promise<jsonvalue>;
 	parallel(key: string, requests: readonly parallelrequest[], maxconcurrency?: number): Promise<jsonvalue[]>;
 	subprocess(key: string, processid: string, input: jsonvalue): Promise<jsonvalue>;
@@ -132,14 +143,8 @@ function sameprimitive(left: jsonprimitive, right: unknown): boolean {
 	return left === right;
 }
 
-export function validate(schema: jsonschema, value: unknown, path = "value"): validationissue[] {
-	if (schema.enum && !schema.enum.some((entry) => sameprimitive(entry, value))) {
-		return issue(path, `expected one of ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}`);
-	}
-
-	switch (schema.type) {
-		case undefined:
-			return [];
+function validatetype(schema: jsonschema, type: jsontype, value: unknown, path: string): validationissue[] {
+	switch (type) {
 		case "null":
 			return value === null ? [] : issue(path, "expected null");
 		case "boolean":
@@ -147,7 +152,7 @@ export function validate(schema: jsonschema, value: unknown, path = "value"): va
 		case "number":
 		case "integer": {
 			if (typeof value !== "number" || !Number.isFinite(value)) return issue(path, "expected finite number");
-			if (schema.type === "integer" && !Number.isInteger(value)) return issue(path, "expected integer");
+			if (type === "integer" && !Number.isInteger(value)) return issue(path, "expected integer");
 			if (schema.min !== undefined && value < schema.min) return issue(path, `expected value at least ${schema.min}`);
 			if (schema.max !== undefined && value > schema.max) return issue(path, `expected value at most ${schema.max}`);
 			return [];
@@ -169,8 +174,12 @@ export function validate(schema: jsonschema, value: unknown, path = "value"): va
 			if (!Array.isArray(value)) return issue(path, "expected array");
 			if (schema.min !== undefined && value.length < schema.min) return issue(path, `expected at least ${schema.min} items`);
 			if (schema.max !== undefined && value.length > schema.max) return issue(path, `expected at most ${schema.max} items`);
-			if (!schema.items) return [];
-			return value.flatMap((entry, index) => validate(schema.items!, entry, `${path}[${index}]`));
+			if (schema.items === undefined) return [];
+			const issues: validationissue[] = [];
+			for (let index = 0; index < value.length; index++) {
+				issues.push(...validate(schema.items, value[index], `${path}[${index}]`));
+			}
+			return issues;
 		}
 		case "object": {
 			if (!value || typeof value !== "object" || Array.isArray(value)) return issue(path, "expected object");
@@ -195,6 +204,20 @@ export function validate(schema: jsonschema, value: unknown, path = "value"): va
 	}
 }
 
+export function validate(schema: jsonschema, value: unknown, path = "value"): validationissue[] {
+	if (schema.enum && !schema.enum.some((entry) => sameprimitive(entry, value))) {
+		return issue(path, `expected one of ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}`);
+	}
+
+	const types = schema.type;
+	if (types === undefined) return [];
+	if (typeof types === "string") return validatetype(schema, types, value, path);
+	for (const type of types) {
+		if (validatetype(schema, type, value, path).length === 0) return [];
+	}
+	return issue(path, `expected one of types ${types.join(", ")}`);
+}
+
 export function assertvalid(schema: jsonschema, value: unknown, path = "value"): void {
 	const [first] = validate(schema, value, path);
 	if (first) throw new TypeError(`${first.path}: ${first.message}`);
@@ -214,11 +237,26 @@ export function assertschema(value: unknown, path = "schema"): asserts value is 
 	if (schema.type === undefined && schema.enum === undefined) {
 		throw new TypeError(`${path}: expected type or enum`);
 	}
-	if (
-		schema.type !== undefined &&
-		(typeof schema.type !== "string" || !Object.hasOwn(allowedschematypes, schema.type))
-	) {
-		throw new TypeError(`${path}.type: expected supported type`);
+	if (schema.type !== undefined) {
+		if (typeof schema.type === "string") {
+			if (!Object.hasOwn(allowedschematypes, schema.type)) {
+				throw new TypeError(`${path}.type: expected supported type`);
+			}
+		} else if (Array.isArray(schema.type)) {
+			if (schema.type.length === 0) {
+				throw new TypeError(`${path}.type: expected non-empty type array`);
+			}
+			const seen = new Set<string>();
+			for (const type of schema.type) {
+				if (typeof type !== "string" || !Object.hasOwn(allowedschematypes, type)) {
+					throw new TypeError(`${path}.type: expected supported type`);
+				}
+				if (seen.has(type)) throw new TypeError(`${path}.type: expected unique type array`);
+				seen.add(type);
+			}
+		} else {
+			throw new TypeError(`${path}.type: expected supported type`);
+		}
 	}
 	if (schema.enum !== undefined) {
 		if (!Array.isArray(schema.enum) || schema.enum.length === 0) {
@@ -256,11 +294,12 @@ export function assertschema(value: unknown, path = "schema"): asserts value is 
 			throw new TypeError(`${path}.pattern: invalid regular expression`);
 		}
 	}
-	if (schema.type === "array") {
-		if (schema.items === undefined) throw new TypeError(`${path}.items: required schema`);
+	const arraytype = schema.type === "array" || (Array.isArray(schema.type) && schema.type.includes("array"));
+	if (arraytype && schema.items !== undefined) {
 		assertschema(schema.items, `${path}.items`);
 	}
-	if (schema.type === "object") {
+	const objecttype = schema.type === "object" || (Array.isArray(schema.type) && schema.type.includes("object"));
+	if (objecttype) {
 		if (schema.additionalproperties !== undefined && typeof schema.additionalproperties !== "boolean") {
 			throw new TypeError(`${path}.additionalproperties: expected boolean`);
 		}
@@ -300,7 +339,14 @@ function normalizejson(value: unknown, path: string, seen: WeakSet<object>): jso
 	seen.add(value);
 
 	if (Array.isArray(value)) {
-		const array = value.map((entry, index) => normalizejson(entry, `${path}[${index}]`, seen));
+		const array: jsonvalue[] = [];
+		for (let index = 0; index < value.length; index++) {
+			if (!Object.hasOwn(value, index)) {
+				seen.delete(value);
+				throw new TypeError(`${path}[${index}]: expected own array element`);
+			}
+			array.push(normalizejson(value[index], `${path}[${index}]`, seen));
+		}
 		seen.delete(value);
 		return array;
 	}

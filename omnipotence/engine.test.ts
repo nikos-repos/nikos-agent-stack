@@ -134,6 +134,328 @@ describe("deterministic process engine", () => {
 		).toBe("beta-pack");
 		store.close();
 	});
+	test("start rejects sparse input before storing a run", async () => {
+		const { store, engine } = openengine();
+		let processcalls = 0;
+		engine.register(
+			defineprocess({
+				id: "delivery.sparse-input",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run() {
+					processcalls += 1;
+					return {};
+				},
+			}),
+		);
+		const sparse: unknown[] = [];
+		sparse.length = 1;
+
+		await expect(
+			engine.start({
+				processid: "delivery.sparse-input",
+				sessionid: "session-sparse-input",
+				mode: "babysit",
+				input: { payload: sparse },
+			}),
+		).rejects.toThrow("run.input.payload[0]: expected own array element");
+		expect(processcalls).toBe(0);
+		expect(store.listruns()).toHaveLength(0);
+		store.close();
+	});
+	test("matching blueprint hooks execute once and replay their stored result", async () => {
+		const { store, engine } = openengine();
+		const blueprint = { name: "scoped-pack", version: "1.0.0" };
+		let hookcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.guard",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				blueprint,
+				async run() {
+					hookcalls += 1;
+					return { approved: true };
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.blueprint-hook",
+				version: "1.0.0",
+				blueprint,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					const guard = await ctx.hook("guard", "audit.guard", { request: "run" });
+					const work = await ctx.task("work", {});
+					return { guard, work };
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.blueprint-hook",
+			sessionid: "session-blueprint-hook",
+			mode: "babysit",
+			input: {},
+		});
+		expect(started.status).toBe("waiting");
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		expect(hookcalls).toBe(1);
+		const replay = await engine.resume(started.run.id);
+		expect(replay.status).toBe("waiting");
+		expect(hookcalls).toBe(1);
+
+		const work = started.effects[0]!;
+		const completed = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: work.runid,
+			effectid: work.id,
+			fence: work.fence,
+			inputhash: work.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected completed result");
+		expect(completed.output).toEqual({ guard: { approved: true }, work: { done: true } });
+		expect(hookcalls).toBe(1);
+		store.close();
+	});
+	test("an unscoped hook effect replays its identity after a scoped hook appears", async () => {
+		const { store, engine } = openengine();
+		let unscopedcalls = 0;
+		let scopedcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.replay-identity",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				async run() {
+					unscopedcalls += 1;
+					return { approved: true };
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.unscoped-hook-replay",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					const guard = await ctx.hook("guard", "audit.replay-identity", { request: "run" });
+					const work = await ctx.task("work", {});
+					return { guard, work };
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.unscoped-hook-replay",
+			sessionid: "session-unscoped-hook-replay",
+			mode: "babysit",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const hookeffect = store.geteffectbykey(started.run.id, "guard");
+		const work = started.effects[0];
+		if (!hookeffect || !work) throw new Error("expected durable hook and work effects");
+		const inputbytes = stablejson(hookeffect.input);
+
+		engine.hooks.register(
+			definehook({
+				id: "audit.replay-identity",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				blueprint: { name: "scoped-pack", version: "1.0.0" },
+				async run() {
+					scopedcalls += 1;
+					return { approved: false };
+				},
+			}),
+		);
+
+		const completed = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: work.runid,
+			effectid: work.id,
+			fence: work.fence,
+			inputhash: work.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected completed result");
+		expect(completed.output).toEqual({ guard: { approved: true }, work: { done: true } });
+		expect(unscopedcalls).toBe(1);
+		expect(scopedcalls).toBe(0);
+		const replayed = store.geteffect(started.run.id, hookeffect.id);
+		expect(replayed).toMatchObject({
+			inputhash: hookeffect.inputhash,
+			input: hookeffect.input,
+		});
+		expect(replayed ? stablejson(replayed.input) : null).toBe(inputbytes);
+		store.close();
+	});
+	test("new unblueprinted hooks require active definitions while durable null selectors replay", async () => {
+		const { store, engine, path } = openengine();
+		let activecalls = 0;
+		const process = defineprocess({
+			id: "delivery.inactive-hook-replay",
+			version: "1.0.0",
+			input: objectinput,
+			output: objectoutput,
+			async run(ctx) {
+				const guard = await ctx.hook("guard", "audit.inactive-global", { request: "run" });
+				const work = await ctx.task("work", {});
+				return { guard, work };
+			},
+		});
+		engine.hooks.register(
+			definehook({
+				id: "audit.inactive-global",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				async run() {
+					activecalls += 1;
+					return { approved: true };
+				},
+			}),
+		);
+		engine.register(process);
+
+		const started = await engine.start({
+			processid: process.id,
+			sessionid: "session-inactive-hook-seed",
+			mode: "babysit",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting seed run");
+		const hookeffect = store.geteffectbykey(started.run.id, "guard");
+		const work = started.effects[0];
+		if (!hookeffect || !work) throw new Error("expected durable hook and work effects");
+		const hookinputbytes = stablejson(hookeffect.input);
+		store.close();
+
+		const reopenedstore = new orchestrationstore(path);
+		const reopened = new orchestrationengine(reopenedstore);
+		let inactivecalls = 0;
+		reopened.hooks.register(
+			definehook({
+				id: "audit.inactive-global",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				active: false,
+				async run() {
+					inactivecalls += 1;
+					return { approved: false };
+				},
+			}),
+		);
+		reopened.register(process);
+
+		const failed = await reopened.start({
+			processid: process.id,
+			sessionid: "session-inactive-hook-new",
+			mode: "babysit",
+			input: {},
+		});
+		expect(failed.status).toBe("failed");
+		if (failed.status !== "failed") throw new Error("expected inactive hook failure");
+		expect(reopenedstore.listeffects(failed.run.id)).toHaveLength(0);
+		expect(inactivecalls).toBe(0);
+
+		const completed = await reopened.posteffect({
+			rootrunid: started.run.id,
+			runid: work.runid,
+			effectid: work.id,
+			fence: work.fence,
+			inputhash: work.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(completed.status).toBe("completed");
+		if (completed.status !== "completed") throw new Error("expected durable replay completion");
+		expect(completed.output).toEqual({ guard: { approved: true }, work: { done: true } });
+		expect(activecalls).toBe(1);
+		expect(inactivecalls).toBe(0);
+		const replayed = reopenedstore.geteffect(started.run.id, hookeffect.id);
+		expect(replayed).toMatchObject({
+			status: "resolved_ok",
+			input: hookeffect.input,
+			inputhash: hookeffect.inputhash,
+			value: { approved: true },
+		});
+		expect(replayed ? stablejson(replayed.input) : null).toBe(hookinputbytes);
+		reopenedstore.close();
+	});
+
+	test("unrelated processes cannot dispatch blueprint-scoped explicit hooks", async () => {
+		const { store, engine } = openengine();
+		const blueprint = { name: "scoped-pack", version: "1.0.0" };
+		let hookcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.guard",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				blueprint,
+				async run() {
+					hookcalls += 1;
+					return { approved: true };
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.unblueprinted-hook",
+				version: "1.0.0",
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.hook("guard", "audit.guard", { request: "run" });
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.different-blueprint-hook",
+				version: "1.0.0",
+				blueprint: { name: "other-pack", version: "1.0.0" },
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.hook("guard", "audit.guard", { request: "run" });
+				},
+			}),
+		);
+
+		for (const [processid, sessionid] of [
+			["delivery.unblueprinted-hook", "session-unblueprinted-hook"],
+			["delivery.different-blueprint-hook", "session-different-blueprint-hook"],
+		] as const) {
+			const result = await engine.start({
+				processid,
+				sessionid,
+				mode: "babysit",
+				input: {},
+			});
+			expect(result.status).toBe("failed");
+			expect(result.run.status).toBe("failed");
+			expect(store.listeffects(result.run.id)).toHaveLength(0);
+		}
+		expect(hookcalls).toBe(0);
+		store.close();
+	});
 	test("one start advances two effect turns into one validated output", async () => {
 		const { store, engine } = openengine();
 		let resolvedhooks = 0;
@@ -468,8 +790,8 @@ describe("deterministic process engine", () => {
 		expect(next.effects.map((effect) => effect.key)).toEqual(["limited/second"]);
 		store.close();
 	});
-	test("a subprocess exposes its leaf effect and returns through the parent", async () => {
-		const { store, engine } = openengine();
+	test("a subprocess recreates a missing child and returns through the parent", async () => {
+		const { store, engine, path } = openengine();
 		engine.register(
 			defineprocess({
 				id: "delivery.child",
@@ -504,7 +826,18 @@ describe("deterministic process engine", () => {
 		expect(started.effects[0]?.key).toBe("child-work");
 		expect(started.effects[0]?.runid).not.toBe(started.run.id);
 
-		const leaf = started.effects[0]!;
+		const childrunid = started.effects[0]!.runid;
+		const external = new Database(path);
+		external.query("delete from effects where run_id = ?").run(childrunid);
+		external.query("delete from events where run_id = ?").run(childrunid);
+		external.query("delete from runs where id = ?").run(childrunid);
+		external.close();
+
+		const replayed = await engine.resume(started.run.id);
+		if (replayed.status !== "waiting") throw new Error("expected recreated child effect");
+		expect(replayed.effects[0]?.runid).toBe(childrunid);
+
+		const leaf = replayed.effects[0]!;
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: leaf.runid,
@@ -520,6 +853,287 @@ describe("deterministic process engine", () => {
 		store.close();
 	});
 
+	test("process contexts expose durable parent metadata across replay", async () => {
+		const { store, engine } = openengine();
+		const observed: unknown[] = [];
+		const blueprint = { name: "delivery-pack", version: "1.0.0" };
+		engine.register(
+			defineprocess({
+				id: "delivery.child-context",
+				version: "1.0.0",
+				blueprint,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					observed.push(ctx.parent);
+					return { parent: ctx.parent, value: await ctx.task("child-work", {}) };
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.parent-context",
+				version: "1.0.0",
+				blueprint,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("child", "delivery.child-context", {});
+				},
+			}),
+		);
+
+		const top = await engine.start({
+			processid: "delivery.child-context",
+			sessionid: "session-parent-context-top",
+			mode: "babysit",
+			input: {},
+		});
+		expect(top.status).toBe("waiting");
+		if (top.status !== "waiting") throw new Error("expected top-level child work");
+		const topwork = top.effects[0]!;
+		const topcompleted = await engine.posteffect({
+			rootrunid: top.run.id,
+			runid: topwork.runid,
+			effectid: topwork.id,
+			fence: topwork.fence,
+			inputhash: topwork.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(topcompleted.status).toBe("completed");
+		if (topcompleted.status !== "completed") throw new Error("expected top-level child completion");
+		expect(topcompleted.output).toEqual({ parent: null, value: { done: true } });
+		observed.length = 0;
+
+		const started = await engine.start({
+			processid: "delivery.parent-context",
+			sessionid: "session-parent-context-child",
+			mode: "babysit",
+			input: {},
+		});
+		expect(started.status).toBe("waiting");
+		if (started.status !== "waiting") throw new Error("expected subprocess child work");
+		const childwork = started.effects[0]!;
+		const expected = {
+			runid: started.run.id,
+			effectkey: "child",
+			processid: "delivery.parent-context",
+			processversion: "1.0.0",
+			blueprintname: "delivery-pack",
+			blueprintversion: "1.0.0",
+		};
+		expect(observed[0]).toEqual(expected);
+		expect(store.parentprocesscontext("unrelated-child")).toBeNull();
+
+		const replay = await engine.resume(started.run.id);
+		expect(replay.status).toBe("waiting");
+		expect(observed[1]).toEqual(expected);
+		expect(observed[1]).toEqual(observed[0]);
+
+		const completed = await engine.posteffect({
+			rootrunid: started.run.id,
+			runid: childwork.runid,
+			effectid: childwork.id,
+			fence: childwork.fence,
+			inputhash: childwork.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(completed.status).toBe("completed");
+		expect(observed.every((parent) => JSON.stringify(parent) === JSON.stringify(expected))).toBe(true);
+		store.close();
+	});
+
+	test("parent lookup rejects ambiguous subprocess parents", () => {
+		const { store } = openengine();
+		const createrun = (processid: string) =>
+			store.createrun({
+				processid,
+				processversion: "1.0.0",
+				processhash: "hash",
+				sessionid: null,
+				mode: "babysit",
+				input: {},
+				maxturns: 3,
+			});
+		const parent = createrun("delivery.parent-lookup");
+		const child = createrun("delivery.child-lookup");
+		const first = store.requesteffect(parent.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const duplicate = createrun("delivery.other-parent");
+		store.requesteffect(duplicate.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		expect(() => store.parentprocesscontext(child.id)).toThrow(`run ${child.id} has ambiguous subprocess parents`);
+		expect(first.kind).toBe("subprocess");
+		store.close();
+	});
+
+	test("parent lookup rejects malformed subprocess envelopes", () => {
+		const { store, path } = openengine();
+		const createrun = (processid: string) =>
+			store.createrun({
+				processid,
+				processversion: "1.0.0",
+				processhash: "hash",
+				sessionid: null,
+				mode: "babysit",
+				input: {},
+				maxturns: 3,
+			});
+		const parent = createrun("delivery.parent-lookup");
+		const malformedchild = createrun("delivery.malformed-child");
+		const malformed = store.requesteffect(parent.id, {
+			key: "malformed",
+			kind: "subprocess",
+			input: { childrunid: malformedchild.id },
+		});
+		const external = new Database(path);
+		external.query("update effects set input_json = ? where id = ?").run(JSON.stringify({ childrunid: 42 }), malformed.id);
+		external.close();
+		expect(() => store.parentprocesscontext(malformedchild.id)).toThrow("effect malformed input.childrunid: expected string");
+		store.close();
+	});
+
+	test("rejects malformed ownership before an engine effect post mutates state", async () => {
+		const { store, engine } = openengine();
+		let hookcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.ownership-rejection",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 100,
+				async run() {
+					hookcalls += 1;
+					return null;
+				},
+			}),
+		);
+		const root = store.createrun({
+			processid: "delivery.ownership-malformed",
+			processversion: "1.0.0",
+			processhash: "hash",
+			sessionid: "session-ownership-malformed",
+			mode: "babysit",
+			input: {},
+			maxturns: 3,
+		});
+		const malformed = store.requesteffect(root.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid: 42 },
+		});
+		const work = store.requesteffect(root.id, {
+			key: "work",
+			kind: "task",
+			input: { value: "before" },
+		});
+		const beforework = store.geteffect(root.id, work.id);
+		const beforemalformed = store.geteffect(root.id, malformed.id);
+		if (!beforework || !beforemalformed) throw new Error("expected pending effects");
+		const fence = root.fence;
+
+		await expect(
+			engine.posteffect({
+				rootrunid: root.id,
+				runid: root.id,
+				effectid: work.id,
+				fence: work.fence,
+				inputhash: work.inputhash,
+				status: "ok",
+				value: { done: true },
+			}),
+		).rejects.toThrow("childrunid");
+		expect(store.getrun(root.id)?.fence).toBe(fence);
+		expect(store.geteffect(root.id, work.id)).toEqual(beforework);
+		expect(store.geteffect(root.id, malformed.id)).toEqual(beforemalformed);
+		expect(store.listhookdeliveries(root.id, work.id)).toHaveLength(0);
+		expect(hookcalls).toBe(0);
+		store.close();
+	});
+
+	test("rejects duplicate ownership before an engine effect post mutates state", async () => {
+		const { store, engine } = openengine();
+		registersnapshotprocess(engine, "delivery.ownership-duplicate");
+		registersnapshotprocess(engine, "delivery.ownership-child");
+		let hookcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.duplicate-ownership",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 100,
+				async run() {
+					hookcalls += 1;
+					return null;
+				},
+			}),
+		);
+		const root = store.createrun({
+			processid: "delivery.ownership-duplicate",
+			processversion: "1.0.0",
+			processhash: "hash",
+			sessionid: "session-ownership-duplicate",
+			mode: "babysit",
+			input: {},
+			maxturns: 3,
+		});
+		const child = store.createrun({
+			processid: "delivery.ownership-child",
+			processversion: "1.0.0",
+			processhash: "hash",
+			sessionid: null,
+			mode: "babysit",
+			input: {},
+			maxturns: 3,
+		});
+		const first = store.requesteffect(root.id, {
+			key: "child-a",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const second = store.requesteffect(root.id, {
+			key: "child-b",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const work = store.requesteffect(root.id, {
+			key: "work",
+			kind: "task",
+			input: { value: "before" },
+		});
+		const beforework = store.geteffect(root.id, work.id);
+		const beforefirst = store.geteffect(root.id, first.id);
+		const beforesecond = store.geteffect(root.id, second.id);
+		if (!beforework || !beforefirst || !beforesecond) throw new Error("expected pending effects");
+		const fence = root.fence;
+
+		await expect(
+			engine.posteffect({
+				rootrunid: root.id,
+				runid: root.id,
+				effectid: work.id,
+				fence: work.fence,
+				inputhash: work.inputhash,
+				status: "ok",
+				value: { done: true },
+			}),
+		).rejects.toThrow("ambiguous subprocess parents");
+		expect(store.getrun(root.id)?.fence).toBe(fence);
+		expect(store.geteffect(root.id, work.id)).toEqual(beforework);
+		expect(store.geteffect(root.id, first.id)).toEqual(beforefirst);
+		expect(store.geteffect(root.id, second.id)).toEqual(beforesecond);
+		expect(store.listhookdeliveries(root.id, work.id)).toHaveLength(0);
+		expect(hookcalls).toBe(0);
+		store.close();
+	});
 	test("rebinding a root fences every subprocess descendant before stale results", async () => {
 		const { store, engine } = openengine();
 		engine.register(
@@ -1447,6 +2061,136 @@ describe("deterministic process engine", () => {
 		expect(resolvedhooks).toBe(1);
 		store.close();
 	});
+	test("uncertain child recovery uses the child blueprint hooks", async () => {
+		const { store, engine } = openengine();
+		const blueprinta = { name: "pack-a", version: "1.0.0" };
+		const blueprintb = { name: "pack-b", version: "1.0.0" };
+		engine.register(
+			defineprocess({
+				id: "delivery.recovery-root-a",
+				version: "1.0.0",
+				blueprint: blueprinta,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return ctx.subprocess("child", "delivery.recovery-child-b", {});
+				},
+			}),
+		);
+		engine.register(
+			defineprocess({
+				id: "delivery.recovery-child-b",
+				version: "1.0.0",
+				blueprint: blueprintb,
+				input: objectinput,
+				output: objectoutput,
+				async run(ctx) {
+					return { result: await ctx.task("work", {}) };
+				},
+			}),
+		);
+
+		const started = await engine.start({
+			processid: "delivery.recovery-root-a",
+			sessionid: "session-recovery-blueprint-child",
+			mode: "babysit",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected child effect");
+		const effect = started.effects[0]!;
+		const child = store.getrun(effect.runid);
+		if (!child) throw new Error("expected child run");
+		const uncertain = store.posteffect({
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "uncertain",
+			error: { message: "connection closed after dispatch" },
+		});
+		expect(uncertain.status).toBe("uncertain");
+
+		let ahooks = 0;
+		let bhooks = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.recovery-a",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				blueprint: blueprinta,
+				async run() {
+					ahooks += 1;
+					return { scope: "a" };
+				},
+			}),
+		);
+		engine.hooks.register(
+			definehook({
+				id: "audit.recovery-b",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				blueprint: blueprintb,
+				async run() {
+					bhooks += 1;
+					return { scope: "b" };
+				},
+			}),
+		);
+
+		const resolved = await engine.resolveuncertain({
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			decision: "confirm",
+			value: { done: true },
+		});
+		expect(resolved.status).toBe("completed");
+		if (resolved.status !== "completed") throw new Error("expected completed recovery");
+		expect(resolved.output).toEqual({ result: { done: true } });
+		expect(ahooks).toBe(0);
+		expect(bhooks).toBe(1);
+
+		const recovered = store.geteffect(effect.runid, effect.id);
+		expect(recovered).toMatchObject({
+			status: "resolved_ok",
+			value: { done: true },
+			fence: uncertain.fence,
+		});
+		expect(store.getrun(started.run.id)).toMatchObject({
+			status: "completed",
+			blueprintname: blueprinta.name,
+			blueprintversion: blueprinta.version,
+		});
+		expect(store.getrun(child.id)).toMatchObject({
+			status: "completed",
+			blueprintname: blueprintb.name,
+			blueprintversion: blueprintb.version,
+		});
+		const recoveryevents = store.events(child.id).filter((event) => event.type === "hook_completed");
+		expect(recoveryevents).toHaveLength(1);
+		expect(recoveryevents[0]?.payload).toMatchObject({
+			hookid: "audit.recovery-b",
+			phase: "recovery",
+			output: { scope: "b" },
+		});
+		expect(store.events(started.run.id).filter((event) => event.type === "hook_completed")).toHaveLength(0);
+		const effectrecoveredevents = store
+			.events(child.id)
+			.filter((event) => event.type === "effect_recovered");
+		expect(effectrecoveredevents).toHaveLength(1);
+		expect(effectrecoveredevents[0]?.payload).toMatchObject({
+			id: effect.id,
+			status: "resolved_ok",
+			value: { done: true },
+		});
+		const parenteffect = store.geteffectbykey(started.run.id, "child");
+		expect(parenteffect).toMatchObject({ status: "resolved_ok", value: { result: { done: true } } });
+		store.close();
+	});
 	test("halting a root cascades owned descendants under one lease", async () => {
 		const { store, engine } = openengine();
 		engine.register(
@@ -1589,6 +2333,93 @@ describe("deterministic process engine", () => {
 		expect(repeated.reason).toBe("operator requested stop");
 		expect(store.getrun(root.id)?.blockedreason).toBe("operator requested stop");
 		expect(store.events(root.id).filter((event) => event.type === "run_status")).toHaveLength(transitions);
+		store.close();
+	});
+	test("an unscoped hook delivery retries its identity after a scoped hook appears", async () => {
+		const { store, engine } = openengine();
+		let unscopedcalls = 0;
+		let scopedcalls = 0;
+		engine.hooks.register(
+			definehook({
+				id: "audit.replay-delivery",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 100,
+				async run() {
+					unscopedcalls += 1;
+					if (unscopedcalls === 1) throw new Error("policy unavailable");
+					return null;
+				},
+			}),
+		);
+		const process = defineprocess({
+			id: "delivery.unscoped-delivery-replay",
+			version: "1.0.0",
+			input: objectinput,
+			output: objectoutput,
+			async run(ctx) {
+				return { result: await ctx.task("work", {}) };
+			},
+		});
+		engine.register(process);
+
+		const started = await engine.start({
+			processid: process.id,
+			sessionid: "session-unscoped-delivery-replay",
+			mode: "babysit",
+			input: {},
+		});
+		if (started.status !== "waiting") throw new Error("expected waiting result");
+		const effect = started.effects[0]!;
+		const blocked = await engine.commiteffect({
+			rootrunid: started.run.id,
+			runid: effect.runid,
+			effectid: effect.id,
+			fence: effect.fence,
+			inputhash: effect.inputhash,
+			status: "ok",
+			value: { done: true },
+		});
+		expect(blocked.status).toBe("blocked");
+		const before = store.listhookdeliveries(effect.runid, effect.id);
+		expect(before).toHaveLength(1);
+		const delivery = before[0]!;
+		const inputbytes = stablejson(delivery.input);
+		const effectbefore = store.geteffect(effect.runid, effect.id);
+		if (!effectbefore) throw new Error("expected resolved effect");
+
+		engine.hooks.register(
+			definehook({
+				id: "audit.replay-delivery",
+				version: "1.0.0",
+				phase: "effect_resolved",
+				timeoutms: 100,
+				blueprint: { name: "scoped-pack", version: "1.0.0" },
+				async run() {
+					scopedcalls += 1;
+					return null;
+				},
+			}),
+		);
+
+		const completed = await engine.resume(started.run.id);
+		expect(completed.status).toBe("completed");
+		expect(unscopedcalls).toBe(2);
+		expect(scopedcalls).toBe(0);
+		const replayed = store.listhookdeliveries(effect.runid, effect.id);
+		expect(replayed).toHaveLength(1);
+		const replayeddelivery = replayed[0];
+		if (!replayeddelivery) throw new Error("expected completed hook delivery");
+		expect(replayeddelivery).toMatchObject({
+			hookid: delivery.hookid,
+			hookversion: delivery.hookversion,
+			blueprintname: null,
+			blueprintversion: null,
+			input: delivery.input,
+			state: "completed",
+		});
+		expect(stablejson(replayeddelivery.input)).toBe(inputbytes);
+		expect(store.geteffect(effect.runid, effect.id)).toEqual(effectbefore);
 		store.close();
 	});
 	test("resumes a failed resolved-effect hook without repeating completed delivery", async () => {

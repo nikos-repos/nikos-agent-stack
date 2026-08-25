@@ -8,6 +8,7 @@ import {
 	realpathSync,
 	renameSync,
 	rmSync,
+	statSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
@@ -218,6 +219,9 @@ export class blueprintservice {
 			if (escapesroot(source, real)) {
 				throw new Error(`blueprint file ${path} escapes package root`);
 			}
+			if (!statSync(real).isFile()) {
+				throw new Error(`blueprint file ${path} is not a regular file`);
+			}
 			const actual = hashcontent(readFileSync(real));
 			if (actual !== expected) throw new Error(`blueprint file ${path} hash mismatch`);
 			files[path] = actual;
@@ -343,6 +347,9 @@ export class blueprintservice {
 					if (escapesroot(record.installpath, real)) {
 						issues.push(`blueprint ${identity} file ${path} escapes install root`);
 						continue;
+					}
+					if (!statSync(real).isFile()) {
+						throw new Error(`blueprint file ${path} is not a regular file`);
 					}
 					const actual = hashcontent(readFileSync(real));
 					files[path] = actual;

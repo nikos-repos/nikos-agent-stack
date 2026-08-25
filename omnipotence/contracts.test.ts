@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { assertschema, assertvalid, compareversions, defineprocess, stablejson } from "./contracts.ts";
-import type { jsonschema, processcontext } from "./contracts.ts";
+import { assertschema, assertvalid, compareversions, defineprocess, jsonvalueof, stablejson } from "./contracts.ts";
+import type { jsonschema, processcontext, processparent } from "./contracts.ts";
 
 const input: jsonschema = {
 	type: "object",
@@ -38,12 +38,92 @@ describe("native orchestration contracts", () => {
 		expect(Object.isFrozen(process)).toBe(true);
 	});
 
+	test("parent process metadata has a stable readonly shape", () => {
+		const parent: processparent = {
+			runid: "run-child",
+			effectkey: "child",
+			processid: "delivery.parent",
+			processversion: "1.0.0",
+			blueprintname: "delivery-pack",
+			blueprintversion: "1.0.0",
+		};
+		const context: Pick<processcontext, "parent"> = { parent };
+		expect(context.parent).toEqual(parent);
+	});
+
 	test("trust-boundary validation reports the exact invalid path", () => {
 		expect(() => assertvalid(input, { request: "ship", extra: true }, "input")).toThrow(
 			"input.extra: unknown field",
 		);
 		expect(() => assertvalid(input, { request: "" }, "input")).toThrow(
 			"input.request: expected at least 1 characters",
+		);
+	});
+	test("type unions apply constraints only to matching branches", () => {
+		const hash: jsonschema = { type: ["string", "null"], pattern: "^[a-f0-9]{64}$" };
+		assertschema(hash);
+		expect(() => assertvalid(hash, null)).not.toThrow();
+		expect(() => assertvalid(hash, "a".repeat(64))).not.toThrow();
+		expect(() => assertvalid(hash, "z".repeat(64))).toThrow(
+			"value: expected one of types string, null",
+		);
+		expect(() => assertvalid(hash, 42)).toThrow("value: expected one of types string, null");
+	});
+
+	test("all-json and unconstrained array schemas accept nested json values", () => {
+		const alljson: jsonschema = {
+			type: ["null", "boolean", "number", "string", "array", "object"],
+			additionalproperties: true,
+		};
+		assertschema(alljson);
+		expect(() => assertvalid(alljson, { nested: [null, true, 1, "text", { value: false }] })).not.toThrow();
+
+		const array: jsonschema = { type: "array" };
+		assertschema(array);
+		expect(() => assertvalid(array, [null, { nested: ["text"] }])).not.toThrow();
+	});
+	test("sparse array holes fail scalar item validation before storage", () => {
+		const scalararray: jsonschema = { type: "array", items: { type: "string" } };
+		const sparse: unknown[] = [];
+		sparse.length = 1;
+
+		expect(() => assertvalid(scalararray, sparse)).toThrow("value[0]: expected string");
+		expect(() => assertvalid(scalararray, ["text"])).not.toThrow();
+	});
+
+	test("sparse array holes fail all-json union item validation before storage", () => {
+		const alljson: jsonschema = {
+			type: ["null", "boolean", "number", "string", "array", "object"],
+			additionalproperties: true,
+		};
+		const itemsarray: jsonschema = { type: "array", items: alljson };
+		const sparse: unknown[] = [];
+		sparse.length = 1;
+
+		expect(() => assertvalid(itemsarray, sparse)).toThrow(
+			"value[0]: expected one of types null, boolean, number, string, array, object",
+		);
+		expect(() => assertvalid(itemsarray, [null, false, 1, "text", [], {}])).not.toThrow();
+	});
+	test("json normalization rejects sparse arrays and preserves dense values", () => {
+		const sparse: unknown[] = [];
+		sparse.length = 2;
+		sparse[1] = { nested: ["text"] };
+
+		expect(() => jsonvalueof(sparse)).toThrow("value[0]: expected own array element");
+		expect(jsonvalueof(["text", { nested: ["value"] }])).toEqual(["text", { nested: ["value"] }]);
+	});
+
+	test("type unions must be non-empty unique and supported", () => {
+		expect(() => assertschema({ type: [] })).toThrow("schema.type: expected non-empty type array");
+		expect(() => assertschema({ type: ["string", "string"] })).toThrow(
+			"schema.type: expected unique type array",
+		);
+		expect(() => assertschema({ type: ["string", "date"] })).toThrow(
+			"schema.type: expected supported type",
+		);
+		expect(() => assertvalid({ type: ["string", "number"] }, true)).toThrow(
+			"value: expected one of types string, number",
 		);
 	});
 
@@ -141,9 +221,7 @@ describe("native orchestration contracts", () => {
 				return null;
 			},
 		};
-		expect(() => Reflect.apply(defineprocess, undefined, [invalidinput])).toThrow(
-			"process.input.items: required schema",
-		);
+		expect(() => Reflect.apply(defineprocess, undefined, [invalidinput])).not.toThrow();
 
 		const inheritedfield = {
 			id: "delivery.review",

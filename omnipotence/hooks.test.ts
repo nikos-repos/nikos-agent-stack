@@ -67,6 +67,55 @@ describe("ordered orchestration hooks", () => {
 			}).blueprint?.name,
 		).toBe("beta-pack");
 	});
+	test("version-only resolution rejects inactive hooks but exact blueprint pins them", () => {
+		const registry = new hookregistry();
+		const inactive = definehook({
+			id: "audit.pinned",
+			version: "1.0.0",
+			phase: "recovery",
+			timeoutms: 100,
+			blueprint: { name: "legacy-pack", version: "1.0.0" },
+			active: false,
+			async run() {
+				return { durable: true };
+			},
+		});
+		registry.register(inactive);
+
+		expect(() => registry.resolve("audit.pinned", { version: "1.0.0" })).toThrow(
+			"hook audit.pinned is not registered",
+		);
+		expect(
+			registry.resolve("audit.pinned", {
+				version: "1.0.0",
+				blueprintname: "legacy-pack",
+				blueprintversion: "1.0.0",
+			}),
+		).toMatchObject({ version: "1.0.0", active: false, blueprint: inactive.blueprint });
+	});
+	test("explicit null selectors can replay inactive unscoped hooks", () => {
+		const registry = new hookregistry();
+		registry.register(
+			definehook({
+				id: "audit.pinned-global",
+				version: "1.0.0",
+				phase: "recovery",
+				timeoutms: 100,
+				active: false,
+				async run() {
+					return { durable: true };
+				},
+			}),
+		);
+
+		const resolved = registry.resolve("audit.pinned-global", {
+			version: "1.0.0",
+			blueprintname: null,
+			blueprintversion: null,
+		});
+		expect(resolved).toMatchObject({ id: "audit.pinned-global", active: false });
+		expect(resolved.blueprint).toBeUndefined();
+	});
 
 	test("a timeout identifies the exact hook and aborts its signal", async () => {
 		const registry = new hookregistry();
@@ -166,5 +215,31 @@ describe("ordered orchestration hooks", () => {
 				})
 			)[0]?.output,
 		).toEqual({ version: 1 });
+	});
+	test("dispatchfor keeps global hooks and exact blueprint hooks only", async () => {
+		const registry = new hookregistry();
+		const register = (id: string, blueprint?: { name: string; version: string }) =>
+			registry.register(
+				definehook({
+					id,
+					version: "1.0.0",
+					phase: "before_advance",
+					timeoutms: 100,
+					blueprint,
+					async run() {
+						return { id };
+					},
+				}),
+			);
+
+		register("audit.global");
+		register("audit.alpha", { name: "alpha-pack", version: "1.0.0" });
+		register("audit.beta", { name: "beta-pack", version: "1.0.0" });
+
+		const results = await registry.dispatchfor("before_advance", payload, {
+			name: "alpha-pack",
+			version: "1.0.0",
+		});
+		expect(results.map((result) => result.hookid)).toEqual(["audit.alpha", "audit.global"]);
 	});
 });

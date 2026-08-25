@@ -351,6 +351,93 @@ describe("authoritative orchestration store", () => {
 		store.close();
 	});
 
+	test("allows a requested subprocess effect before its child run is persisted", () => {
+		const { store } = openstore();
+		const root = createrun(store, "session-pending-subprocess");
+		store.transitionrun(root.id, "running");
+		const childrunid = "pending-child";
+		const pending = store.requesteffect(root.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid },
+		});
+
+		expect(pending.status).toBe("requested");
+		expect(store.rootrunid(root.id)).toBe(root.id);
+		expect(store.ownedrunids(root.id)).toEqual([root.id]);
+		store.close();
+	});
+
+	test("rejects malformed subprocess ownership before rebinding descendants", () => {
+		const { store } = openstore();
+		const root = createrun(store, "session-malformed-ownership");
+		const child = createrun(store, null);
+		const malformed = store.requesteffect(root.id, {
+			key: "child",
+			kind: "subprocess",
+			input: { childrunid: 42 },
+		});
+		const childwork = store.requesteffect(child.id, {
+			key: "work",
+			kind: "task",
+			input: { value: "before" },
+		});
+		const before = {
+			root: store.getrun(root.id),
+			child: store.getrun(child.id),
+			malformed: store.geteffect(root.id, malformed.id),
+			childwork: store.geteffect(child.id, childwork.id),
+			events: store.events(root.id),
+		};
+
+		expect(() => store.bindsession("session-malformed-rebind", root.id)).toThrow("childrunid");
+		expect(store.getrun(root.id)).toEqual(before.root);
+		expect(store.getrun(child.id)).toEqual(before.child);
+		expect(store.geteffect(root.id, malformed.id)).toEqual(before.malformed);
+		expect(store.geteffect(child.id, childwork.id)).toEqual(before.childwork);
+		expect(store.events(root.id)).toEqual(before.events);
+		expect(store.getsessionrun("session-malformed-rebind")).toBeNull();
+		store.close();
+	});
+
+	test("rejects duplicate subprocess ownership before rebinding descendants", () => {
+		const { store } = openstore();
+		const root = createrun(store, "session-duplicate-ownership");
+		const child = createrun(store, null);
+		const first = store.requesteffect(root.id, {
+			key: "child-a",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const second = store.requesteffect(root.id, {
+			key: "child-b",
+			kind: "subprocess",
+			input: { childrunid: child.id },
+		});
+		const childwork = store.requesteffect(child.id, {
+			key: "work",
+			kind: "task",
+			input: { value: "before" },
+		});
+		const before = {
+			root: store.getrun(root.id),
+			child: store.getrun(child.id),
+			first: store.geteffect(root.id, first.id),
+			second: store.geteffect(root.id, second.id),
+			childwork: store.geteffect(child.id, childwork.id),
+			events: store.events(root.id),
+		};
+
+		expect(() => store.bindsession("session-duplicate-rebind", root.id)).toThrow("ambiguous subprocess parents");
+		expect(store.getrun(root.id)).toEqual(before.root);
+		expect(store.getrun(child.id)).toEqual(before.child);
+		expect(store.geteffect(root.id, first.id)).toEqual(before.first);
+		expect(store.geteffect(root.id, second.id)).toEqual(before.second);
+		expect(store.geteffect(child.id, childwork.id)).toEqual(before.childwork);
+		expect(store.events(root.id)).toEqual(before.events);
+		expect(store.getsessionrun("session-duplicate-rebind")).toBeNull();
+		store.close();
+	});
 	test("a safe session rebind refences every owned run and requested effect", () => {
 		const { store } = openstore();
 		const root = createrun(store, "session-old");
