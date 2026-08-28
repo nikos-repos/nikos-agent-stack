@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { blueprintservice } from "./blueprints.ts";
-import activate, { factoryflags, factoryrequestfor, nextsleepdelay } from "./index.ts";
+import activate, { factoryflags, factoryrequestfor, nextsleepdelay, runsentence } from "./index.ts";
 import { orchestrationstore } from "./store.ts";
 
 const roots: string[] = [];
@@ -1161,5 +1161,39 @@ describe("factory front door", () => {
 			projectroot: bare,
 			entry: { kind: "rough-idea", value: "build a ci/cd bridge" },
 		});
+	});
+});
+
+describe("status line", () => {
+	function run(input: unknown, status: string): never {
+		return { input, status, processid: "factory.new-project" } as never;
+	}
+	function effect(key: string): never {
+		return { key, status: "requested" } as never;
+	}
+
+	test("names whichever project is actually running", () => {
+		expect(runsentence(run({ projectRoot: "/home/ada/work/invoice-parser" }, "waiting_for_user"))).toBe(
+			"invoice-parser · your turn",
+		);
+		expect(runsentence(run({ projectRoot: "/srv/tenants/acme crm" }, "waiting_effect"))).toBe("acme crm · working");
+		expect(runsentence(run({ projectRoot: "/home/niko/nikos-agent-stack/omp-orca bridge" }, "halted"))).toBe(
+			"omp-orca bridge · paused",
+		);
+	});
+
+	test("falls back to the process id when a run has no project", () => {
+		expect(runsentence(run({}, "running"))).toBe("factory.new-project · working");
+		expect(runsentence(run(null, "blocked"))).toBe("factory.new-project · blocked");
+	});
+
+	test("adds the phase only when an effect is actually requesting one", () => {
+		const project = { projectRoot: "/home/ada/work/invoice-parser" };
+		expect(runsentence(run(project, "waiting_effect"), [effect("phase/architecture/attempt/0")])).toBe(
+			"invoice-parser · architecture · working",
+		);
+		expect(runsentence(run(project, "waiting_effect"), [effect("bootstrap/state")])).toBe(
+			"invoice-parser · working",
+		);
 	});
 });

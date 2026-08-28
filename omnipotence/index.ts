@@ -227,7 +227,7 @@ function runphase(effects: readonly effectrecord[] | undefined): string | null {
 	return null;
 }
 
-function runsentence(run: runrecord, effects?: readonly effectrecord[]): string {
+export function runsentence(run: runrecord, effects?: readonly effectrecord[]): string {
 	const phase = runphase(effects);
 	const state = runstates[run.status] ?? "working";
 	return [runlabel(run), phase, state].filter(Boolean).join(" · ");
