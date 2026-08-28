@@ -64,8 +64,12 @@ export const CODE_EXTENSIONS = new Set([
 // Keep these patterns aligned with rules/no-absolute-home-path.md. The rule
 // file is authoritative; this fallback covers a missing or malformed install.
 const DEFAULT_HOME_PATH_CONDITIONS = [
-  "/home/[a-z][a-z0-9._-]*/",
-  "/Users/[A-Za-z][A-Za-z0-9._-]*/",
+  // the non-capturing groups are load-bearing: the harness reroutes a condition
+  // token that looks like a file glob into `scope` (rule.ts isLikelyFileGlob),
+  // and `(`/`)` disqualify it. without them the rule parses with one condition
+  // and four bogus scope entries, and never fires on linux or macos.
+  "/home/(?:[a-z][a-z0-9._-]*)/",
+  "/Users/(?:[A-Za-z][A-Za-z0-9._-]*)/",
   "[A-Za-z]:[\\\\/]+Users[\\\\/]+[^\\\\/\\s\"']+[\\\\/]",
 ];
 let cachedHomePathConditions = null;
