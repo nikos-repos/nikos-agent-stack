@@ -131,6 +131,14 @@ const allowedschematypes: Record<string, true> = {
 	object: true,
 };
 
+function schemafieldhint(key: string): string {
+	const fields = Object.keys(allowedschemafields);
+	const lower = key.toLowerCase();
+	const meant = fields.find((field) => field === lower);
+	const suffix = ` (accepted: ${fields.join(", ")})`;
+	return meant ? `; did you mean ${meant}?${suffix}` : suffix;
+}
+
 function pathfor(parent: string, key: string): string {
 	return /^[a-z_][a-z0-9_]*$/i.test(key) ? `${parent}.${key}` : `${parent}[${JSON.stringify(key)}]`;
 }
@@ -230,7 +238,7 @@ export function assertschema(value: unknown, path = "schema"): asserts value is 
 	const schema = value as Record<string, unknown>;
 	for (const key of Object.keys(schema)) {
 		if (!Object.hasOwn(allowedschemafields, key)) {
-			throw new TypeError(`${pathfor(path, key)}: unknown schema field`);
+			throw new TypeError(`${pathfor(path, key)}: unknown schema field${schemafieldhint(key)}`);
 		}
 	}
 
@@ -378,8 +386,9 @@ export function parsejson(text: string, path = "value"): jsonvalue {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
-	} catch {
-		throw new TypeError(`${path}: invalid json`);
+	} catch (cause) {
+		const detail = cause instanceof Error ? cause.message : String(cause);
+		throw new TypeError(`${path}: invalid json — ${detail}`);
 	}
 	return jsonvalueof(parsed, path);
 }

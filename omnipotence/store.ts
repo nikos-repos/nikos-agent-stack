@@ -266,6 +266,7 @@ const effectstatuses: Record<effectstatus, true> = {
 	cancelled: true,
 };
 const terminalstatuses: Record<string, true> = { completed: true, failed: true, halted: true };
+export const childrunprefix = "child-";
 const transitions: Record<runstatus, readonly runstatus[]> = {
 	created: ["running", "waiting_effect", "waiting_for_user", "blocked", "completed", "failed", "halted"],
 	running: ["waiting_effect", "waiting_for_user", "blocked", "completed", "failed", "halted"],
@@ -1392,6 +1393,20 @@ export class orchestrationstore {
 		return this.requiredrun(run.id);
 	}
 
+	getprojectrun(projectroot: string): runrecord | null {
+		const row = this.data
+			.query(
+				`select * from runs
+				 where json_extract(input_json, '$.projectRoot') = ?
+				   and id not like ?
+				   and status not in ('completed', 'failed', 'halted')
+				 order by created_at desc, id desc
+				 limit 1`,
+			)
+			.get(projectroot, `${childrunprefix}%`) as runrow | null;
+		return row ? parserun(row) : null;
+	}
+
 	getsessionrun(sessionid: string): runrecord | null {
 		const row = this.data
 			.query("select runs.* from sessions join runs on runs.id = sessions.run_id where sessions.session_id = ?")
@@ -1412,6 +1427,12 @@ export class orchestrationstore {
 				const fenced = this.refenceinside(occupied);
 				this.data.query("update runs set session_id = null, updated_at = ? where id = ?").run(now(), fenced.id);
 				this.data.query("delete from sessions where session_id = ?").run(sessionid);
+				this.transitioninside(
+					this.requiredrun(fenced.id),
+					"halted",
+					null,
+					`detached from session ${sessionid} in favour of run ${runid}`,
+				);
 				const detached = this.requiredrun(fenced.id);
 				this.appendevent(detached.id, "run_status", jsonvalueof(detached));
 				this.appendevent(detached.id, "session_unbound", { sessionid, runid: detached.id });

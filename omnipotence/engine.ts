@@ -18,7 +18,7 @@ import type {
 import { hookdispatcherror, hookregistry } from "./hooks.ts";
 import type { hookphase, hookresult, hookselector } from "./hooks.ts";
 import { modepolicy } from "./processes.ts";
-import { orchestrationstore } from "./store.ts";
+import { childrunprefix, orchestrationstore } from "./store.ts";
 import type { effectpost, effectrecord, hookdeliveryrecord, runrecord, uncertainresolution } from "./store.ts";
 
 export interface startinput {
@@ -117,7 +117,7 @@ function subprocessrunid(
 	const digest = createHash("sha256")
 		.update(`${parentrunid}\n${key}\n${processid}\n${version}\n${stablejson(input)}`)
 		.digest("hex");
-	return `child-${digest.slice(0, 32)}`;
+	return `${childrunprefix}${digest.slice(0, 32)}`;
 }
 
 function processhash(process: Readonly<processdefinition>): string {

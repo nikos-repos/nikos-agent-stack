@@ -1,7 +1,8 @@
 import type { TSchema } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { jsonvalueof, parsejson, stablejson } from "./contracts.ts";
 import type { jsonvalue, orchestrationmode } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
@@ -10,7 +11,7 @@ import { loadactiveblueprints } from "./loader.ts";
 import type { loadsummary } from "./loader.ts";
 import { profileservice } from "./profiles.ts";
 import { orchestrationstore } from "./store.ts";
-import type { effectrecord } from "./store.ts";
+import type { effectrecord, runrecord } from "./store.ts";
 
 interface extensioncontext {
 	cwd: string;
@@ -108,13 +109,128 @@ function sessionid(context: extensioncontext): string {
 	return id;
 }
 
+// ponytail: a raw newline is never significant inside valid json, so collapsing the
+// line breaks a wrapped terminal paste introduces can only rescue input, never change meaning.
+function commandjson(text: string, path: string): jsonvalue {
+	return parsejson(text.replace(/[\r\n]+/gu, " "), path);
+}
+
 function commandinput(args: unknown, command: string): { processid: string; input: jsonvalue } {
 	const text = String(args ?? "").trim();
 	const separator = text.search(/\s/u);
 	const processid = separator < 0 ? text : text.slice(0, separator);
 	if (!processid) throw new Error(`usage: /${command} <process-id> [json-input]`);
 	const json = separator < 0 ? "{}" : text.slice(separator).trim() || "{}";
-	return { processid, input: parsejson(json, "omnipotence input") };
+	return { processid, input: commandjson(json, "omnipotence input") };
+}
+
+const factoryprocessid = "factory.new-project";
+// ponytail: ordered by how strongly the name promises a plan; single-markdown fallback below.
+const planfilenames = ["final-plan.md", "plan.md", "spec.md", "requirements.md"];
+
+interface factoryrequest {
+	projectroot: string;
+	entry: { kind: string; value?: string };
+}
+
+function expandhome(target: string): string {
+	if (target === "~") return homedir();
+	return target.startsWith("~/") ? join(homedir(), target.slice(2)) : target;
+}
+
+function directoryentries(root: string): string[] {
+	try {
+		return readdirSync(root);
+	} catch {
+		return [];
+	}
+}
+
+function findplanfile(root: string): string | null {
+	for (const name of planfilenames) {
+		const candidate = join(root, name);
+		if (existsSync(candidate)) return candidate;
+	}
+	const markdown = directoryentries(root).filter((name) => name.toLowerCase().endsWith(".md"));
+	return markdown.length === 1 ? join(root, markdown[0] as string) : null;
+}
+
+function pathkind(target: string): "directory" | "file" | null {
+	try {
+		const stats = statSync(target);
+		return stats.isDirectory() ? "directory" : stats.isFile() ? "file" : null;
+	} catch {
+		return null;
+	}
+}
+
+// resolves what a user meant from what is already on disk. returns null only when there is
+// genuinely nothing to go on, so the caller can ask for an idea instead of failing.
+export function factoryrequestfor(cwd: string, target: string): factoryrequest | null {
+	const trimmed = target.trim();
+	const candidate = trimmed ? resolve(cwd, expandhome(trimmed)) : "";
+	const kind = candidate ? pathkind(candidate) : null;
+	if (kind === "file") {
+		return { projectroot: dirname(candidate), entry: { kind: "spec", value: candidate } };
+	}
+	const projectroot = kind === "directory" ? candidate : cwd;
+	if (existsSync(join(projectroot, ".factory", "state.json"))) {
+		return { projectroot, entry: { kind: "resume" } };
+	}
+	const plan = findplanfile(projectroot);
+	if (plan) return { projectroot, entry: { kind: "spec", value: plan } };
+	if (trimmed && kind === null) {
+		// an unmistakable path prefix means the user meant a place, not an idea. starting a
+		// whole run from a typo is worse than saying the path is missing.
+		if (/^(?:[~/]|\.\.?\/)/u.test(trimmed)) {
+			throw new Error(
+				`no such path: ${candidate}. use a folder that exists, or /factory <your idea> to describe the project.`,
+			);
+		}
+		return { projectroot, entry: { kind: "rough-idea", value: trimmed } };
+	}
+	return null;
+}
+
+export function factoryflags(args: unknown): { preview: boolean; fresh: boolean; target: string } {
+	let text = String(args ?? "").replace(/[\r\n]+/gu, " ").trim();
+	const preview = /(^|\s)--preview(\s|$)/u.test(text);
+	const fresh = /(^|\s)--fresh(\s|$)/u.test(text);
+	text = text.replace(/(^|\s)--(?:preview|fresh)(?=\s|$)/gu, " ").trim();
+	return { preview, fresh, target: text };
+}
+
+// the one fact a returning user needs from the status line: whose turn is it.
+const runstates: Record<string, string> = {
+	waiting_for_user: "your turn",
+	blocked: "blocked",
+	halted: "paused",
+	completed: "done",
+	failed: "failed",
+};
+
+function runlabel(run: runrecord): string {
+	const input = run.input;
+	if (input && typeof input === "object" && !Array.isArray(input)) {
+		const root = Reflect.get(input, "projectRoot");
+		if (typeof root === "string" && root.length > 0) return basename(root);
+	}
+	return run.processid;
+}
+
+function runphase(effects: readonly effectrecord[] | undefined): string | null {
+	for (const effect of effects ?? []) {
+		if (effect.status !== "requested") continue;
+		const match = /^phase\/([a-z0-9-]+)\//u.exec(effect.key);
+		if (match) return match[1] as string;
+	}
+	return null;
+}
+
+function runsentence(run: runrecord, effects?: readonly effectrecord[]): string {
+	const phase = runphase(effects);
+	const state = runstates[run.status] ?? "working";
+	return [runlabel(run), phase, state].filter(Boolean).join(" · ");
 }
 
 function terminalstatus(status: string | undefined): boolean {
@@ -345,8 +461,31 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		return scheduled;
 	}
 
-	const notify = (context: extensioncontext, value: unknown): void => {
-		context.ui?.notify?.(stablejson(jsonvalueof(value)), "info");
+	const showstatus = (
+		context: extensioncontext,
+		run: runrecord | null,
+		effects?: readonly effectrecord[],
+	): void => {
+		try {
+			context.ui?.setStatus?.("omnipotence", run ? `𓂀 ${runsentence(run, effects)}` : "𓂀");
+		} catch {}
+	};
+	const say = (context: extensioncontext, text: string): void => {
+		context.ui?.notify?.(text, "info");
+	};
+	const announce = (
+		context: extensioncontext,
+		run: runrecord | null,
+		effects?: readonly effectrecord[],
+		prefix?: string,
+	): void => {
+		showstatus(context, run, effects);
+		if (!run) {
+			say(context, "no active omnipotence run");
+			return;
+		}
+		const sentence = runsentence(run, effects);
+		say(context, prefix ? `${prefix} — ${sentence}` : sentence);
 	};
 
 	const startcommand =
@@ -368,7 +507,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				projectprofileversion: profile.projectprofileversion,
 			});
 			await schedule(result);
-			if (!stale(result)) notify(context, result);
+			if (!stale(result)) announce(context, result.run, result.effects);
 		};
 
 	pi.registerCommand("omnipotence", {
@@ -386,6 +525,53 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		description: "start one unbounded native orchestration run",
 		handler: startcommand("omnipotence-forever", "forever"),
 	});
+	pi.registerCommand("factory", {
+		description: "start or continue the factory workflow for a project",
+		async handler(args: unknown, context: extensioncontext) {
+			await ensureloaded();
+			const { preview, fresh, target } = factoryflags(args);
+			const request = factoryrequestfor(context.cwd, target);
+			if (!request) {
+				say(context, "nothing to resume here and no plan file found. say what to build: /factory <your idea>");
+				return;
+			}
+			const existing = fresh ? null : store.getprojectrun(request.projectroot);
+			if (existing && existing.status === "blocked") {
+				say(
+					context,
+					`${runlabel(existing)} is stuck: ${existing.blockedreason ?? "blocked"}. run /factory --fresh to start a new run and retire it.`,
+				);
+				showstatus(context, existing);
+				return;
+			}
+			if (existing) {
+				if (existing.sessionid !== sessionid(context)) store.bindsession(sessionid(context), existing.id, true);
+				const resumed = await engine.resume(existing.id);
+				await schedule(resumed);
+				if (!stale(resumed)) announce(context, resumed.run, resumed.effects, "continuing");
+				return;
+			}
+			const process = engine.resolveprocess(factoryprocessid);
+			const profile = profiles.snapshot(context.cwd, process.profiledefaults ?? { schema: 1 }, { schema: 1 });
+			const entry: Record<string, string> = { kind: request.entry.kind };
+			if (request.entry.value !== undefined) entry.value = request.entry.value;
+			const result = await engine.start({
+				processid: factoryprocessid,
+				processversion: process.version,
+				blueprintname: process.blueprint?.name,
+				blueprintversion: process.blueprint?.version,
+				sessionid: sessionid(context),
+				mode: preview ? "plan" : "babysit",
+				input: jsonvalueof({ projectRoot: request.projectroot, entry }, "factory input"),
+				profile: profile.effective,
+				userprofileversion: profile.userprofileversion,
+				projectprofileversion: profile.projectprofileversion,
+			});
+			await schedule(result);
+			const opened = `${request.entry.kind} · ${basename(request.projectroot)}`;
+			if (!stale(result)) announce(context, result.run, result.effects, opened);
+		},
+	});
 	pi.registerCommand("omnipotence-resume", {
 		description: "resume the active native orchestration run",
 		async handler(args: unknown, context: extensioncontext) {
@@ -393,15 +579,15 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const run = store.getsessionrun(sessionid(context));
 			if (!run) throw new Error("this session has no active omnipotence run");
 			const text = String(args ?? "").trim();
-			const result = await engine.resume(run.id, text ? parsejson(text, "resume input") : undefined);
+			const result = await engine.resume(run.id, text ? commandjson(text, "resume input") : undefined);
 			await schedule(result);
-			if (!stale(result)) notify(context, result);
+			if (!stale(result)) announce(context, result.run, result.effects);
 		},
 	});
 	pi.registerCommand("omnipotence-status", {
 		description: "show the active native orchestration run",
 		async handler(_args: unknown, context: extensioncontext) {
-			notify(context, store.getsessionrun(sessionid(context)) ?? { status: "inactive" });
+			announce(context, store.getsessionrun(sessionid(context)));
 		},
 	});
 	pi.registerCommand("omnipotence-stop", {
@@ -412,7 +598,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const reason = String(args ?? "").trim() || "halted by user";
 			const halted = await engine.halt(run.id, reason);
 			pi.appendEntry(stateentry, { runid: halted.run.id, status: halted.run.status });
-			notify(context, halted.run);
+			announce(context, halted.run);
 		},
 	});
 
@@ -494,10 +680,8 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	);
 
 	const recover = async (_event: unknown, context: extensioncontext): Promise<void> => {
-		try {
-			context.ui?.setStatus?.("omnipotence", "𓂀");
-		} catch {}
 		const run = store.getsessionrun(sessionid(context));
+		showstatus(context, run);
 		if (!run) return;
 		await ensureloaded();
 		let result: advanceresult;

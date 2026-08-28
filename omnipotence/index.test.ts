@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { blueprintservice } from "./blueprints.ts";
-import activate, { nextsleepdelay } from "./index.ts";
+import activate, { factoryflags, factoryrequestfor, nextsleepdelay } from "./index.ts";
 import { orchestrationstore } from "./store.ts";
 
 const roots: string[] = [];
@@ -299,10 +299,7 @@ describe("omnipotence omp extension", () => {
 		if (!active) throw new Error("expected active corrupt-blueprint run");
 
 		await expect(status.handler("", context2)).resolves.toBeUndefined();
-		expect(JSON.parse(String(notifications.at(-1)))).toMatchObject({
-			id: active.id,
-			status: active.status,
-		});
+		expect(String(notifications.at(-1))).toContain("delivery.extension");
 
 		const reason = "operator requested stop";
 		await expect(stop.handler(reason, context2)).resolves.toBeUndefined();
@@ -313,7 +310,7 @@ describe("omnipotence omp extension", () => {
 
 		notifications.length = 0;
 		await expect(status.handler("", context2)).resolves.toBeUndefined();
-		expect(JSON.parse(String(notifications.at(-1)))).toEqual({ status: "inactive" });
+		expect(String(notifications.at(-1))).toBe("no active omnipotence run");
 		await expect(start2.handler("delivery.extension {}", context2)).rejects.toThrow(
 			"blueprint extension-pack@1.0.0 file processes/extension.ts hash mismatch",
 		);
@@ -1093,5 +1090,76 @@ describe("omnipotence omp extension", () => {
 		expect(after.geteffect(run.id, effect.id)?.dispatchedat).not.toBeNull();
 		expect(after.getsessionrun("session-sleep-shutdown")).toMatchObject({ id: run.id });
 		after.close();
+	});
+});
+
+describe("factory front door", () => {
+	function project(name: string): string {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-factory-"));
+		roots.push(root);
+		const dir = join(root, name);
+		mkdirSync(dir, { recursive: true });
+		return dir;
+	}
+
+	test("resumes an existing project instead of restarting it", () => {
+		const dir = project("omp-orca bridge");
+		mkdirSync(join(dir, ".factory"), { recursive: true });
+		writeFileSync(join(dir, ".factory", "state.json"), "{}\n");
+		writeFileSync(join(dir, "final-plan.md"), "# plan\n");
+
+		expect(factoryrequestfor(dir, "")).toEqual({ projectroot: dir, entry: { kind: "resume" } });
+		expect(factoryrequestfor("/", dir)).toEqual({ projectroot: dir, entry: { kind: "resume" } });
+	});
+
+	test("starts from a plan file a path with spaces still resolves", () => {
+		const dir = project("omp-orca bridge");
+		const plan = join(dir, "final-plan.md");
+		writeFileSync(plan, "# plan\n");
+
+		expect(factoryrequestfor(dir, "")).toEqual({ projectroot: dir, entry: { kind: "spec", value: plan } });
+		expect(factoryrequestfor("/", plan)).toEqual({ projectroot: dir, entry: { kind: "spec", value: plan } });
+		expect(factoryrequestfor("/", dir)).toEqual({ projectroot: dir, entry: { kind: "spec", value: plan } });
+	});
+
+	test("falls back to the only markdown file, then to a typed idea", () => {
+		const dir = project("solo");
+		const only = join(dir, "notes.md");
+		writeFileSync(only, "# notes\n");
+		expect(factoryrequestfor(dir, "")).toEqual({ projectroot: dir, entry: { kind: "spec", value: only } });
+
+		const empty = project("empty");
+		expect(factoryrequestfor(empty, "build a bridge")).toEqual({
+			projectroot: empty,
+			entry: { kind: "rough-idea", value: "build a bridge" },
+		});
+	});
+
+	test("asks for an idea rather than failing when there is nothing to go on", () => {
+		expect(factoryrequestfor(project("bare"), "")).toBeNull();
+	});
+
+	test("strips flags without eating the target", () => {
+		expect(factoryflags("")).toEqual({ preview: false, fresh: false, target: "" });
+		expect(factoryflags("--preview")).toEqual({ preview: true, fresh: false, target: "" });
+		expect(factoryflags("--fresh ~/omp-orca bridge")).toEqual({
+			preview: false,
+			fresh: true,
+			target: "~/omp-orca bridge",
+		});
+		expect(factoryflags("~/omp-orca bridge --preview --fresh")).toEqual({
+			preview: true,
+			fresh: true,
+			target: "~/omp-orca bridge",
+		});
+	});
+
+	test("names a missing path instead of starting a run from a typo", () => {
+		const bare = project("bare");
+		expect(() => factoryrequestfor(bare, "/no/such/place")).toThrow("no such path");
+		expect(factoryrequestfor(bare, "build a ci/cd bridge")).toEqual({
+			projectroot: bare,
+			entry: { kind: "rough-idea", value: "build a ci/cd bridge" },
+		});
 	});
 });
