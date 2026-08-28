@@ -12,6 +12,9 @@ import type { loadsummary } from "./loader.ts";
 import { profileservice } from "./profiles.ts";
 import { orchestrationstore } from "./store.ts";
 import type { effectrecord, runrecord } from "./store.ts";
+import { installOmnipotenceStop, resetOmnipotenceStop } from "./stop-decision.ts";
+
+export { omnipotenceStop } from "./stop-decision.ts";
 
 interface extensioncontext {
 	cwd: string;
@@ -26,13 +29,7 @@ interface extensioncontext {
 }
 
 interface sessionstopevent {
-	type: "session_stop";
 	stop_hook_active: boolean;
-}
-
-interface sessionstopresult {
-	decision: "block";
-	reason: string;
 }
 
 interface resultparams {
@@ -630,54 +627,53 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.on(
-		"session_stop",
-		async (event: sessionstopevent, context: extensioncontext): Promise<sessionstopresult | void> => {
-			const run = store.getsessionrun(sessionid(context));
-			if (!run) return;
-			await ensureloaded();
-			const result = await engine.advance(run.id);
-			if (terminal(result)) {
-				appendstate(result);
-				return;
-			}
-			if (result.status === "blocked") {
-				appendstate(result);
-				if (event.stop_hook_active) return;
-				return { decision: "block", reason: result.reason };
-			}
-			if (result.run.status === "waiting_for_user") {
-				appendstate(result);
-				return;
-			}
-			const dispatching = result.effects.find(
-				(effect) =>
-					effect.status === "requested" &&
-					effect.kind !== "sleep" &&
-					effect.kind !== "breakpoint" &&
-					effect.dispatchingat !== null &&
-					effect.dispatchedat === null,
-			);
-			if (dispatching) {
-				if (event.stop_hook_active) return;
-				return {
-					decision: "block",
-					reason: `active omnipotence run ${result.run.id} has unknown scheduling outcome for effect ${dispatching.id}`,
-				};
-			}
-			if (await schedule(result)) return;
-			if (stale(result)) return;
+	installOmnipotenceStop(async (_event: unknown, _context: unknown) => {
+		const event = _event as sessionstopevent;
+		const context = _context as extensioncontext;
+		const run = store.getsessionrun(sessionid(context));
+		if (!run) return;
+		await ensureloaded();
+		const result = await engine.advance(run.id);
+		if (terminal(result)) {
+			appendstate(result);
+			return;
+		}
+		if (result.status === "blocked") {
+			appendstate(result);
 			if (event.stop_hook_active) return;
-			const missing = result.effects.find(
-				(effect) => effect.status === "requested" && effect.kind !== "sleep" && effect.kind !== "breakpoint",
-			);
-			if (!missing) return;
+			return { decision: "block", reason: result.reason };
+		}
+		if (result.run.status === "waiting_for_user") {
+			appendstate(result);
+			return;
+		}
+		const dispatching = result.effects.find(
+			(effect) =>
+				effect.status === "requested" &&
+				effect.kind !== "sleep" &&
+				effect.kind !== "breakpoint" &&
+				effect.dispatchingat !== null &&
+				effect.dispatchedat === null,
+		);
+		if (dispatching) {
+			if (event.stop_hook_active) return;
 			return {
 				decision: "block",
-				reason: `active omnipotence run ${result.run.id} still needs result for effect ${missing.id}`,
+				reason: `active omnipotence run ${result.run.id} has unknown scheduling outcome for effect ${dispatching.id}`,
 			};
-		},
-	);
+		}
+		if (await schedule(result)) return;
+		if (stale(result)) return;
+		if (event.stop_hook_active) return;
+		const missing = result.effects.find(
+			(effect) => effect.status === "requested" && effect.kind !== "sleep" && effect.kind !== "breakpoint",
+		);
+		if (!missing) return;
+		return {
+			decision: "block",
+			reason: `active omnipotence run ${result.run.id} still needs result for effect ${missing.id}`,
+		};
+	});
 
 	const recover = async (_event: unknown, context: extensioncontext): Promise<void> => {
 		const run = store.getsessionrun(sessionid(context));
@@ -751,5 +747,6 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		for (const entry of sleeptimers.values()) clearTimeout(entry.timer);
 		sleeptimers.clear();
 		store.close();
+		resetOmnipotenceStop();
 	});
 }

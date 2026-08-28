@@ -4,7 +4,8 @@
  *              so a level change cannot leave one rule out of step with the rest.
  *
  * set it with `/gates-engage low|medium|high`, clear it with `/gates-disable`.
- * configure verification with `OMP_VERIFY_CMD` or `verifyCmd` in persisted config.
+ * configure verification with `OMP_VERIFY_CMD` or `verifyCmd`, and complexity
+ * linting with `OMP_COMPLEXITY_CMD` or `complexityCmd`, in persisted config.
  *
  * why a dial exists at all: the gates were built assuming a git repo and a
  * commit at the end of every unit of work. a lot of real work is neither —
@@ -45,6 +46,7 @@ export const CONFIG_PATH =
  * @property {RuleMode} manifest      subagent manifest. "auto" keeps the diff-derived severity.
  * @property {RuleMode} subagentClaim subagent claims checked against the diff.
  * @property {RuleMode} verify        test command must pass. needs a configured command.
+ * @property {RuleMode} complexity   project's own linter; always advisory when configured.
  * @property {RuleMode} commit        working tree must be committed. needs git.
  * @property {RuleMode} scratchpad    active sessions must record frustrations.
  * @property {RuleMode} runtime       gate integrity itself: lease conflict, journal recovery, unreadable scope.
@@ -75,21 +77,21 @@ export function policyFor(level) {
       return {
         level, enabled: false, inline: false,
         completion: "off", citation: "off", snapshot: "off",
-        manifest: "off", subagentClaim: "off", verify: "off", commit: "off",
+        manifest: "off", subagentClaim: "off", verify: "off", complexity: "off", commit: "off",
         scratchpad: "off", runtime: "off",
       };
     case "low":
       return {
         level, enabled: true, inline: true,
         completion: "warn", citation: "warn", snapshot: "off",
-        manifest: "off", subagentClaim: "warn", verify: "warn", commit: "off",
+        manifest: "off", subagentClaim: "warn", verify: "warn", complexity: "warn", commit: "off",
         scratchpad: "block", runtime: "warn",
       };
     case "high":
       return {
         level, enabled: true, inline: true,
         completion: "block", citation: "block", snapshot: "block",
-        manifest: "block", subagentClaim: "block", verify: "block", commit: "block",
+        manifest: "block", subagentClaim: "block", verify: "block", complexity: "warn", commit: "block",
         scratchpad: "block", runtime: "block",
       };
     case "medium":
@@ -97,7 +99,7 @@ export function policyFor(level) {
       return {
         level: "medium", enabled: true, inline: true,
         completion: "block", citation: "block", snapshot: "warn",
-        manifest: "auto", subagentClaim: "block", verify: "block", commit: "off",
+        manifest: "auto", subagentClaim: "block", verify: "block", complexity: "warn", commit: "off",
         scratchpad: "block", runtime: "block",
       };
   }
@@ -114,11 +116,15 @@ export const RULE_FAMILY = {
   subagent_fabricated_modification: "subagentClaim",
   subagent_unverified_test: "subagentClaim",
   verify_failed: "verify",
+  no_test_run: "verify",
+  complexity_failed: "complexity",
   uncommitted_changes: "commit",
   mutation_lease_conflict: "runtime",
   recovery_required: "runtime",
   scope_unavailable: "runtime",
   missing_frustration_record: "scratchpad",
+  "no-absolute-home-path": "completion",
+  missing_interrogation: "completion",
 };
 
 /**
@@ -130,10 +136,11 @@ export const RULE_FAMILY = {
  *
  * @param {Record<string, string | undefined>} [env]
  * @param {string} [configPath]
- * @returns {{ level: GateLevel, verifyCmd: string | null, source: string }}
+ * @returns {{ level: GateLevel, verifyCmd: string | null, complexityCmd: string | null, source: string }}
  */
 export function loadConfig(env = process.env, configPath = CONFIG_PATH) {
   const cmdFromEnv = String(env.OMP_VERIFY_CMD ?? "").trim() || null;
+  const complexityFromEnv = String(env.OMP_COMPLEXITY_CMD ?? "").trim() || null;
 
   if (existsSync(configPath)) {
     try {
@@ -143,7 +150,11 @@ export function loadConfig(env = process.env, configPath = CONFIG_PATH) {
         typeof raw?.verifyCmd === "string" && raw.verifyCmd.trim()
           ? raw.verifyCmd.trim()
           : cmdFromEnv;
-      return { level, verifyCmd, source: "config" };
+      const complexityCmd =
+        typeof raw?.complexityCmd === "string" && raw.complexityCmd.trim()
+          ? raw.complexityCmd.trim()
+          : complexityFromEnv;
+      return { level, verifyCmd, complexityCmd, source: "config" };
     } catch {
       // a corrupt config must not disarm the gates silently
     }
@@ -151,29 +162,46 @@ export function loadConfig(env = process.env, configPath = CONFIG_PATH) {
 
   const envLevel = String(env.OMP_GATES_LEVEL ?? "").trim().toLowerCase();
   if (LEVELS.includes(/** @type {GateLevel} */ (envLevel))) {
-    return { level: /** @type {GateLevel} */ (envLevel), verifyCmd: cmdFromEnv, source: "OMP_GATES_LEVEL" };
+    return {
+      level: /** @type {GateLevel} */ (envLevel),
+      verifyCmd: cmdFromEnv,
+      complexityCmd: complexityFromEnv,
+      source: "OMP_GATES_LEVEL",
+    };
   }
 
   const legacy = String(env.OMP_DELIVERY_GATES ?? "").trim().toLowerCase();
   if (legacy && legacy !== "0" && legacy !== "false" && legacy !== "off") {
-    return { level: "high", verifyCmd: cmdFromEnv, source: "OMP_DELIVERY_GATES" };
+    return {
+      level: "high",
+      verifyCmd: cmdFromEnv,
+      complexityCmd: complexityFromEnv,
+      source: "OMP_DELIVERY_GATES",
+    };
   }
 
-  return { level: DEFAULT_LEVEL, verifyCmd: cmdFromEnv, source: "default" };
+  return {
+    level: DEFAULT_LEVEL,
+    verifyCmd: cmdFromEnv,
+    complexityCmd: complexityFromEnv,
+    source: "default",
+  };
 }
 
 /**
  * @param {GateLevel} level
  * @param {string | null} [verifyCmd]
+ * @param {string | null} [complexityCmd]
  * @param {string} [configPath]
  * @returns {{ ok: boolean, error?: string }}
  */
-export function saveConfig(level, verifyCmd, configPath = CONFIG_PATH) {
+export function saveConfig(level, verifyCmd, complexityCmd, configPath = CONFIG_PATH) {
   try {
     mkdirSync(dirname(configPath), { recursive: true });
     /** @type {Record<string, unknown>} */
     const body = { level };
     if (verifyCmd) body.verifyCmd = verifyCmd;
+    if (complexityCmd) body.complexityCmd = complexityCmd;
     writeFileSync(configPath, JSON.stringify(body, null, 2) + "\n", "utf-8");
     return { ok: true };
   } catch (err) {
@@ -187,9 +215,10 @@ export function saveConfig(level, verifyCmd, configPath = CONFIG_PATH) {
  *
  * @param {GateLevel} level
  * @param {string | null} verifyCmd
+ * @param {string | null} complexityCmd
  * @returns {string}
  */
-export function describeLevel(level, verifyCmd) {
+export function describeLevel(level, verifyCmd, complexityCmd) {
   const p = policyFor(level);
   if (!p.enabled) {
     return [
@@ -207,13 +236,13 @@ export function describeLevel(level, verifyCmd) {
     `  subagent claims vs diff         ${mark(p.subagentClaim)}`,
     `  snapshot tag references         ${mark(p.snapshot)}`,
     `  test suite must pass            ${verifyCmd ? mark(p.verify) : "off (no verify command set)"}`,
+    `  complexity linter               ${complexityCmd ? `warn (${complexityCmd})` : "unmeasured (no complexity command set)"}`,
     `  work must be committed          ${mark(p.commit)}`,
     `  gate integrity failures         ${mark(p.runtime)}`,
     "  runaway protection              always on (stalemate abort + cap 3)",
   ];
   if (level === "high" && !verifyCmd) {
-    lines.push("", "  note: high expects a verify command. set OMP_VERIFY_CMD or");
-    lines.push("        verifyCmd in the persisted config.");
+    lines.push("", "  note: high blocks a change with no observed passing test run when no verify command is set.");
   }
   return lines.join("\n");
 }

@@ -20,6 +20,7 @@ import gateChecker, {
 	rewriteGitCommit,
 	rewriteSmartCommit,
 	runCommitGate,
+	runComplexityGate,
 	runVerifyGate,
 	treeStateKey,
 	shouldskipnotools,
@@ -44,6 +45,7 @@ import {
 	MANIFEST_CLOSE,
 	MANIFEST_JSON_KEYS,
 	MANIFEST_OPEN,
+	homePathConditions,
 } from "./predicates.js";
 import * as ledger from "./ledger.js";
 import { describeLevel, loadConfig, policyFor, saveConfig, LEVELS, RULE_FAMILY } from "./config.js";
@@ -436,6 +438,33 @@ test("content hashing reproduces a diff when there is no repository", () => {
 	expect(hashContent("abc")).not.toBe(hashContent("abd"));
 });
 
+test("home path conditions mirror the authoring-path rule", () => {
+	const conditions = homePathConditions();
+	const matches = [
+		"/home/alice/x",
+		"/Users/Bob/x",
+		"C:\\Users\\bob\\x",
+	];
+	const misses = [
+		"os.homedir()",
+		"process.env.HOME",
+		"src/users/thing.ts",
+		"C:\\Windows\\System32",
+	];
+	for (const value of matches) {
+		expect(conditions.some((re) => {
+			re.lastIndex = 0;
+			return re.test(value);
+		})).toBe(true);
+	}
+	for (const value of misses) {
+		expect(conditions.some((re) => {
+			re.lastIndex = 0;
+			return re.test(value);
+		})).toBe(false);
+	}
+});
+
 // --- failure formatting and the subagent nudge ------------------------------
 
 test("formatted failures carry the header and the detail", () => {
@@ -464,12 +493,21 @@ test("the subagent nudge states the manifest, frustration tool, markers, and com
 test("task inputs and the frustration tool expose the gate contract", async () => {
 	const handlers: Record<string, (event: unknown, context: unknown) => unknown> = {};
 	let frustrationtool: { description?: string } | undefined;
+	let interrogationtool: { description?: string; parameters?: unknown } | undefined;
+	const objectShapes: unknown[] = [];
+	const described: string[] = [];
 	const schema = {
-		describe() { return schema; },
+		describe(text?: string) {
+			if (text) described.push(text);
+			return schema;
+		},
 		min() { throw new Error("the tool schema must allow empty evidence for type none"); },
 	};
 	const zod = {
-		object: (_shape: unknown) => schema,
+		object: (shape: unknown) => {
+			objectShapes.push(shape);
+			return schema;
+		},
 		string: () => schema,
 		array: (_item: unknown) => schema,
 		union: (_items: unknown[]) => schema,
@@ -482,8 +520,9 @@ test("task inputs and the frustration tool expose the gate contract", async () =
 			handlers[name] = handler;
 		},
 		registerCommand: () => {},
-		registerTool: (tool: { name: string; description?: string }) => {
+		registerTool: (tool: { name: string; description?: string; parameters?: unknown }) => {
 			if (tool.name === "record_frustration") frustrationtool = tool;
+			if (tool.name === "interrogate") interrogationtool = tool;
 		},
 		events: { on: () => {} },
 		appendEntry: () => {},
@@ -514,6 +553,19 @@ test("task inputs and the frustration tool expose the gate contract", async () =
 	expect(batch.input?.context).toBe(`${GATE_NUDGE}batched child tasks`);
 	expect(frustrationtool?.description).toContain('complaint "none"');
 	expect(frustrationtool?.description).toContain('severity "low"');
+	expect(interrogationtool?.description).toBe(
+		"answer the three first-principles questions against what you just built. required once per changed generation when the gate reports a trigger.",
+	);
+	const shape = objectShapes.find((value) => {
+		if (!value || typeof value !== "object") return false;
+		return Object.keys(value).sort().join(",") === "deleted,simplified,unnecessary";
+	}) as Record<string, unknown> | undefined;
+	expect(Object.keys(shape ?? {}).sort()).toEqual(["deleted", "simplified", "unnecessary"]);
+	expect(described).toEqual(expect.arrayContaining([
+		"what here is unnecessary, overly complicated, or based on weak assumptions",
+		"what you deleted entirely. be aggressive",
+		"what you simplified once the unnecessary pieces were gone",
+	]));
 });
 
 test("a missing main frustration record blocks the request", () => {
@@ -901,6 +953,125 @@ test("the verify gate reports the failing command output", () => {
 	expect(failure?.detail.includes("boom") ?? false).toBe(true);
 });
 
+test("the complexity gate checks changed paths and stays advisory", () => {
+	const repo = tempdir("gate-complexity-");
+	const failure = runComplexityGate(
+		repo,
+		"sh -c 'printf \"%s\\n\" \"$@\" >&2; exit 1' --",
+		new Set(["src/a.ts", "src/b.ts"]),
+	);
+	expect(failure?.rule).toBe("complexity_failed");
+	expect(failure?.severity).toBe("warn");
+	expect(failure?.detail.includes("src/a.ts") ?? false).toBe(true);
+	expect(failure?.detail.includes("src/b.ts") ?? false).toBe(true);
+	expect(runComplexityGate(repo, "true", new Set(["src/a.ts"]))).toBeNull();
+});
+
+test("high verify policy accepts only an observed passing test runner without a command", () => {
+	const run = (withPassingRunner: boolean): { noTest: boolean; missingInterrogation: boolean; satisfied: boolean } => {
+		const dir = tempdir("gate-no-verify-");
+		// the gate's own ledger/journal/config live outside the repo under test, as
+		// they do in reality (~/.omp/gate-checker/). inside it they are untracked
+		// files, so every gate write would move the content-keyed tree state and
+		// invalidate the interrogation recorded against the previous key.
+		const state = tempdir("gate-no-verify-state-");
+		const script = `
+const fs = await import("node:fs");
+const cp = await import("node:child_process");
+const path = await import("node:path");
+const mod = await import(process.env.PROBE_ROOT! + "/gate-checker/index.ts");
+const handlers: Record<string, (event: unknown, context: unknown) => unknown> = {};
+const tools: Record<string, { execute?: (...args: unknown[]) => Promise<unknown> }> = {};
+const schema = { describe() { return schema; }, min() { return schema; } };
+const zod = {
+  object: () => schema,
+  string: () => schema,
+  array: () => schema,
+  union: () => schema,
+  number: () => schema,
+  literal: () => schema,
+};
+mod.default({
+  zod,
+  on: (name: string, handler: (event: unknown, context: unknown) => unknown) => { handlers[name] = handler; },
+  registerCommand: () => {},
+  registerTool: (tool: { name: string; execute?: (...args: unknown[]) => Promise<unknown> }) => { tools[tool.name] = tool; },
+  events: { on: () => {} },
+  appendEntry: () => {},
+} as never);
+const cwd = process.env.PROBE_CWD!;
+const git = (command: string) => cp.execSync(command, { cwd, stdio: "pipe" });
+git("git init -q .");
+git("git config user.email t@t.t && git config user.name t");
+fs.writeFileSync(path.resolve(cwd, "base.txt"), "one\\n");
+git("git add -A && git commit -q -m init");
+const context = {
+  cwd,
+  ui: { setStatus() {} },
+  sessionManager: {
+    getSessionFile: () => "/sessions/probe.json",
+    getSessionId: () => "probe",
+    getBranch: () => [{ type: "message", message: { role: "assistant", content: "done" } }],
+  },
+};
+await handlers.agent_start!({}, context);
+await handlers.tool_call!({ toolName: "write", input: { path: "changed.ts" } }, context);
+fs.writeFileSync(path.resolve(cwd, "changed.ts"), "export const x = 1;\\n");
+if (${withPassingRunner ? "true" : "false"}) {
+  await handlers.tool_result!({
+    toolName: "bash",
+    toolCallId: "bash-1",
+    input: { command: "bun test" },
+    content: [],
+    details: undefined,
+    isError: false,
+  }, context);
+}
+const firstStop = await handlers.session_stop!({}, context) as { additionalContext?: string } | undefined;
+await tools.interrogate?.execute?.("interrogate-1", {
+  unnecessary: "none",
+  deleted: "none",
+  simplified: "none",
+}, undefined, undefined, context);
+const secondStop = await handlers.session_stop!({}, context) as { additionalContext?: string } | undefined;
+console.log("@@" + JSON.stringify({
+  noTest: firstStop?.additionalContext?.includes("no_test_run") ?? false,
+  missingInterrogation: firstStop?.additionalContext?.includes("missing_interrogation") ?? false,
+  satisfied: !(secondStop?.additionalContext?.includes("missing_interrogation") ?? false),
+}));
+`;
+		writeFileSync(resolvePath(dir, "probe.ts"), script);
+		const output = execSync("bun run probe.ts", {
+			cwd: dir,
+			encoding: "utf-8",
+			stdio: "pipe",
+			env: {
+				...process.env,
+				OMP_GATES_LEVEL: "high",
+				OMP_VERIFY_CMD: "",
+				OMP_COMPLEXITY_CMD: "",
+				OMP_GATE_CONFIG: resolvePath(state, "config.json"),
+				OMP_GATE_LEDGER: resolvePath(state, "ledger.jsonl"),
+				OMP_GATE_FRUSTRATIONS: resolvePath(state, "frustrations.jsonl"),
+				OMP_GATE_MUTATION_LEASE: "0",
+				PROBE_ROOT: resolvePath(import.meta.dir, ".."),
+				PROBE_CWD: dir,
+			},
+		});
+		const line = output.split("\n").find((value) => value.startsWith("@@"));
+		if (!line) throw new Error(`probe produced no result line: ${output}`);
+		return JSON.parse(line.slice(2)) as { noTest: boolean; missingInterrogation: boolean; satisfied: boolean };
+	};
+	const withoutRunner = run(false);
+	expect(withoutRunner.noTest).toBe(true);
+	expect(withoutRunner.missingInterrogation).toBe(true);
+	expect(withoutRunner.satisfied).toBe(true);
+	const withRunner = run(true);
+	expect(withRunner.noTest).toBe(false);
+	expect(withRunner.missingInterrogation).toBe(true);
+	expect(withRunner.satisfied).toBe(true);
+});
+
 test("the verify cache key moves whenever the tree moves", () => {
 	const repo = tempdir("gate-treekey-");
 	const git = (c: string) => execSync(c, { cwd: repo, encoding: "utf-8", stdio: "pipe" });
@@ -979,7 +1150,9 @@ test("the level is read from the config file, then the env, then the default", (
 	expect(loadConfig({ OMP_DELIVERY_GATES: "1" }, cfg).level).toBe("high");
 	expect(loadConfig({ OMP_DELIVERY_GATES: "0" }, cfg).level).toBe("medium");
 	expect(loadConfig({}, cfg).verifyCmd).toBeNull();
+	expect(loadConfig({}, cfg).complexityCmd).toBeNull();
 	expect(loadConfig({ OMP_VERIFY_CMD: "bun test" }, cfg).verifyCmd).toBe("bun test");
+	expect(loadConfig({ OMP_COMPLEXITY_CMD: "bunx eslint" }, cfg).complexityCmd).toBe("bunx eslint");
 });
 
 test("the dial re-grades every rule family per level", () => {
@@ -996,6 +1169,7 @@ test("the dial re-grades every rule family per level", () => {
 		failure("subagent_missing_manifest", "warn"),
 		failure("subagent_fabricated_modification"),
 		failure("verify_failed"),
+		failure("complexity_failed"),
 		failure("uncommitted_changes"),
 	];
 	const grade = (level: GateLevel) =>
@@ -1015,13 +1189,19 @@ test("the dial re-grades every rule family per level", () => {
 	expect(medium.get("forbidden_marker")).toBe("block");
 	expect(medium.get("fabricated_modification")).toBe("block");
 	expect(medium.get("verify_failed")).toBe("block");
+	expect(medium.get("complexity_failed")).toBe("warn");
 	expect(medium.has("uncommitted_changes")).toBe(false);
 	expect(medium.get("subagent_missing_manifest")).toBe("warn");
 
 	const high = grade("high");
-	expect([...high.values()].every((v) => v === "block")).toBe(true);
+	expect(
+		[...high.entries()]
+			.filter(([rule]) => rule !== "complexity_failed")
+			.every(([, severity]) => severity === "block"),
+	).toBe(true);
 	expect(high.get("uncommitted_changes")).toBe("block");
 	expect(high.get("subagent_missing_manifest")).toBe("block");
+	expect(high.get("complexity_failed")).toBe("warn");
 
 	expect(applyPolicy([failure("brand_new_rule")], policyFor("low") as GatePolicy).length).toBe(1);
 	expect(
@@ -1114,17 +1294,19 @@ test("runaway protection is never on the dial", () => {
 
 test("the level round-trips through a real config file", () => {
 	const cfg = resolvePath(tempdir("gate-roundtrip-"), "config.json");
-	expect(saveConfig("high", "bun test", cfg).ok).toBe(true);
+	expect(saveConfig("high", "bun test", "bunx eslint", cfg).ok).toBe(true);
 	const back = loadConfig({}, cfg);
 	expect(back.level).toBe("high");
 	expect(back.verifyCmd).toBe("bun test");
+	expect(back.complexityCmd).toBe("bunx eslint");
 	expect(loadConfig({ OMP_GATES_LEVEL: "low" }, cfg).level).toBe("high");
-	saveConfig("off", undefined, cfg);
+	expect(loadConfig({ OMP_GATES_LEVEL: "low", OMP_COMPLEXITY_CMD: "other" }, cfg).complexityCmd).toBe("bunx eslint");
+	saveConfig("off", undefined, undefined, cfg);
 	expect(loadConfig({}, cfg).level).toBe("off");
 });
 
 test("the level description names what actually changes", () => {
-	expect(describeLevel("high", "bun test").includes("HIGH")).toBe(true);
-	expect(describeLevel("high", null).includes("high expects a verify command")).toBe(true);
-	expect(describeLevel("off", null).includes("gates: OFF")).toBe(true);
+	expect(describeLevel("high", "bun test", "bunx eslint").includes("HIGH")).toBe(true);
+	expect(describeLevel("high", null, null).includes("high blocks a change with no observed passing test run")).toBe(true);
+	expect(describeLevel("off", null, null).includes("gates: OFF")).toBe(true);
 });

@@ -58,6 +58,7 @@ import {
   MANIFEST_OPEN,
   MANIFEST_CLOSE,
   MANIFEST_JSON_KEYS,
+  homePathConditions,
 } from "./predicates.js";
 import * as ledger from "./ledger.js";
 import {
@@ -87,6 +88,8 @@ import {
   automaticGateRecord,
 } from "./frustrations.js";
 import { installadvisor } from "../advisor/install.js";
+import { questionnaireStop } from "../ask-questionnaire/stop-decision.ts";
+import { omnipotenceStop } from "../omnipotence/stop-decision.ts";
 
 export type GateLevel = "off" | "low" | "medium" | "high";
 type RuleMode = "off" | "warn" | "block" | "auto";
@@ -98,14 +101,19 @@ export interface GatePolicy {
   citation: RuleMode;
   snapshot: RuleMode;
   manifest: RuleMode;
-  subagentClaim: RuleMode;
   verify: RuleMode;
+  complexity: RuleMode;
   commit: RuleMode;
   scratchpad: RuleMode;
   runtime: RuleMode;
 }
 
 type AddedLine = { line: number; text: string };
+type InterrogationAnswers = {
+  unnecessary: string;
+  deleted: string;
+  simplified: string;
+};
 type AddedMap = Map<string, AddedLine[]>;
 
 // --- commit script path (resolved once at module load) ----------------------
@@ -224,12 +232,16 @@ export interface TurnEvidence {
   // evidence a test claim is true, and it is what `ranTestRunner` cannot see:
   // the gate runs the command itself, not through the bash tool.
   verifyPassed: boolean;
+  // TTSR rules that interrupted generation during this request.
+  ttsrHits: Set<string>;
   // markers already reported inline at tool_result, so session_stop does not
   // bill the agent twice for the same line.
   flaggedInline: Set<string>;
   // any tool result errored during this request, bash or otherwise. a clean
   // "none" claim against an errored request is a stats signal, not a failure.
   hadtoolerror: boolean;
+  // answers recorded against the content hash of each interrogated generation.
+  interrogations: Map<string, InterrogationAnswers>;
   // a continuation was forced by a blocking failure other than the
   // missing-record rule itself, so the gate's own coverage loop cannot
   // masquerade as agent friction.
@@ -251,8 +263,10 @@ export function freshEvidence(): TurnEvidence {
     preTouch: new Map(),
     warnedRepoRoots: new Set(),
     judgedSubagents: new Set(),
+    ttsrHits: new Set(),
     verifyPassed: false,
     flaggedInline: new Set(),
+    interrogations: new Map(),
     hadtoolerror: false,
     hadblockingfailure: false,
   };
@@ -699,12 +713,12 @@ export function canskipuserquestion(
 // the omp-dev session — no heuristic decides whether the regime applies.
 //
 //   OMP_DELIVERY_GATES=1        arm both gates
-//   OMP_VERIFY_CMD               test command; unset = verify gate stays off
+//   OMP_VERIFY_CMD               test command; unset = enforced levels require a passing runner
 //
 // deliberately not defaulted to "npm test": guessing a test command in a repo
 // that has none turns every session into a retry loop on a command that was
-// never going to pass. an absent command means the user did not ask for the
-// verify gate.
+// never going to pass. an absent command leaves enforced levels to observed
+// passing test-runner evidence.
 
 // re-grades every failure through the engagement level, and drops the ones the
 // level switches off. applying the dial here, on the finished failure list,
@@ -804,6 +818,81 @@ export function runVerifyGate(cwd: string, cmd: string): GateFailure | null {
     };
   }
 }
+const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+
+function complexityOutput(output: string): string | null {
+  const text = output.trim();
+  if (!text) return null;
+  try {
+    const reports = JSON.parse(text) as unknown;
+    if (Array.isArray(reports)) {
+      const findings: string[] = [];
+      for (const report of reports) {
+        if (!report || typeof report !== "object") continue;
+        const path = "filePath" in report && typeof report.filePath === "string"
+          ? report.filePath
+          : "file" in report && typeof report.file === "string"
+            ? report.file
+            : "changed file";
+        const messages = "messages" in report && Array.isArray(report.messages)
+          ? report.messages
+          : [];
+        for (const message of messages) {
+          if (!message || typeof message !== "object") continue;
+          const detail = "message" in message && typeof message.message === "string"
+            ? message.message
+            : "complexity threshold exceeded";
+          const line = "line" in message && typeof message.line === "number"
+            ? `:${message.line}`
+            : "";
+          const score = detail.match(/\bcomplexity(?:\s+of|:)\s+(\d+)/i)?.[1];
+          findings.push(`${path}${line}: ${score ? `complexity ${score}; ` : ""}${detail}`);
+        }
+      }
+      return findings.length > 0 ? findings.slice(-20).join("\n") : null;
+    }
+  } catch {}
+  return text.split("\n").slice(-20).join("\n");
+}
+
+export function runComplexityGate(
+  cwd: string,
+  cmd: string,
+  changedFiles: Set<string>,
+): GateFailure | null {
+  const paths = [...changedFiles].sort();
+  if (paths.length === 0) return null;
+  const command = `${cmd} ${paths.map(shellQuote).join(" ")}`;
+  try {
+    const output = execSync(command, {
+      cwd,
+      encoding: "utf-8",
+      timeout: 15 * 60 * 1000,
+      maxBuffer: 32 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const detail = complexityOutput(String(output));
+    return detail
+      ? {
+          gate: "risk",
+          rule: "complexity_failed",
+          severity: "warn",
+          detail: `complexity linter reported findings for changed files:\n   ${detail.replace(/\n/g, "\n   ")}`,
+        }
+      : null;
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string; message?: string };
+    const output = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim() || String(e.message ?? "");
+    const detail = complexityOutput(output) ?? "linter failed without output";
+    return {
+      gate: "risk",
+      rule: "complexity_failed",
+      severity: "warn",
+      detail: `complexity linter could not complete for changed files:\n   ${detail.replace(/\n/g, "\n   ")}`,
+    };
+  }
+}
+
 
 export function runCommitGate(cwd: string): GateFailure | null {
   try {
@@ -975,7 +1064,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   };
 
   const policyfingerprint = (): string =>
-    hashContent(`${config.level}\n${config.verifyCmd ?? ""}`);
+    hashContent(`${config.level}\n${config.verifyCmd ?? ""}\n${config.complexityCmd ?? ""}`);
   const appendjournal = (kind: string, fields: Record<string, unknown> = {}): void => {
     if (!requestId) return;
     try {
@@ -1084,8 +1173,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
     requestId = state.request_id;
     continuationCount = state.continuation;
     lastBlockingKey = state.failure_hash;
+    const priorInterrogations = evidence.interrogations;
     evidence = freshEvidence();
-    journalRecovery = null;
+    for (const [hash, answers] of priorInterrogations) evidence.interrogations.set(hash, answers);
     evidence.hadToolCalls = true;
     evidence.baselineSha = state.baseline_sha;
     evidence.baselineSnapshots = state.baseline_snapshots;
@@ -1126,6 +1216,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (!policy.enabled) return "gate: off";
     const bits = [`gate: ${config.level}`];
     if (policy.verify !== "off" && config.verifyCmd) bits.push(`verify: ${config.verifyCmd}`);
+    if (policy.complexity !== "off" && config.complexityCmd) bits.push(`complexity: ${config.complexityCmd}`);
     if (policy.commit === "block") bits.push("commit required");
     return bits.join(" · ");
   };
@@ -1155,6 +1246,19 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (activeLease) releaselease(activeLease);
     activeLease = null;
   });
+  pi.on("ttsr_triggered", (event: unknown) => {
+    let rules: unknown;
+    if (event && typeof event === "object" && "rules" in event) rules = event.rules;
+    if (!Array.isArray(rules)) return;
+    for (const rule of rules) {
+      if (
+        rule &&
+        typeof rule === "object" &&
+        "name" in rule &&
+        typeof rule.name === "string"
+      ) evidence.ttsrHits.add(rule.name);
+    }
+  });
 
   // --- commands -------------------------------------------------------------
   // the level takes effect immediately, in this session, and persists to
@@ -1163,10 +1267,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
   const applyLevel = (
     level: GateLevel,
     verifyCmd: string | null,
+    complexityCmd: string | null,
     ctx: ExtensionCommandContext,
   ): string => {
-    const saved = saveConfig(level, verifyCmd);
-    config = { level, verifyCmd, source: "config" };
+    const saved = saveConfig(level, verifyCmd, complexityCmd);
+    config = { level, verifyCmd, complexityCmd, source: "config" };
     policy = policyFor(level) as GatePolicy;
     // a level change invalidates a cached verify verdict: the same tree can be
     // acceptable at one level and not at another.
@@ -1175,7 +1280,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     try {
       ctx?.ui?.setStatus?.("gate", armingStatus());
     } catch {}
-    const body = describeLevel(level, verifyCmd);
+    const body = describeLevel(level, verifyCmd, complexityCmd);
     return saved.ok
       ? `${body}\n\nsaved to ${CONFIG_PATH}`
       : `${body}\n\n⚠ active for this session only — could not write ${CONFIG_PATH}: ${saved.error}`;
@@ -1194,7 +1299,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       if (!parts.length) {
         // no argument is a question, not a mistake — report the current state.
         ctx?.ui?.notify?.(
-          `${describeLevel(config.level, config.verifyCmd)}\n\n` +
+          `${describeLevel(config.level, config.verifyCmd, config.complexityCmd)}\n\n` +
             `source: ${config.source}\nchange with: /gates-engage low|medium|high`,
           "info",
         );
@@ -1216,14 +1321,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
         );
         return;
       }
-      ctx?.ui?.notify?.(applyLevel(level, config.verifyCmd, ctx), "info");
+      ctx?.ui?.notify?.(applyLevel(level, config.verifyCmd, config.complexityCmd, ctx), "info");
     },
   });
 
   pi.registerCommand("gates-disable", {
     description: "turn every gate off (re-enable with /gates-engage medium)",
     handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
-      ctx?.ui?.notify?.(applyLevel("off", config.verifyCmd, ctx), "warning");
+      ctx?.ui?.notify?.(applyLevel("off", config.verifyCmd, config.complexityCmd, ctx), "warning");
     },
   });
   pi.registerCommand("advisor-install", {
@@ -1340,6 +1445,52 @@ export default function gateChecker(pi: ExtensionAPI): void {
       }
       return {
         content: [{ type: "text" as const, text: `recorded frustration for ${params.agent_id}: ${params.complaint}` }],
+      };
+    },
+  });
+  pi.registerTool({
+    name: "interrogate",
+    label: "interrogate the build",
+    description: "answer the three first-principles questions against what you just built. required once per changed generation when the gate reports a trigger.",
+    approval: "write",
+    parameters: pi.zod.object({
+      unnecessary: pi.zod.string().describe("what here is unnecessary, overly complicated, or based on weak assumptions"),
+      deleted: pi.zod.string().describe("what you deleted entirely. be aggressive"),
+      simplified: pi.zod.string().describe("what you simplified once the unnecessary pieces were gone"),
+    }),
+    execute: async (
+      _toolCallId: string,
+      params: Record<string, unknown>,
+      _signal: AbortSignal | undefined,
+      _onUpdate: unknown,
+      ctx: ExtensionContext,
+    ): Promise<{ content: Array<{ type: "text"; text: string }> }> => {
+      const cwd = String(ctx?.cwd ?? ".");
+      const generationHash = treeStateKey(
+        evidence.repoRoot ?? cwd,
+        evidence.baselineSha !== null,
+        evidence.preTouch,
+      );
+      const answers: InterrogationAnswers = {
+        unnecessary: String(params.unnecessary ?? ""),
+        deleted: String(params.deleted ?? ""),
+        simplified: String(params.simplified ?? ""),
+      };
+      evidence.interrogations.set(generationHash, answers);
+      ledger.append("gate_eval", {
+        rules: ["interrogate"],
+        tree_fingerprint: generationHash,
+        ...answers,
+        request_id: requestId,
+      });
+      appendjournal("verify", {
+        verify_id: `interrogate:${generationHash}`,
+        outcome: "interrogated",
+        tree_fingerprint: generationHash,
+        ...answers,
+      });
+      return {
+        content: [{ type: "text" as const, text: `interrogation recorded for generation ${generationHash}` }],
       };
     },
   });
@@ -1584,7 +1735,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
 
   // run gates before the agent yields — the enforcement point
-  pi.on("session_stop", async (_event: unknown, ctx: ExtensionContext): Promise<SessionStopResult | void> => {
+  const completionDecision = async (event: unknown, ctx: ExtensionContext): Promise<SessionStopResult | void> => {
     // any path that does not return `{ continue: true }` ends the continuation
     // chain, so it must clear the counter that latches the baseline.
     if (!policy.enabled) {
@@ -1637,6 +1788,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     let changedFiles = new Set<string>();
     let added: AddedMap = new Map();
     let watched: Set<string> | null = null;
+    let dayOneTrigger = false;
     // git present but unreadable (corrupt index, permissions, a ref that will
     // not resolve). judging nothing is the only honest verdict: an empty
     // changed-file set would report every honest claim as fabricated.
@@ -1657,6 +1809,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
         for (const path of external.changed) changedFiles.add(path);
         for (const [key, line] of external.added) added.set(key, line);
         const risk = auditscope(scope);
+        dayOneTrigger =
+          scope.files.some((file) =>
+            file.type === "added" ||
+            file.type === "renamed" ||
+            file.type === "untracked"
+          ) ||
+          risk.findings.some((finding) => finding.id === "risk.dependencies");
         for (const finding of risk.findings) {
           const location = finding.evidence.line
             ? `${finding.evidence.path}:${finding.evidence.line}`
@@ -1680,6 +1839,16 @@ export default function gateChecker(pi: ExtensionAPI): void {
       const d = no_git_diff(evidence.preTouch, cwd);
       changedFiles = d.changed;
       added = d.added;
+      const noGitRisk = auditscope({
+        files: [...changedFiles].map((path) => ({
+          path,
+          type: evidence.preTouch.get(path) === null ? "added" : "modified",
+        })),
+        added: Object.fromEntries(added),
+      });
+      dayOneTrigger =
+        [...changedFiles].some((path) => evidence.preTouch.get(path) === null) ||
+        noGitRisk.findings.some((finding) => finding.id === "risk.dependencies");
       watched = new Set([...evidence.preTouch.keys()].map(normalizePath));
       try {
         pi.appendEntry("omp.gate-checker.no-git", {
@@ -1690,6 +1859,38 @@ export default function gateChecker(pi: ExtensionAPI): void {
       } catch {}
     }
     const changedCount = canAdjudicate ? changedFiles.size : 0;
+    if (evidence.ttsrHits.has("no-absolute-home-path")) {
+      const conditions = homePathConditions();
+      for (const [path, lines] of added) {
+        for (const { line, text } of lines) {
+          if (conditions.some((re) => {
+            re.lastIndex = 0;
+            return re.test(text);
+          })) {
+            failures.push({
+              gate: "completion",
+              rule: "no-absolute-home-path",
+              detail: `${path} line ${line}: interrupted once, rewritten with the path still present`,
+            });
+          }
+        }
+      }
+    }
+
+    if (policy.enabled && canAdjudicate && changedCount > 0 && dayOneTrigger) {
+      const generationHash = treeStateKey(gitCwd, hasGit, evidence.preTouch);
+      if (
+        !evidence.interrogations.has(generationHash)
+      ) {
+        failures.push({
+          gate: "completion",
+          rule: "missing_interrogation",
+          detail:
+            `changed generation ${generationHash} requires one interrogate call; ` +
+            "answer all three first-principles questions before yielding.",
+        });
+      }
+    }
 
 
     // --- delivery gates: verify + commit -------------------------------------
@@ -1727,6 +1928,20 @@ export default function gateChecker(pi: ExtensionAPI): void {
         } else if (verifyCache) {
           evidence.verifyPassed = true;
         }
+      } else if (policy.verify === "block" && !config.verifyCmd && !ranTestRunner(evidence)) {
+        failures.push({
+          gate: "verify",
+          rule: "no_test_run",
+          detail: `changed ${changedCount} files, ran no passing test command. run the project's test command, or set gates verifyCmd <cmd>.`,
+        });
+      }
+
+      if (policy.complexity !== "off" && config.complexityCmd) {
+        try {
+          ctx?.ui?.setStatus?.("gate", `running complexity: ${config.complexityCmd}`);
+        } catch {}
+        const complexityFailure = runComplexityGate(gitCwd, config.complexityCmd, changedFiles);
+        if (complexityFailure) failures.push(complexityFailure);
       }
 
       // the commit gate genuinely needs git, and stays off below "high":
@@ -2023,5 +2238,13 @@ export default function gateChecker(pi: ExtensionAPI): void {
       continue: true,
       additionalContext: formatFailures(blocking),
     };
-  });
+  };
+  // the one registered session_stop handler in this package. the harness runner
+  // returns on the first qualifying continuation, so precedence is a line of code
+  // here rather than a property of module load order.
+  pi.on("session_stop", async (event: unknown, ctx: ExtensionContext): Promise<SessionStopResult | void> =>
+    (await completionDecision(event, ctx))
+    ?? (await questionnaireStop(event, ctx))
+    ?? (await omnipotenceStop(event, ctx)),
+  );
 }

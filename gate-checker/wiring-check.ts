@@ -35,6 +35,7 @@ const writeProbeConfig = (level: string, verifyCmd?: string) => {
 
 const gateChecker = (await import("./index.ts")).default;
 const askQuestionnaire = (await import("../ask-questionnaire/index.ts")).default;
+const { resetQuestionnaireStop } = await import("../ask-questionnaire/stop-decision.ts");
 
 const repo = mkdtempSync(resolve(tmpdir(), "probe-repo-"));
 const git = (c: string) => execSync(c, { cwd: repo, encoding: "utf-8", stdio: "pipe" });
@@ -57,6 +58,7 @@ type RegisteredTool = {
 };
 type Harness = {
   recordFrustration?: RegisteredTool;
+  interrogate?: RegisteredTool;
   events: Record<string, (payload: unknown) => void>;
 };
 const harnesses = new WeakMap<Record<string, H>, Harness>();
@@ -84,11 +86,11 @@ const mkHandlers = () => {
         tool &&
         typeof tool === "object" &&
         "name" in tool &&
-        tool.name === "record_frustration" &&
         "execute" in tool &&
         typeof tool.execute === "function"
       ) {
-        harness.recordFrustration = tool as RegisteredTool;
+        if (tool.name === "record_frustration") harness.recordFrustration = tool as RegisteredTool;
+        if (tool.name === "interrogate") harness.interrogate = tool as RegisteredTool;
       }
     },
     events: {
@@ -180,12 +182,32 @@ const emit = (h: Record<string, H>, channel: string, payload: unknown) => {
   if (!listener) throw new Error(`missing ${channel} listener`);
   listener(payload);
 };
+// the interrogation is required once per changed generation whenever a day-one
+// fact fires (a new file, a manifest change). it is keyed on the tree state at
+// call time, so a compliant turn answers it after the change lands and before
+// the stop — exactly where a real agent would.
+const interrogate = async (h: Record<string, H>, context: unknown) => {
+  const tool = harnesses.get(h)?.interrogate;
+  if (!tool) throw new Error("interrogate was not registered");
+  await tool.execute(
+    "interrogate-1",
+    {
+      unnecessary: "nothing; this is the minimum change that satisfies the request",
+      deleted: "nothing this turn",
+      simplified: "nothing this turn",
+    },
+    undefined,
+    undefined,
+    context,
+  );
+};
 let n = 0;
 let lastNotice = "";
 const run = async (h: Record<string, H>, label: string, work: () => void) => {
   await start(h, ctx);
   work();
   await h.tool_call!({ toolName: "write", input: { path: "src/a.txt" } }, ctx);
+  await interrogate(h, ctx);
   const r = (await h.session_stop!({}, ctx)) as
     | { continue?: boolean; additionalContext?: string }
     | undefined;
@@ -624,6 +646,7 @@ for (const [label, report, shouldBlock] of [
   await start(h4b, looseCtx);
   await h4b.tool_call!({ toolName: "write", input: { path: "s4.sh" } }, looseCtx);
   writeFileSync(resolve(loose, "s4.sh"), "#!/bin/sh\necho ok\n");
+  await interrogate(h4b, looseCtx);
   const r4 = await h4b.session_stop!({}, looseCtx);
   expect(r4 === undefined, "and clears once the command passes");
 
@@ -959,42 +982,78 @@ expect(
 
 // ── both extensions in one session ─────────────────────────────────────────
 //
-// the questionnaire forces an `ask` before any other tool on a new-project
-// request. the gate checker treats an `ask` as "the agent stopped to ask the
-// user" and used to skip every gate for the request — so the requests that
-// scaffold new code were exactly the ones that went unchecked.
+// the questionnaire no longer sniffs input text: a phase declares an interview
+// through `questionnaire_open`. while one is open, only read-only tools and the
+// declaration itself are admitted. the gate is the single session_stop owner and
+// its completion proof outranks the interview, so a request that scaffolds new
+// code is judged whether or not an interview is still pending.
 {
 	console.log("17. questionnaire and gate checker together");
 	writeProbeConfig("medium", "true");
+	resetQuestionnaireStop();
+	let questionnaireOpen: RegisteredTool | undefined;
 	const quizHandlers = () => {
 		const h: Record<string, H> = {};
 		askQuestionnaire({
+			zod,
 			on: (name: string, f: H) => { h[name] = f; },
-			getActiveTools: () => ["ask", "write", "bash", "task"],
+			registerTool: (tool: unknown) => {
+				if (
+					tool &&
+					typeof tool === "object" &&
+					"name" in tool &&
+					tool.name === "questionnaire_open" &&
+					"execute" in tool &&
+					typeof tool.execute === "function"
+				) {
+					questionnaireOpen = tool as RegisteredTool;
+				}
+			},
 		} as never);
 		return h;
 	};
 
-	const gate = mkHandlers();
 	const quiz = quizHandlers();
+	const call = async (toolName: string, id: string) =>
+		(await quiz.tool_call!({ toolName, toolCallId: id, input: {} }, ctx)) as
+			{ block?: boolean; reason?: string } | undefined;
 
-	await quiz.input!(
-		{ type: "input", text: "create a new cli tool for log triage", source: "interactive" },
-		ctx,
+	// nothing declared: an ordinary coding turn arms nothing.
+	expect((await call("write", "0"))?.block !== true, "no declaration arms nothing");
+
+	const reason = "settle the log-triage cli scope before any file is written";
+	await questionnaireOpen!.execute("q1", { owner: "factory-discovery", reason }, undefined, undefined, ctx);
+
+	expect((await call("read", "1"))?.block !== true, "a pending questionnaire still admits read");
+	expect(
+		(await call("questionnaire_open", "2"))?.block !== true,
+		"a pending questionnaire still admits its own declaration tool",
 	);
-	const blockedWrite = (await quiz.tool_call!(
-		{ toolName: "write", toolCallId: "1", input: {} },
-		ctx,
-	)) as { block?: boolean } | undefined;
-	expect(blockedWrite?.block === true, "the questionnaire blocks work before the ask");
+	const blockedWrite = await call("write", "3");
+	expect(blockedWrite?.block === true, "a pending questionnaire refuses write");
+	expect(blockedWrite?.reason === reason, "the refusal states the declared reason");
 
+	// precedence: the gate's completion proof outranks a pending interview.
+	const contested = mkHandlers();
+	assistantText = "scaffolded the cli.";
+	await start(contested, ctx);
+	await contested.tool_call!({ toolName: "write", input: { path: "src/scaffold.ts" } }, ctx);
+	writeFileSync(resolve(repo, "src/scaffold.ts"), ["// TODO:", " implement\n"].join(""));
+	const contestedStop = (await contested.session_stop!({}, ctx)) as { additionalContext?: string } | undefined;
+	expect(
+		contestedStop?.additionalContext?.includes("forbidden_marker") ?? false,
+		"the completion gate outranks a pending questionnaire",
+	);
+
+	// a successful ask clears the interview, and the gate still judges the change.
+	await quiz.tool_result!({ toolName: "ask", toolCallId: "4", isError: false }, ctx);
+	expect((await call("write", "5"))?.block !== true, "a successful ask clears the questionnaire");
+
+	const gate = mkHandlers();
 	await start(gate, ctx);
 	await gate.tool_call!({ toolName: "ask", input: {} }, ctx);
-	await quiz.tool_result!({ toolName: "ask", toolCallId: "1", isError: false }, ctx);
-
-	assistantText = "scaffolded the cli.";
-	await gate.tool_call!({ toolName: "write", input: { path: "src/scaffold.ts" } }, ctx);
-	writeFileSync(resolve(repo, "src/scaffold.ts"), ["// TODO:", " implement\n"].join(""));
+	await gate.tool_call!({ toolName: "write", input: { path: "src/scaffold2.ts" } }, ctx);
+	writeFileSync(resolve(repo, "src/scaffold2.ts"), ["// TODO:", " implement\n"].join(""));
 	const both = (await gate.session_stop!({}, ctx)) as { additionalContext?: string } | undefined;
 	expect(
 		both?.additionalContext?.includes("forbidden_marker") ?? false,

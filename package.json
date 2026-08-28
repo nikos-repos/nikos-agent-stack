@@ -54,6 +54,7 @@
     "gate-checker/provenance.js",
     "gate-checker/journal.js",
     "omnipotence/index.ts",
+    "omnipotence/stop-decision.ts",
     "omnipotence/cli.ts",
     "omnipotence/api.ts",
     "omnipotence/contracts.ts",
@@ -66,6 +67,7 @@
     "omnipotence/processes.ts",
     "docs/omnipotence-user-guide.md",
     "ask-questionnaire/index.ts",
+    "ask-questionnaire/stop-decision.ts",
     "advisor/install.js",
     "advisor/WATCHDOG.yml",
     "README.md"

@@ -19,7 +19,8 @@
 
 import { existsSync, readFileSync } from "fs";
 import { createHash } from "crypto";
-import { resolve as resolvePath, isAbsolute } from "path";
+import { resolve as resolvePath, isAbsolute, join } from "path";
+import { homedir } from "os";
 
 // ── forbidden markers ───────────────────────────────────────────────────────
 
@@ -60,6 +61,80 @@ export const CODE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go",
   ".java", ".rb", ".sh", ".c", ".h", ".cpp", ".cs", ".swift", ".kt",
 ]);
+// Keep these patterns aligned with rules/no-absolute-home-path.md. The rule
+// file is authoritative; this fallback covers a missing or malformed install.
+const DEFAULT_HOME_PATH_CONDITIONS = [
+  "/home/[a-z][a-z0-9._-]*/",
+  "/Users/[A-Za-z][A-Za-z0-9._-]*/",
+  "[A-Za-z]:[\\\\/]+Users[\\\\/]+[^\\\\/\\s\"']+[\\\\/]",
+];
+let cachedHomePathConditions = null;
+
+function yamlConditionValue(value) {
+  const trimmed = value.trim();
+  if (trimmed.startsWith('"') || trimmed.endsWith('"')) {
+    if (!trimmed.startsWith('"') || !trimmed.endsWith('"')) return null;
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+  if (trimmed.startsWith("'") || trimmed.endsWith("'")) {
+    if (!trimmed.startsWith("'") || !trimmed.endsWith("'")) return null;
+    return trimmed.slice(1, -1).replace(/''/g, "'");
+  }
+  return trimmed || null;
+}
+
+function homePathPatterns() {
+  const agentDir =
+    process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
+  const rulePath = join(agentDir, "rules", "no-absolute-home-path.md");
+  try {
+    const raw = readFileSync(rulePath, "utf-8");
+    const frontMatter = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+    if (!frontMatter) return DEFAULT_HOME_PATH_CONDITIONS;
+    const lines = frontMatter[1].split(/\r?\n/);
+    const start = lines.findIndex((line) => /^\s*condition:\s*$/.test(line));
+    if (start < 0) return DEFAULT_HOME_PATH_CONDITIONS;
+    const patterns = [];
+    for (let i = start + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      const item = line.match(/^\s*-\s+(.+?)\s*$/);
+      if (!item) break;
+      const value = yamlConditionValue(item[1]);
+      if (value === null) return DEFAULT_HOME_PATH_CONDITIONS;
+      patterns.push(value);
+    }
+    return patterns.length > 0 ? patterns : DEFAULT_HOME_PATH_CONDITIONS;
+  } catch {
+    return DEFAULT_HOME_PATH_CONDITIONS;
+  }
+}
+
+function compileHomePathConditions(patterns) {
+  const compiled = [];
+  for (const pattern of patterns) {
+    try {
+      compiled.push(new RegExp(pattern));
+    } catch {
+      // A malformed condition must not break the completion gate.
+    }
+  }
+  return compiled;
+}
+
+export function homePathConditions() {
+  if (cachedHomePathConditions) return cachedHomePathConditions;
+  const compiled = compileHomePathConditions(homePathPatterns());
+  cachedHomePathConditions =
+    compiled.length > 0
+      ? compiled
+      : compileHomePathConditions(DEFAULT_HOME_PATH_CONDITIONS);
+  return cachedHomePathConditions;
+}
 
 /**
  * loads `<dir>/.omp/gates-markers.txt` (one marker per line, `#` for comments)

@@ -6,12 +6,14 @@ import { join } from "node:path";
 import { blueprintservice } from "./blueprints.ts";
 import activate, { factoryflags, factoryrequestfor, nextsleepdelay, runsentence } from "./index.ts";
 import { orchestrationstore } from "./store.ts";
+import { omnipotenceStop, resetOmnipotenceStop } from "./stop-decision.ts";
 
 const roots: string[] = [];
 const originaldb = process.env.OMNIPOTENCE_DB;
 const originalblueprints = process.env.OMNIPOTENCE_BLUEPRINTS;
 
 afterEach(() => {
+	resetOmnipotenceStop();
 	if (originaldb === undefined) delete process.env.OMNIPOTENCE_DB;
 	else process.env.OMNIPOTENCE_DB = originaldb;
 	if (originalblueprints === undefined) delete process.env.OMNIPOTENCE_BLUEPRINTS;
@@ -229,8 +231,9 @@ describe("omnipotence omp extension", () => {
 		process.env.OMNIPOTENCE_BLUEPRINTS = join(root, "blueprints");
 		const fake = fakepi();
 		Reflect.apply(activate, undefined, [fake.api]);
+		expect(fake.handlers.get("session_stop")).toBeUndefined();
 		const ctx = context("session-inactive", root);
-		const result = await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx);
+		const result = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
 		expect(result).toBeUndefined();
 		expect(fake.messages).toEqual([]);
 		expect(fake.entries).toEqual([]);
@@ -373,24 +376,19 @@ describe("omnipotence omp extension", () => {
 		expect(store.geteffectbykey(run.id, "second")).toBeNull();
 		expect(store.getrun(run.id)?.status).toBe("running");
 
-		const stopresult = await fire(
-			fake.handlers,
-			"session_stop",
-			{ type: "session_stop", stop_hook_active: false },
-			ctx,
-		);
+		const stopresult = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
 		expect(stopresult).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		const second = store.listeffects(run.id).find((effect) => effect.key === "second");
 		if (!second) throw new Error("expected second effect");
 		expect(store.geteffect(run.id, second.id)?.dispatchedat).not.toBeNull();
 
-		const missing = await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx);
+		const missing = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
 		expect(missing).toEqual({
 			decision: "block",
 			reason: `active omnipotence run ${run.id} still needs result for effect ${second.id}`,
 		});
-		const repeated = await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: true }, ctx);
+		const repeated = await omnipotenceStop({ type: "session_stop", stop_hook_active: true }, ctx);
 		expect(repeated).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
@@ -446,7 +444,7 @@ describe("omnipotence omp extension", () => {
 		expect(fake.messages).toHaveLength(1);
 		expect(store.getrun(run.id)).toMatchObject({ status: "running", turns: 2, maxturns: 1 });
 		expect(
-			await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx),
+			await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		const second = store.geteffectbykey(run.id, "second");
@@ -477,7 +475,7 @@ describe("omnipotence omp extension", () => {
 		expect(fake.messages).toHaveLength(2);
 		expect(store.getrun(run.id)).toMatchObject({ status: "running", turns: 3, maxturns: 1 });
 		expect(
-			await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx),
+			await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		expect(store.getrun(run.id)).toMatchObject({
@@ -652,12 +650,7 @@ describe("omnipotence omp extension", () => {
 			undefined,
 			ctx,
 		);
-		const stopresult = await fire(
-			fake.handlers,
-			"session_stop",
-			{ type: "session_stop", stop_hook_active: false },
-			ctx,
-		);
+		const stopresult = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
 		expect(stopresult).toBeUndefined();
 		expect(sendcount).toBe(2);
 		expect(fake.messages).toHaveLength(1);
@@ -727,7 +720,7 @@ describe("omnipotence omp extension", () => {
 		expect(effect?.kind).toBe("breakpoint");
 		expect(effect?.dispatchedat).toBeNull();
 		expect(
-			await fire(fake.handlers, "session_stop", { type: "session_stop", stop_hook_active: false }, ctx),
+			await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		await resume.handler('{"approved":true}', ctx);
 		expect(store.getsessionrun("session-breakpoint-extension")).toBeNull();
@@ -843,6 +836,7 @@ describe("omnipotence omp extension", () => {
 		const second = fakepi();
 		const third = fakepi();
 		Reflect.apply(activate, undefined, [second.api]);
+		resetOmnipotenceStop();
 		Reflect.apply(activate, undefined, [third.api]);
 		const restored = context("session-restart-concurrent", root);
 		expect(
