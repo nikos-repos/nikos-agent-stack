@@ -52,6 +52,15 @@ export const DEFAULT_FORBIDDEN_MARKERS = [
   "coming soon",
 ];
 
+// scope marker checks to code: the marker gate fired 22 times and was wrong 22 times — 19 .md, 3 .html, zero code.
+/**
+ * @type {Set<string>}
+ */
+export const CODE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rs", ".go",
+  ".java", ".rb", ".sh", ".c", ".h", ".cpp", ".cs", ".swift", ".kt",
+]);
+
 /**
  * loads `<dir>/.omp/gates-markers.txt` (one marker per line, `#` for comments)
  * and appends it to the defaults.
@@ -181,6 +190,8 @@ export function checkAddedLines(added, markers) {
   const lowered = markers.map((m) => ({ marker: m, lm: m.toLowerCase() }));
 
   for (const [relPath, lines] of added) {
+    const dot = relPath.lastIndexOf(".");
+    if (dot < 0 || !CODE_EXTENSIONS.has(relPath.slice(dot).toLowerCase())) continue;
     for (const { line, text } of lines) {
       const lower = text.toLowerCase();
       for (const { marker, lm } of lowered) {

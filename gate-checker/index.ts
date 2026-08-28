@@ -24,7 +24,7 @@
 //
 // commit routing:
 //   - tool_call intercepts raw `git commit` and rewrites to smart_commit.sh
-//   - enforces git-pushing skill standards deterministically at initiation
+//   - enforces git-commit skill standards deterministically at initiation
 //
 // staged enforcement:
 //   - tool_result flags a forbidden marker the moment write/edit introduces it,
@@ -39,7 +39,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { existsSync, statSync } from "fs";
 import { execSync } from "child_process";
-import { dirname, isAbsolute, relative, resolve as resolvePath, sep } from "path";
+import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
 import {
@@ -111,8 +111,8 @@ type AddedMap = Map<string, AddedLine[]>;
 // --- commit script path (resolved once at module load) ----------------------
 
 const COMMIT_SCRIPT_PATH = resolvePath(
-  homedir(),
-  ".omp/agent/skills/git-pushing/scripts/smart_commit.sh",
+  process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent"),
+  "skills/git-commit/scripts/smart_commit.sh",
 );
 
 // --- event shapes -----------------------------------------------------------
@@ -558,7 +558,7 @@ export function inlineAdditions(
   return typeof content === "string" ? contentToAdded(relPath, content) : null;
 }
 
-// --- commit routing (deterministic enforcement of git-pushing standards) ----
+// --- commit routing (deterministic enforcement of git-commit standards) ----
 
 // matches `git commit` as a real command, not inside quotes, echo, sed, or grep.
 // requires `git commit` at start of command or after && / ; / | (command boundary).
@@ -738,8 +738,8 @@ interface VerifyCache {
   key: string;
 }
 
-// `--untracked-files=normal`: a new file the agent just wrote is part of the
-// state the test command sees, so it must move the key.
+// content digest of HEAD, the binary diff, and untracked files keeps the
+// verify verdict tied to the bytes the test command sees.
 // a key that can never equal another. `Date.now()` alone collides inside the
 // same millisecond, which would let the cache reuse a verdict for a state we
 // explicitly could not measure.
@@ -754,10 +754,19 @@ export function treeStateKey(
   if (hasGit) {
     try {
       const out = execSync(
-        "git rev-parse HEAD 2>/dev/null; git status --porcelain 2>/dev/null",
+        "git rev-parse HEAD 2>/dev/null; git diff HEAD --binary 2>/dev/null; printf '\\0'; git ls-files -o --exclude-standard -z 2>/dev/null",
         { cwd, encoding: "utf-8", timeout: 5000, maxBuffer: 8 * 1024 * 1024 },
       );
-      if (out.trim()) return hashContent(out);
+      const [gitState, ...rawUntracked] = out.split("\0");
+      if (!out.trim() || !gitState.trim()) return unknownState();
+      const untracked = rawUntracked
+        .filter(Boolean)
+        .sort()
+        .map((rel) => {
+          const abs = isAbsolute(rel) ? rel : resolvePath(cwd, rel);
+          return `${rel}:${hashContent(readSnapshot(abs) ?? "")}`;
+        });
+      return hashContent([gitState, ...untracked].join("\n"));
     } catch {}
     return unknownState(); // never reuse a cached verdict for an unreadable tree
   }
@@ -914,7 +923,7 @@ export const GATE_NUDGE =
   "Also: (1) do not leave forbidden markers (TODO: implement, FIXME:, " +
   "NotImplementedError, stub/placeholder comments) in lines you add; " +
   "(2) do not claim test results you did not produce — the bash log is " +
-  "checked; (3) if you commit, use the git-pushing skill script, not raw " +
+  "checked; (3) if you commit, use the git-commit skill script, not raw " +
   "git commit.\n\n" +
   // every active session and subagent needs a frustration record tied to its
   // server session file. the tool is the identity gate: without it the session
@@ -944,7 +953,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   let requestId: string | null = null;
   let journalRecovery: string | null = null;
   const leaseOwnerId = randomUUID();
-  const leaseEnabled = !["", "0", "false", "off"].includes(
+  const leaseEnabled = !["0", "false", "off"].includes(
     String(process.env.OMP_GATE_MUTATION_LEASE ?? "").trim().toLowerCase(),
   );
   let activeLease: Record<string, unknown> | null = null;
@@ -1252,7 +1261,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
       "use type \"none\" only when the whole session was friction-free; it " +
       "requires complaint \"none\" and severity \"low\". every active identity " +
       "(main session and each subagent) needs one record for that session. " +
-      "append-only jsonl.",
+      "append-only jsonl. " +
+      "type must be one of: tooling | environment | requirements | workflow | " +
+      "test | dependency | performance | other | none.",
     approval: "write",
     parameters: pi.zod.object({
       agent_id: pi.zod.string().describe("your assigned id (e.g. \"main\" or the subagent id)"),
@@ -1279,7 +1290,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           exit_code: pi.zod.number(),
           output: pi.zod.string(),
         }),
-      ])).describe("evidence for real friction; ignored for type \"none\""),
+      ])).describe("always present. at least one entry unless type is \"none\"; for \"none\" pass []"),
     }),
     execute: async (
       _toolCallId: string,
@@ -1389,7 +1400,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, ctx: ExtensionContext): Promise<ToolCallResult | void> => {
     evidence.hadToolCalls = true;
     // `off` means off. without this the handler still bound a repository,
-    // rewrote a commit into the git-pushing script, and prepended the gate
+    // rewrote a commit into the git-commit script, and prepended the gate
     // nudge to every subagent after /gates-disable.
     if (!policy.enabled) return;
     const { toolName, input } = event;
@@ -1590,7 +1601,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const sessionFile = ctx?.sessionManager?.getSessionFile?.();
     const sessionId = ctx?.sessionManager?.getSessionId?.();
     const taxonomyRoot = evidence.repoRoot ?? cwd;
-    if (!assistantText && !evidence.askedUser && !journalRecovery) {
+    const mutated = evidence.filesTouched.size > 0 || evidence.hadtoolerror;
+    if (!assistantText && !evidence.askedUser && !journalRecovery && !mutated) {
       terminaljournal("skipped_no_assistant_text");
       return void (continuationCount = 0);
     }

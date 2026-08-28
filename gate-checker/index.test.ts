@@ -65,7 +65,7 @@ afterAll(() => {
 
 // a synthetic absolute path. the rewrites compare strings, so no real script and
 // no real home directory is involved.
-const SCRIPT_PATH = "/opt/gate-checker/skills/git-pushing/scripts/smart_commit.sh";
+const SCRIPT_PATH = "/opt/gate-checker/skills/git-commit/scripts/smart_commit.sh";
 
 // --- reference extraction ---------------------------------------------------
 
@@ -173,6 +173,8 @@ test("the completion gate judges only added lines", () => {
 		withMarker,
 	);
 	expect(checkAddedLines(withMarker, DEFAULT_FORBIDDEN_MARKERS).length).toBe(1);
+	expect(checkAddedLines(contentToAdded("README.md", `# ${todoMarker}`), DEFAULT_FORBIDDEN_MARKERS).length).toBe(0);
+	expect(checkAddedLines(contentToAdded("src/FILE.TS", `// ${todoMarker}`), DEFAULT_FORBIDDEN_MARKERS).length).toBe(1);
 });
 
 // --- citation gate ----------------------------------------------------------
@@ -448,7 +450,7 @@ test("the subagent nudge states the manifest, frustration tool, markers, and com
 	expect(GATE_NUDGE.includes("assigned id")).toBe(true);
 	expect(GATE_NUDGE.includes("goal")).toBe(true);
 	expect(GATE_NUDGE.includes("forbidden markers")).toBe(true);
-	expect(GATE_NUDGE.includes("git-pushing")).toBe(true);
+	expect(GATE_NUDGE.includes("git-commit")).toBe(true);
 	// papercut philosophy: friction counts even when nothing failed, the
 	// clean payload is explicit, and coverage stays mandatory.
 	expect(GATE_NUDGE.includes("papercuts")).toBe(true);
@@ -859,7 +861,7 @@ test("commands that are not a real git commit are left alone", () => {
 });
 
 test("a direct commit-script invocation is normalised", () => {
-	const relative = rewriteSmartCommit("bash skills/git-pushing/scripts/smart_commit.sh", SCRIPT_PATH);
+	const relative = rewriteSmartCommit("bash skills/git-commit/scripts/smart_commit.sh", SCRIPT_PATH);
 	expect(relative?.includes(`'${SCRIPT_PATH}'`) ?? false).toBe(true);
 	expect(relative?.endsWith("--no-push") ?? false).toBe(true);
 
@@ -914,8 +916,12 @@ test("the verify cache key moves whenever the tree moves", () => {
 	expect(treeStateKey(repo, true, none)).not.toBe(first);
 
 	const second = treeStateKey(repo, true, none);
-	writeFileSync(resolvePath(repo, "fixture.json"), "{}\n");
+	writeFileSync(resolvePath(repo, "a.txt"), "three-updated\n");
 	expect(treeStateKey(repo, true, none)).not.toBe(second);
+
+	const third = treeStateKey(repo, true, none);
+	writeFileSync(resolvePath(repo, "fixture.json"), "{}\n");
+	expect(treeStateKey(repo, true, none)).not.toBe(third);
 
 	const touched = new Map<string, string | null>([["a.txt", null]]);
 	const noGit = treeStateKey(repo, false, touched);

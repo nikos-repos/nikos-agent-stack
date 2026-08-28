@@ -16,6 +16,11 @@ process.env.OMP_GATE_FRUSTRATIONS = resolve(home, "frustrations.jsonl"); // keep
 // check measures, and this check must not overwrite the real one
 process.env.OMP_GATE_CONFIG = resolve(home, "config.json");
 process.env.OMP_DELIVERY_GATES = "1";
+// the mutation lease is on by default (index.ts leaseEnabled). every section
+// except 14 simulates several sessions against one shared probe repo for
+// reasons unrelated to the lease, so they would all conflict. section 14 owns
+// the lease scenario and turns it on for itself.
+process.env.OMP_GATE_MUTATION_LEASE = "off";
 const probeVerifyCmd = "test -f verified.txt";
 process.env.OMP_VERIFY_CMD = probeVerifyCmd;
 
@@ -859,7 +864,7 @@ const retriedLease = (await leaseWaiter.tool_call!(
 )) as { block?: boolean } | undefined;
 expect(retriedLease?.block !== true, "branch navigation releases the prior worktree lease");
 await leaseWaiter.session_shutdown!({}, ctx);
-delete process.env.OMP_GATE_MUTATION_LEASE;
+process.env.OMP_GATE_MUTATION_LEASE = "off";
 
 console.log("15. journal recovery");
 writeProbeConfig("medium", "true");
