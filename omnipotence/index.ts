@@ -6,11 +6,11 @@ import { jsonvalueof, objectrecord, parsejson, stablejson, stringfield } from ".
 import type { jsonvalue, orchestrationmode } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import type { advanceresult } from "./engine.ts";
-import { factoryprocessid, factoryrequestfor } from "./factory.ts";
+import { factoryflags, factoryprocessid, factoryrequestfor } from "./factory.ts";
 import { loadactiveblueprints } from "./loader.ts";
 import type { loadsummary } from "./loader.ts";
 import { profileservice } from "./profiles.ts";
-import { runsentence } from "./status.ts";
+import { runlabel, runsentence } from "./status.ts";
 import { orchestrationstore } from "./store.ts";
 import type { effectrecord, runrecord } from "./store.ts";
 import { installOmnipotenceStop, resetOmnipotenceStop } from "./stop-decision.ts";

@@ -10,7 +10,7 @@ const runstates: Record<string, string> = {
 	failed: "failed",
 };
 
-function runlabel(run: runrecord): string {
+export function runlabel(run: runrecord): string {
 	const input = run.input;
 	if (input && typeof input === "object" && !Array.isArray(input)) {
 		const root = Reflect.get(input, "projectRoot");
