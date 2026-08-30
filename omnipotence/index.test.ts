@@ -1050,6 +1050,46 @@ describe("omnipotence omp extension", () => {
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
+
+	// drives the registered handler, not the exported helpers: re-exports satisfy importers
+	// while leaving the closure's own bindings missing, so only invocation catches that.
+	test("the factory command asks for an idea and names a stuck run", async () => {
+		const root = mkdtempSync(join(tmpdir(), "omnipotence-factory-command-"));
+		roots.push(root);
+		const paths = installfixture(root);
+		process.env.OMNIPOTENCE_DB = paths.dbpath;
+		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
+		const fake = fakepi();
+		Reflect.apply(activate, undefined, [fake.api]);
+		const notifications: unknown[] = [];
+		const project = join(root, "my-app");
+		mkdirSync(project, { recursive: true });
+		const ctx = context("session-factory-command", project, notifications);
+		const factory = fake.commands.get("factory");
+		const start = fake.commands.get("omnipotence");
+		if (!factory || !start) throw new Error("factory commands were not registered");
+
+		await factory.handler("--preview", ctx);
+		expect(notifications).toEqual([
+			"nothing to resume here and no plan file found. say what to build: /factory <your idea>",
+		]);
+
+		await start.handler(`delivery.extension ${JSON.stringify({ projectRoot: project })}`, ctx);
+		const store = new orchestrationstore(paths.dbpath);
+		const run = store.getsessionrun("session-factory-command");
+		if (!run) throw new Error("expected an active run");
+		store.transitionrun(run.id, "blocked", null, "waiting on review");
+		store.close();
+
+		mkdirSync(join(project, ".factory"), { recursive: true });
+		writeFileSync(join(project, ".factory", "state.json"), "{}\n");
+		notifications.length = 0;
+		await factory.handler("", ctx);
+		expect(notifications).toEqual([
+			"my-app is stuck: waiting on review. run /factory --fresh to start a new run and retire it.",
+		]);
+		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
+	});
 });
 
 describe("factory front door", () => {
