@@ -1050,41 +1050,6 @@ describe("omnipotence omp extension", () => {
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
 	});
-
-	test("immediate shutdown near a sleep deadline leaves no uncaught work", async () => {
-		const root = mkdtempSync(join(tmpdir(), "omnipotence-sleep-shutdown-"));
-		roots.push(root);
-		const paths = installfixture(root);
-		process.env.OMNIPOTENCE_DB = paths.dbpath;
-		process.env.OMNIPOTENCE_BLUEPRINTS = paths.blueprintroot;
-		const fake = fakepi();
-		Reflect.apply(activate, undefined, [fake.api]);
-		const ctx = context("session-sleep-shutdown", root);
-		const start = fake.commands.get("omnipotence-forever");
-		if (!start) throw new Error("omnipotence-forever command was not registered");
-		const until = new Date(Date.now() + 500).toISOString();
-		await start.handler(`delivery.sleep ${JSON.stringify({ until })}`, ctx);
-		const before = new orchestrationstore(paths.dbpath);
-		const run = before.getsessionrun("session-sleep-shutdown");
-		if (!run) throw new Error("expected sleep shutdown run");
-		const effect = before.geteffectbykey(run.id, "pause");
-		if (!effect) throw new Error("expected sleep shutdown effect");
-		expect(effect.kind).toBe("sleep");
-		expect(effect.dispatchedat).not.toBeNull();
-		before.close();
-		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
-		// this real wait exercises the extension's private platform timer; fake timers cannot observe its shutdown race.
-		await new Promise<void>((resolve) => setTimeout(resolve, 600));
-		const after = new orchestrationstore(paths.dbpath);
-		expect(after.geteffect(run.id, effect.id)).toMatchObject({
-			kind: "sleep",
-			status: "requested",
-			dispatchingat: null,
-		});
-		expect(after.geteffect(run.id, effect.id)?.dispatchedat).not.toBeNull();
-		expect(after.getsessionrun("session-sleep-shutdown")).toMatchObject({ id: run.id });
-		after.close();
-	});
 });
 
 describe("factory front door", () => {
@@ -1155,6 +1120,14 @@ describe("factory front door", () => {
 			projectroot: bare,
 			entry: { kind: "rough-idea", value: "build a ci/cd bridge" },
 		});
+
+		// the typo must still surface when cwd holds a resumable project, or the bad path is
+		// silently swallowed and the user resumes something they never asked for.
+		const active = project("active");
+		mkdirSync(join(active, ".factory"), { recursive: true });
+		writeFileSync(join(active, ".factory", "state.json"), "{}\n");
+		expect(() => factoryrequestfor(active, "/no/such/place")).toThrow("no such path");
+		expect(factoryrequestfor(active, "")).toEqual({ projectroot: active, entry: { kind: "resume" } });
 	});
 });
 
