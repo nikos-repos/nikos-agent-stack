@@ -726,6 +726,12 @@ describe("authoritative orchestration store", () => {
 		const beforeeffect = store.geteffect(run.id, effect.id);
 		markcallrun(path, run.id);
 		store.close();
+		// the schema-7 rows as they sit on disk, read without opening a store that would migrate them.
+		const legacydb = new Database(path, { readonly: true });
+		const legacyevents = legacydb
+			.query("select seq, type, payload_json, previous_hash, hash from events where run_id = ? order by seq")
+			.all(run.id);
+		legacydb.close();
 
 		const migrated = new orchestrationstore(path);
 		expect(migrated.getrun(run.id)).toMatchObject({
@@ -740,6 +746,13 @@ describe("authoritative orchestration store", () => {
 		});
 		expect(migrated.geteffect(run.id, effect.id)).toEqual(beforeeffect);
 		expect(migrated.events(run.id).filter((event) => event.type === "run_mode_migrated")).toHaveLength(1);
+		// migration may only append: every schema-7 event keeps its payload, order, and hash chain.
+		const migrateddb = new Database(path, { readonly: true });
+		const migratedevents = migrateddb
+			.query("select seq, type, payload_json, previous_hash, hash from events where run_id = ? order by seq")
+			.all(run.id);
+		migrateddb.close();
+		expect(migratedevents.slice(0, legacyevents.length)).toEqual(legacyevents);
 
 		const resolved = migrated.posteffect({
 			runid: run.id,

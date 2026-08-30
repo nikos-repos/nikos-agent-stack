@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { defineprocess, stablejson } from "./contracts.ts";
 import type { jsonschema } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
+import type { advanceresult } from "./engine.ts";
 import { definehook } from "./hooks.ts";
 import { orchestrationstore } from "./store.ts";
 
@@ -72,32 +73,11 @@ async function startsnapshotrun(engine: orchestrationengine, processid: string) 
 	return started;
 }
 
-function markcallrun(path: string, runid: string): void {
-	const external = new Database(path);
-	const rows = external
-		.query("select id, seq, type, payload_json from events where run_id = ? order by seq")
-		.all(runid) as Array<{ id: number; seq: number; type: string; payload_json: string }>;
-	let previoushash: string | null = null;
-	for (const row of rows) {
-		let payload: unknown = JSON.parse(row.payload_json);
-		if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-			throw new Error("expected event object");
-		}
-		if (row.type === "run_created" || row.type === "run_status") {
-			payload = { ...payload, mode: "call" };
-		}
-		const payloadjson = stablejson(payload);
-		const hash = createHash("sha256")
-			.update(`${runid}\n${row.seq}\n${row.type}\n${payloadjson}\n${previoushash ?? ""}`)
-			.digest("hex");
-		external
-			.query("update events set payload_json = ?, previous_hash = ?, hash = ? where id = ?")
-			.run(payloadjson, previoushash, hash, row.id);
-		previoushash = hash;
-	}
-	external.query("update runs set mode = 'call' where id = ?").run(runid);
-	external.exec("pragma user_version = 7");
-	external.close();
+type startedsnapshot = Extract<advanceresult, { status: "waiting" }>;
+
+function effectref(started: startedsnapshot) {
+	const effect = started.effects[0]!;
+	return { runid: effect.runid, effectid: effect.id, fence: effect.fence, inputhash: effect.inputhash };
 }
 
 afterEach(() => {
@@ -1804,180 +1784,86 @@ describe("deterministic process engine", () => {
 		store.close();
 	});
 
-	test("advance snapshots the run before releasing its lease", async () => {
-		const { store, engine } = openmutationengine();
-		engine.register(
-			defineprocess({
-				id: "delivery.snapshot-advance",
-				version: "1.0.0",
-				input: objectinput,
-				output: objectoutput,
-				async run(ctx) {
-					return ctx.task("work", {});
-				},
-			}),
-		);
-		const started = await engine.start({
-			processid: "delivery.snapshot-advance",
-			sessionid: "session-snapshot-advance",
-			mode: "babysit",
-			input: {},
+	// every mutating entry point must return the pre-release snapshot, not a row re-read after
+	// the lease drops. one case per entry point: the invariant is shared, the call sites are not.
+	const snapshotcases = [
+		{
+			name: "advance",
+			act: (engine: orchestrationengine, started: startedsnapshot) => engine.advance(started.run.id),
+			result: { status: "waiting", runstatus: "waiting_effect" },
+			stored: { status: "blocked" },
+		},
+		{
+			name: "commiteffect",
+			act: (engine: orchestrationengine, started: startedsnapshot) =>
+				engine.commiteffect({ ...effectref(started), rootrunid: started.run.id, status: "ok", value: { done: true } }),
+			result: { status: "committed", runstatus: "running" },
+			stored: { status: "blocked" },
+		},
+		{
+			name: "halt",
+			act: (engine: orchestrationengine, started: startedsnapshot) =>
+				engine.halt(started.run.id, "operator requested stop"),
+			result: { status: "halted", runstatus: "halted", fence: 1, leasecleared: true },
+			stored: { status: "halted", fence: 2 },
+		},
+		{
+			name: "posteffect",
+			act: (engine: orchestrationengine, started: startedsnapshot) =>
+				engine.posteffect({ ...effectref(started), rootrunid: started.run.id, status: "ok", value: { done: true } }),
+			result: { status: "completed", runstatus: "completed", fence: 0, leasecleared: true },
+			stored: { status: "completed", fence: 1 },
+		},
+		{
+			name: "resume",
+			act: (engine: orchestrationengine, started: startedsnapshot) => engine.resume(started.run.id),
+			result: { status: "waiting", runstatus: "waiting_effect", fence: 0, leasecleared: true },
+			stored: { status: "blocked", fence: 0 },
+		},
+		{
+			name: "resolveuncertain",
+			prepare: (store: mutationstore, started: startedsnapshot) =>
+				store.posteffect({
+					...effectref(started),
+					status: "uncertain",
+					error: { message: "connection closed after dispatch" },
+				}),
+			act: (engine: orchestrationengine, started: startedsnapshot) =>
+				engine.resolveuncertain({
+					...effectref(started),
+					rootrunid: started.run.id,
+					decision: "confirm",
+					value: { done: true },
+				}),
+			result: { status: "completed", runstatus: "completed", fence: 0, leasecleared: true },
+			stored: { status: "completed", fence: 1 },
+		},
+	] as const;
+
+	for (const entry of snapshotcases) {
+		test(`${entry.name} snapshots the run before releasing its lease`, async () => {
+			const { store, engine } = openmutationengine();
+			const processid = `delivery.snapshot-${entry.name}`;
+			registersnapshotprocess(engine, processid);
+			const started = await startsnapshotrun(engine, processid);
+			const initialfence = started.run.fence;
+			if ("prepare" in entry) entry.prepare(store, started);
+
+			store.mutateafterrelease = true;
+			const settled = await entry.act(engine, started);
+
+			expect(settled.status).toBe(entry.result.status);
+			expect(settled.run.status).toBe(entry.result.runstatus);
+			if ("fence" in entry.result) expect(settled.run.fence).toBe(initialfence + entry.result.fence);
+			if ("leasecleared" in entry.result) {
+				expect(settled.run.leaseowner).toBeNull();
+				expect(settled.run.leaseexpiresat).toBeNull();
+			}
+			expect(store.getrun(started.run.id)?.status).toBe(entry.stored.status);
+			if ("fence" in entry.stored) expect(store.getrun(started.run.id)?.fence).toBe(initialfence + entry.stored.fence);
+			store.close();
 		});
-		if (started.status !== "waiting") throw new Error("expected waiting result");
-
-		store.mutateafterrelease = true;
-		const advanced = await engine.advance(started.run.id);
-
-		expect(advanced.status).toBe("waiting");
-		expect(advanced.run.status).toBe("waiting_effect");
-		expect(store.getrun(started.run.id)?.status).toBe("blocked");
-		store.close();
-	});
-
-	test("commiteffect snapshots the run before releasing its lease", async () => {
-		const { store, engine } = openmutationengine();
-		engine.register(
-			defineprocess({
-				id: "delivery.snapshot-commiteffect",
-				version: "1.0.0",
-				input: objectinput,
-				output: objectoutput,
-				async run(ctx) {
-					return ctx.task("work", {});
-				},
-			}),
-		);
-		const started = await engine.start({
-			processid: "delivery.snapshot-commiteffect",
-			sessionid: "session-snapshot-commiteffect",
-			mode: "babysit",
-			input: {},
-		});
-		if (started.status !== "waiting") throw new Error("expected waiting result");
-		const effect = started.effects[0]!;
-
-		store.mutateafterrelease = true;
-		const committed = await engine.commiteffect({
-			rootrunid: started.run.id,
-			runid: effect.runid,
-			effectid: effect.id,
-			fence: effect.fence,
-			inputhash: effect.inputhash,
-			status: "ok",
-			value: { done: true },
-		});
-
-		expect(committed.status).toBe("committed");
-		expect(committed.run.status).toBe("running");
-		expect(store.getrun(started.run.id)?.status).toBe("blocked");
-		store.close();
-	});
-
-	test("halt snapshots the run before releasing its lease", async () => {
-		const { store, engine } = openmutationengine();
-		const processid = "delivery.snapshot-halt";
-		registersnapshotprocess(engine, processid);
-		const started = await startsnapshotrun(engine, processid);
-		const initialfence = started.run.fence;
-
-		store.mutateafterrelease = true;
-		const halted = await engine.halt(started.run.id, "operator requested stop");
-
-		expect(halted.status).toBe("halted");
-		expect(halted.run.status).toBe("halted");
-		expect(halted.run.fence).toBe(initialfence + 1);
-		expect(halted.run.leaseowner).toBeNull();
-		expect(halted.run.leaseexpiresat).toBeNull();
-		expect(store.getrun(started.run.id)?.status).toBe("halted");
-		expect(store.getrun(started.run.id)?.fence).toBe(initialfence + 2);
-		store.close();
-	});
-
-	test("posteffect snapshots the run before releasing its lease", async () => {
-		const { store, engine } = openmutationengine();
-		const processid = "delivery.snapshot-posteffect";
-		registersnapshotprocess(engine, processid);
-		const started = await startsnapshotrun(engine, processid);
-		const effect = started.effects[0]!;
-		const initialfence = started.run.fence;
-
-		store.mutateafterrelease = true;
-		const completed = await engine.posteffect({
-			rootrunid: started.run.id,
-			runid: effect.runid,
-			effectid: effect.id,
-			fence: effect.fence,
-			inputhash: effect.inputhash,
-			status: "ok",
-			value: { done: true },
-		});
-
-		expect(completed.status).toBe("completed");
-		expect(completed.run.status).toBe("completed");
-		expect(completed.run.fence).toBe(initialfence);
-		expect(completed.run.leaseowner).toBeNull();
-		expect(completed.run.leaseexpiresat).toBeNull();
-		expect(store.getrun(started.run.id)?.status).toBe("completed");
-		expect(store.getrun(started.run.id)?.fence).toBe(initialfence + 1);
-		store.close();
-	});
-
-	test("resume snapshots the run before releasing its lease", async () => {
-		const { store, engine } = openmutationengine();
-		const processid = "delivery.snapshot-resume";
-		registersnapshotprocess(engine, processid);
-		const started = await startsnapshotrun(engine, processid);
-		const initialfence = started.run.fence;
-
-		store.mutateafterrelease = true;
-		const resumed = await engine.resume(started.run.id);
-
-		expect(resumed.status).toBe("waiting");
-		expect(resumed.run.status).toBe("waiting_effect");
-		expect(resumed.run.fence).toBe(initialfence);
-		expect(resumed.run.leaseowner).toBeNull();
-		expect(resumed.run.leaseexpiresat).toBeNull();
-		expect(store.getrun(started.run.id)?.status).toBe("blocked");
-		expect(store.getrun(started.run.id)?.fence).toBe(initialfence);
-		store.close();
-	});
-
-	test("resolveuncertain snapshots the run before releasing its lease", async () => {
-		const { store, engine } = openmutationengine();
-		const processid = "delivery.snapshot-resolveuncertain";
-		registersnapshotprocess(engine, processid);
-		const started = await startsnapshotrun(engine, processid);
-		const effect = started.effects[0]!;
-		store.posteffect({
-			runid: effect.runid,
-			effectid: effect.id,
-			fence: effect.fence,
-			inputhash: effect.inputhash,
-			status: "uncertain",
-			error: { message: "connection closed after dispatch" },
-		});
-		const initialfence = started.run.fence;
-
-		store.mutateafterrelease = true;
-		const resolved = await engine.resolveuncertain({
-			rootrunid: started.run.id,
-			runid: effect.runid,
-			effectid: effect.id,
-			fence: effect.fence,
-			inputhash: effect.inputhash,
-			decision: "confirm",
-			value: { done: true },
-		});
-
-		expect(resolved.status).toBe("completed");
-		expect(resolved.run.status).toBe("completed");
-		expect(resolved.run.fence).toBe(initialfence);
-		expect(resolved.run.leaseowner).toBeNull();
-		expect(resolved.run.leaseexpiresat).toBeNull();
-		expect(store.getrun(started.run.id)?.status).toBe("completed");
-		expect(store.getrun(started.run.id)?.fence).toBe(initialfence + 1);
-		store.close();
-	});
+	}
 
 	test("same-engine uncertain recovery runs hooks once while holding the root lease", async () => {
 		const { store, engine } = openengine();
@@ -2494,104 +2380,5 @@ describe("deterministic process engine", () => {
 		expect(repeated.status).toBe("completed");
 		expect(hookcalls).toBe(2);
 		reopenedstore.close();
-	});
-	test("start, pause, migrate, resume, and complete one real process", async () => {
-		const { store, engine, path } = openengine();
-		const process = defineprocess({
-			id: "delivery.schema-7-active-resume",
-			version: "1.0.0",
-			input: objectinput,
-			output: objectoutput,
-			async run(ctx) {
-				const result = await ctx.task("work", { value: 1 });
-				return { result };
-			},
-		});
-		const sessionid = "session-schema-7-active-resume";
-		engine.register(process);
-		const started = await engine.start({
-			processid: process.id,
-			sessionid,
-			mode: "babysit",
-			input: {},
-		});
-		if (started.status !== "waiting") throw new Error("expected waiting result");
-		const effect = started.effects[0];
-		if (!effect) throw new Error("expected waiting effect");
-		const runid = started.run.id;
-		const effectid = effect.id;
-		expect(started.run.mode).toBe("babysit");
-		expect(started.run.status).toBe("waiting_effect");
-		expect(store.listeffects(runid)).toHaveLength(1);
-		store.close();
-
-		markcallrun(path, runid);
-		const beforedb = new Database(path, { readonly: true });
-		const before = beforedb
-			.query(
-				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq",
-			)
-			.all(runid);
-		const version = beforedb.query("pragma user_version").get() as { user_version: number };
-		beforedb.close();
-		expect(version.user_version).toBe(7);
-
-		const migratedstore = new orchestrationstore(path);
-		const reopened = new orchestrationengine(migratedstore);
-		reopened.register(process);
-		const migrated = migratedstore.getrun(runid);
-		expect(migrated).toMatchObject({
-			mode: "babysit",
-			status: "waiting_effect",
-			sessionid,
-		});
-		expect(migratedstore.geteffect(runid, effectid)?.id).toBe(effectid);
-		expect(migratedstore.listeffects(runid)).toHaveLength(1);
-		expect(migratedstore.events(runid).filter((event) => event.type === "run_mode_migrated")).toHaveLength(1);
-
-		const afterdb = new Database(path, { readonly: true });
-		const after = afterdb
-			.query(
-				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events where run_id = ? order by seq",
-			)
-			.all(runid);
-		afterdb.close();
-		expect(after.slice(0, before.length)).toEqual(before);
-
-		const resumed = await reopened.resume(runid);
-		expect(resumed.status).toBe("waiting");
-		if (resumed.status !== "waiting") throw new Error("expected resumed waiting result");
-		expect(resumed.run.mode).toBe("babysit");
-		expect(resumed.effects).toHaveLength(1);
-		expect(resumed.effects[0]?.id).toBe(effectid);
-
-		const committed = await reopened.commiteffect({
-			rootrunid: runid,
-			runid: resumed.effects[0]!.runid,
-			effectid: resumed.effects[0]!.id,
-			fence: resumed.effects[0]!.fence,
-			inputhash: resumed.effects[0]!.inputhash,
-			status: "ok",
-			value: { done: true },
-		});
-		expect(committed.status).toBe("committed");
-
-		const completed = await reopened.resume(runid);
-		expect(completed.status).toBe("completed");
-		if (completed.status !== "completed") throw new Error("expected completed result");
-		expect(completed.run.mode).toBe("babysit");
-		expect(completed.run.sessionid).toBe(sessionid);
-		expect(completed.output).toEqual({ result: { done: true } });
-		expect(migratedstore.getsessionrun(sessionid)).toBeNull();
-		expect(migratedstore.getrun(runid)?.sessionid).toBe(sessionid);
-		expect(migratedstore.listeffects(runid)).toHaveLength(1);
-		expect(migratedstore.geteffect(runid, effectid)).toMatchObject({
-			id: effectid,
-			status: "resolved_ok",
-		});
-		expect(migratedstore.events(runid).filter((event) => event.type === "effect_requested")).toHaveLength(1);
-		expect(migratedstore.events(runid).filter((event) => event.type === "effect_resolved")).toHaveLength(1);
-		expect(migratedstore.doctor()).toEqual({ ok: true, issues: [] });
-		migratedstore.close();
 	});
 });

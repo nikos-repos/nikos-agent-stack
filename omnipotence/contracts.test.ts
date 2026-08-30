@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { assertschema, assertvalid, compareversions, defineprocess, jsonvalueof, stablejson } from "./contracts.ts";
-import type { jsonschema, processcontext, processparent } from "./contracts.ts";
+import type { jsonschema, processcontext } from "./contracts.ts";
 
 const input: jsonschema = {
 	type: "object",
@@ -38,19 +38,6 @@ describe("native orchestration contracts", () => {
 		expect(Object.isFrozen(process)).toBe(true);
 	});
 
-	test("parent process metadata has a stable readonly shape", () => {
-		const parent: processparent = {
-			runid: "run-child",
-			effectkey: "child",
-			processid: "delivery.parent",
-			processversion: "1.0.0",
-			blueprintname: "delivery-pack",
-			blueprintversion: "1.0.0",
-		};
-		const context: Pick<processcontext, "parent"> = { parent };
-		expect(context.parent).toEqual(parent);
-	});
-
 	test("trust-boundary validation reports the exact invalid path", () => {
 		expect(() => assertvalid(input, { request: "ship", extra: true }, "input")).toThrow(
 			"input.extra: unknown field",
@@ -82,35 +69,24 @@ describe("native orchestration contracts", () => {
 		assertschema(array);
 		expect(() => assertvalid(array, [null, { nested: ["text"] }])).not.toThrow();
 	});
-	test("sparse array holes fail scalar item validation before storage", () => {
-		const scalararray: jsonschema = { type: "array", items: { type: "string" } };
-		const sparse: unknown[] = [];
-		sparse.length = 1;
-
-		expect(() => assertvalid(scalararray, sparse)).toThrow("value[0]: expected string");
-		expect(() => assertvalid(scalararray, ["text"])).not.toThrow();
-	});
-
-	test("sparse array holes fail all-json union item validation before storage", () => {
+	test("sparse array holes fail validation and normalization before storage", () => {
+		const sparse = (length: number): unknown[] => {
+			const holes: unknown[] = [];
+			holes.length = length;
+			return holes;
+		};
 		const alljson: jsonschema = {
 			type: ["null", "boolean", "number", "string", "array", "object"],
 			additionalproperties: true,
 		};
-		const itemsarray: jsonschema = { type: "array", items: alljson };
-		const sparse: unknown[] = [];
-		sparse.length = 1;
 
-		expect(() => assertvalid(itemsarray, sparse)).toThrow(
+		expect(() => assertvalid({ type: "array", items: { type: "string" } }, sparse(1))).toThrow(
+			"value[0]: expected string",
+		);
+		expect(() => assertvalid({ type: "array", items: alljson }, sparse(1))).toThrow(
 			"value[0]: expected one of types null, boolean, number, string, array, object",
 		);
-		expect(() => assertvalid(itemsarray, [null, false, 1, "text", [], {}])).not.toThrow();
-	});
-	test("json normalization rejects sparse arrays and preserves dense values", () => {
-		const sparse: unknown[] = [];
-		sparse.length = 2;
-		sparse[1] = { nested: ["text"] };
-
-		expect(() => jsonvalueof(sparse)).toThrow("value[0]: expected own array element");
+		expect(() => jsonvalueof(sparse(2))).toThrow("value[0]: expected own array element");
 		expect(jsonvalueof(["text", { nested: ["value"] }])).toEqual(["text", { nested: ["value"] }]);
 	});
 

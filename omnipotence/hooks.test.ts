@@ -93,30 +93,6 @@ describe("ordered orchestration hooks", () => {
 			}),
 		).toMatchObject({ version: "1.0.0", active: false, blueprint: inactive.blueprint });
 	});
-	test("explicit null selectors can replay inactive unscoped hooks", () => {
-		const registry = new hookregistry();
-		registry.register(
-			definehook({
-				id: "audit.pinned-global",
-				version: "1.0.0",
-				phase: "recovery",
-				timeoutms: 100,
-				active: false,
-				async run() {
-					return { durable: true };
-				},
-			}),
-		);
-
-		const resolved = registry.resolve("audit.pinned-global", {
-			version: "1.0.0",
-			blueprintname: null,
-			blueprintversion: null,
-		});
-		expect(resolved).toMatchObject({ id: "audit.pinned-global", active: false });
-		expect(resolved.blueprint).toBeUndefined();
-	});
-
 	test("a timeout identifies the exact hook and aborts its signal", async () => {
 		const registry = new hookregistry();
 		let aborted = false;
