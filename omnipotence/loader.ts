@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertenginecompatibility } from "./blueprints.ts";
-import { defineprocess, jsonvalueof, stablejson } from "./contracts.ts";
+import { defineprocess, jsonvalueof, objectrecord, stablejson, stringfield } from "./contracts.ts";
 import type { jsonschema, jsonvalue, processcontext, processdefinition } from "./contracts.ts";
 import type { orchestrationengine } from "./engine.ts";
 import { definehook } from "./hooks.ts";
@@ -16,27 +16,16 @@ export interface loadsummary {
 	hooks: number;
 }
 
-function objectrecord(value: unknown, path: string): Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${path}: expected object`);
-	return value as Record<string, unknown>;
-}
-
-function stringfield(record: Record<string, unknown>, field: string, path: string): string {
-	const value = record[field];
-	if (typeof value !== "string") throw new TypeError(`${path}.${field}: expected string`);
-	return value;
-}
-
 function entries(manifest: unknown, field: "processes" | "hooks"): Record<string, unknown>[] {
-	const record = objectrecord(manifest, "blueprint.manifest");
+	const record = objectrecord<unknown>(manifest, "blueprint.manifest");
 	const value = record[field];
 	if (!Array.isArray(value)) throw new TypeError(`blueprint.manifest.${field}: expected array`);
-	return value.map((entry, index) => objectrecord(entry, `blueprint.manifest.${field}[${index}]`));
+	return value.map((entry, index) => objectrecord<unknown>(entry, `blueprint.manifest.${field}[${index}]`));
 }
 
 function verifiedsourcehash(blueprint: blueprintrecord): string {
-	const manifest = objectrecord(blueprint.manifest, "blueprint.manifest");
-	const declared = objectrecord(manifest.files, "blueprint.files");
+	const manifest = objectrecord<unknown>(blueprint.manifest, "blueprint.manifest");
+	const declared = objectrecord<unknown>(manifest.files, "blueprint.files");
 	const files: Record<string, string> = {};
 	for (const [path, expected] of Object.entries(declared)) {
 		if (typeof expected !== "string") throw new TypeError(`blueprint file ${path} has invalid hash`);
@@ -64,7 +53,7 @@ function processvalue(
 	profiledefaults: jsonvalue,
 	sourcehash: string,
 ): Readonly<processdefinition> {
-	const record = objectrecord(value, `process ${manifestid}`);
+	const record = objectrecord<unknown>(value, `process ${manifestid}`);
 	const id = stringfield(record, "id", `process ${manifestid}`);
 	if (id !== manifestid) throw new Error(`process export ${id} does not match manifest id ${manifestid}`);
 	const version = stringfield(record, "version", `process ${manifestid}`);
@@ -91,7 +80,7 @@ function hookvalue(
 	blueprintversion: string,
 	active: boolean,
 ): Readonly<hookdefinition> {
-	const record = objectrecord(value, `hook ${manifestid}`);
+	const record = objectrecord<unknown>(value, `hook ${manifestid}`);
 	const id = stringfield(record, "id", `hook ${manifestid}`);
 	if (id !== manifestid) throw new Error(`hook export ${id} does not match manifest id ${manifestid}`);
 	if (typeof record.run !== "function") throw new TypeError(`hook ${manifestid}.run: expected function`);
@@ -117,7 +106,7 @@ async function loadentry(
 	const exportname = typeof entry.export === "string" ? entry.export : "default";
 	const url = `${pathToFileURL(join(installpath, path)).href}?v=${contenthash}`;
 	// blueprint modules come from the runtime registry, so no static import path exists.
-	const module = objectrecord(await import(url), `module ${path}`);
+	const module = objectrecord<unknown>(await import(url), `module ${path}`);
 	if (!Object.hasOwn(module, exportname)) throw new Error(`module ${path} has no export ${exportname}`);
 	return module[exportname];
 }
@@ -144,7 +133,7 @@ export async function loadactiveblueprints(
 	}
 	for (const blueprint of required) {
 		blueprintcount += 1;
-		const manifest = objectrecord(blueprint.manifest, "blueprint.manifest");
+		const manifest = objectrecord<unknown>(blueprint.manifest, "blueprint.manifest");
 		const profiledefaults = jsonvalueof(manifest.profile ?? { schema: 1 }, "blueprint.profile");
 		const sourcehash = verifiedsourcehash(blueprint);
 		for (const entry of entries(blueprint.manifest, "processes")) {

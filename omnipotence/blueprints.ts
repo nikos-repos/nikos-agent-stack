@@ -16,8 +16,10 @@ import {
 	assertversion,
 	compareversions,
 	jsonvalueof,
+	objectrecord,
 	parsejson,
 	stablejson,
+	stringfield,
 } from "./contracts.ts";
 import type { jsonvalue } from "./contracts.ts";
 import { mergepatch } from "./profiles.ts";
@@ -58,17 +60,6 @@ const manifestfields: Record<string, true> = {
 };
 const engineversion = packagejson.version;
 const terminalstates: Record<string, true> = { completed: true, failed: true, halted: true };
-
-function objectrecord(value: jsonvalue, path: string): Record<string, jsonvalue> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${path}: expected object`);
-	return value;
-}
-
-function stringfield(record: Record<string, jsonvalue>, field: string, path: string): string {
-	const value = record[field];
-	if (typeof value !== "string") throw new TypeError(`${path}.${field}: expected string`);
-	return value;
-}
 
 export function assertenginecompatibility(manifestvalue: jsonvalue, name: string, version: string): void {
 	const manifest = objectrecord(manifestvalue, "blueprint.manifest");

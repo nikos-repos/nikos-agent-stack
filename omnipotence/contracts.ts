@@ -382,6 +382,25 @@ export function jsonvalueof(value: unknown, path = "value"): jsonvalue {
 	return normalizejson(value, path, new WeakSet<object>());
 }
 
+// the one shape guard for untrusted records. every module that reads a field off a
+// decoded json document goes through these instead of re-deriving the same three checks.
+export function objectrecord<T = jsonvalue>(value: unknown, path: string): Record<string, T> {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${path}: expected object`);
+	return value as Record<string, T>;
+}
+
+export function stringfield(record: Record<string, unknown>, field: string, path: string): string {
+	const value = record[field];
+	if (typeof value !== "string") throw new TypeError(`${path}.${field}: expected string`);
+	return value;
+}
+
+export function numberfield(record: Record<string, unknown>, field: string, path: string): number {
+	const value = record[field];
+	if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${path}.${field}: expected number`);
+	return value;
+}
+
 export function parsejson(text: string, path = "value"): jsonvalue {
 	let parsed: unknown;
 	try {

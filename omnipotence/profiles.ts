@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { jsonvalueof, stablejson } from "./contracts.ts";
+import { jsonvalueof, objectrecord, stablejson } from "./contracts.ts";
 import type { jsonvalue } from "./contracts.ts";
 import { orchestrationstore } from "./store.ts";
 import type { profilerecord, profilescope } from "./store.ts";
@@ -14,13 +14,8 @@ const profilefields: Record<string, true> = {
 	metadata: true,
 };
 
-function objectdocument(value: jsonvalue, path: string): Record<string, jsonvalue> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${path}: expected object`);
-	return value;
-}
-
 function validateprofile(value: unknown, path = "profile"): profiledocument {
-	const profile = objectdocument(jsonvalueof(value, path), path);
+	const profile = objectrecord(jsonvalueof(value, path), path);
 	for (const key of Object.keys(profile)) {
 		if (!Object.hasOwn(profilefields, key)) throw new TypeError(`${path}.${key}: unknown field`);
 	}
@@ -31,10 +26,7 @@ function validateprofile(value: unknown, path = "profile"): profiledocument {
 		}
 	}
 	for (const field of ["tools", "processes", "metadata"] as const) {
-		const entry = profile[field];
-		if (entry !== undefined && (!entry || typeof entry !== "object" || Array.isArray(entry))) {
-			throw new TypeError(`${path}.${field}: expected object`);
-		}
+		if (profile[field] !== undefined) objectrecord(profile[field], `${path}.${field}`);
 	}
 	return profile;
 }

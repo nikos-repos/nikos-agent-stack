@@ -5,6 +5,7 @@ import {
 	assertvalid,
 	compareversions,
 	jsonvalueof,
+	objectrecord,
 	stablejson,
 } from "./contracts.ts";
 import type {
@@ -133,11 +134,6 @@ function assertparallelmaxconcurrency(maxconcurrency: number): void {
 	if (!Number.isInteger(maxconcurrency) || maxconcurrency < 1 || maxconcurrency > 64) {
 		throw new TypeError("parallel.maxconcurrency: expected integer from 1 to 64");
 	}
-}
-
-function objectinput(value: jsonvalue, path: string): Record<string, jsonvalue> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path}: expected object`);
-	return value;
 }
 
 function isturnbudgetreason(reason: string | null | undefined): boolean {
@@ -492,7 +488,7 @@ export class orchestrationengine {
 			});
 		} else {
 			if (parent.kind !== "subprocess") throw new Error(`effect ${key} is not a subprocess`);
-			const stored = objectinput(parent.input, `effect ${key} input`);
+			const stored = objectrecord(parent.input, `effect ${key} input`);
 			if (stored.processid !== processid || stablejson(stored.input) !== stablejson(input)) {
 				throw new Error(`effect ${key} input changed during replay`);
 			}
@@ -555,7 +551,7 @@ export class orchestrationengine {
 
 	private async breakpoint(run: runrecord, key: string, input: jsonvalue): Promise<jsonvalue> {
 		if (!modepolicy(run.mode).optionalbreakpoints) {
-			const record = objectinput(input, "breakpoint input");
+			const record = objectrecord(input, "breakpoint input");
 			if (record.required !== true) return { approved: true, mode: run.mode };
 		}
 		const effect = await this.ensureeffect(run, "breakpoint", key, input);
@@ -566,7 +562,7 @@ export class orchestrationengine {
 		const existing = this.store.geteffectbykey(run.id, key);
 		let selector: hookselector;
 		if (existing) {
-			const stored = objectinput(existing.input, `effect ${key} input`);
+			const stored = objectrecord(existing.input, `effect ${key} input`);
 			if (stored.hookid !== hookid || stablejson(stored.input) !== stablejson(input)) {
 				throw new Error(`effect ${key} input changed during replay`);
 			}
@@ -667,7 +663,7 @@ export class orchestrationengine {
 			subprocess: (key, processid, input) => pending({ key, kind: "subprocess", input: { processid, input } }),
 			sleep: (key, until) => pending({ key, kind: "sleep", input: { until } }),
 			breakpoint: (key, input) => {
-				const record = objectinput(input, "breakpoint input");
+				const record = objectrecord(input, "breakpoint input");
 				return !modepolicy(run.mode).optionalbreakpoints && record.required !== true
 					? Promise.resolve({ approved: true, mode: run.mode })
 					: pending({ key, kind: "breakpoint", input });
