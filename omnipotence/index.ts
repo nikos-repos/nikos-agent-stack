@@ -1,20 +1,23 @@
 import type { TSchema } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
-import { jsonvalueof, parsejson, stablejson } from "./contracts.ts";
+import { basename, join, resolve } from "node:path";
+import { jsonvalueof, objectrecord, parsejson, stablejson, stringfield } from "./contracts.ts";
 import type { jsonvalue, orchestrationmode } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import type { advanceresult } from "./engine.ts";
+import { factoryprocessid, factoryrequestfor } from "./factory.ts";
 import { loadactiveblueprints } from "./loader.ts";
 import type { loadsummary } from "./loader.ts";
 import { profileservice } from "./profiles.ts";
+import { runsentence } from "./status.ts";
 import { orchestrationstore } from "./store.ts";
 import type { effectrecord, runrecord } from "./store.ts";
 import { installOmnipotenceStop, resetOmnipotenceStop } from "./stop-decision.ts";
 
 export { omnipotenceStop } from "./stop-decision.ts";
+export { factoryflags, factoryrequestfor } from "./factory.ts";
+export { runsentence } from "./status.ts";
 
 interface extensioncontext {
 	cwd: string;
@@ -67,19 +70,8 @@ const resultparameters: TSchema = {
 	},
 };
 
-function recordvalue(value: unknown, path: string): Record<string, unknown> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${path}: expected object`);
-	return value as Record<string, unknown>;
-}
-
-function stringfield(record: Record<string, unknown>, field: string, path: string): string {
-	const value = record[field];
-	if (typeof value !== "string") throw new TypeError(`${path}.${field}: expected string`);
-	return value;
-}
-
 function resultinput(value: unknown): resultparams {
-	const record = recordvalue(value, "omnipotence result");
+	const record = objectrecord<unknown>(value, "omnipotence result");
 	const fence = record.fence;
 	if (typeof fence !== "number" || !Number.isInteger(fence) || fence < 1) {
 		throw new TypeError("omnipotence result.fence: expected positive integer");
@@ -121,121 +113,24 @@ function commandinput(args: unknown, command: string): { processid: string; inpu
 	return { processid, input: commandjson(json, "omnipotence input") };
 }
 
-const factoryprocessid = "factory.new-project";
-// ponytail: ordered by how strongly the name promises a plan; single-markdown fallback below.
-const planfilenames = ["final-plan.md", "plan.md", "spec.md", "requirements.md"];
-
-interface factoryrequest {
-	projectroot: string;
-	entry: { kind: string; value?: string };
-}
-
-function expandhome(target: string): string {
-	if (target === "~") return homedir();
-	return target.startsWith("~/") ? join(homedir(), target.slice(2)) : target;
-}
-
-function directoryentries(root: string): string[] {
-	try {
-		return readdirSync(root);
-	} catch {
-		return [];
-	}
-}
-
-function findplanfile(root: string): string | null {
-	for (const name of planfilenames) {
-		const candidate = join(root, name);
-		if (existsSync(candidate)) return candidate;
-	}
-	const markdown = directoryentries(root).filter((name) => name.toLowerCase().endsWith(".md"));
-	return markdown.length === 1 ? join(root, markdown[0] as string) : null;
-}
-
-function pathkind(target: string): "directory" | "file" | null {
-	try {
-		const stats = statSync(target);
-		return stats.isDirectory() ? "directory" : stats.isFile() ? "file" : null;
-	} catch {
-		return null;
-	}
-}
-
-// resolves what a user meant from what is already on disk. returns null only when there is
-// genuinely nothing to go on, so the caller can ask for an idea instead of failing.
-export function factoryrequestfor(cwd: string, target: string): factoryrequest | null {
-	const trimmed = target.trim();
-	const candidate = trimmed ? resolve(cwd, expandhome(trimmed)) : "";
-	const kind = candidate ? pathkind(candidate) : null;
-	if (kind === "file") {
-		return { projectroot: dirname(candidate), entry: { kind: "spec", value: candidate } };
-	}
-	const projectroot = kind === "directory" ? candidate : cwd;
-	if (existsSync(join(projectroot, ".factory", "state.json"))) {
-		return { projectroot, entry: { kind: "resume" } };
-	}
-	const plan = findplanfile(projectroot);
-	if (plan) return { projectroot, entry: { kind: "spec", value: plan } };
-	if (trimmed && kind === null) {
-		// an unmistakable path prefix means the user meant a place, not an idea. starting a
-		// whole run from a typo is worse than saying the path is missing.
-		if (/^(?:[~/]|\.\.?\/)/u.test(trimmed)) {
-			throw new Error(
-				`no such path: ${candidate}. use a folder that exists, or /factory <your idea> to describe the project.`,
-			);
-		}
-		return { projectroot, entry: { kind: "rough-idea", value: trimmed } };
-	}
-	return null;
-}
-
-export function factoryflags(args: unknown): { preview: boolean; fresh: boolean; target: string } {
-	let text = String(args ?? "").replace(/[\r\n]+/gu, " ").trim();
-	const preview = /(^|\s)--preview(\s|$)/u.test(text);
-	const fresh = /(^|\s)--fresh(\s|$)/u.test(text);
-	text = text.replace(/(^|\s)--(?:preview|fresh)(?=\s|$)/gu, " ").trim();
-	return { preview, fresh, target: text };
-}
-
-// the one fact a returning user needs from the status line: whose turn is it.
-const runstates: Record<string, string> = {
-	waiting_for_user: "your turn",
-	blocked: "blocked",
-	halted: "paused",
-	completed: "done",
-	failed: "failed",
-};
-
-function runlabel(run: runrecord): string {
-	const input = run.input;
-	if (input && typeof input === "object" && !Array.isArray(input)) {
-		const root = Reflect.get(input, "projectRoot");
-		if (typeof root === "string" && root.length > 0) return basename(root);
-	}
-	return run.processid;
-}
-
-function runphase(effects: readonly effectrecord[] | undefined): string | null {
-	for (const effect of effects ?? []) {
-		if (effect.status !== "requested") continue;
-		const match = /^phase\/([a-z0-9-]+)\//u.exec(effect.key);
-		if (match) return match[1] as string;
-	}
-	return null;
-}
-
-export function runsentence(run: runrecord, effects?: readonly effectrecord[]): string {
-	const phase = runphase(effects);
-	const state = runstates[run.status] ?? "working";
-	return [runlabel(run), phase, state].filter(Boolean).join(" · ");
-}
-
 function terminalstatus(status: string | undefined): boolean {
 	return status === "completed" || status === "failed" || status === "halted";
 }
 
-function terminal(result: advanceresult): boolean {
-	return terminalstatus(result.status);
+// a real type guard, not an alias: `effects` lives only on the waiting arm of advanceresult,
+// so every reader of result.effects has to pass through this to be honest about the union.
+function waiting(result: advanceresult): result is advanceresult & { status: "waiting" } {
+	return result.status === "waiting";
+}
+
+// sleep and breakpoint are the two kinds the extension itself resolves. everything else is
+// "external": a human or the model has to perform it and post a result back.
+function iscontrol(effect: effectrecord): boolean {
+	return effect.kind === "sleep" || effect.kind === "breakpoint";
+}
+
+function isundispatched(effect: effectrecord): boolean {
+	return effect.dispatchingat === null && effect.dispatchedat === null;
 }
 
 function pendingmessage(rootrunid: string, effects: effectrecord[], profile: jsonvalue): string {
@@ -278,7 +173,13 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		});
 	};
 	const stale = (result: advanceresult): boolean =>
-		closed || (!terminal(result) && terminalstatus(store.getrun(result.run.id)?.status));
+		closed || (!terminalstatus(result.status) && terminalstatus(store.getrun(result.run.id)?.status));
+	// the one question every dispatch retry path asks: is this effect still worth acting on?
+	const effectstillpending = (rootrunid: string, effect: effectrecord): boolean => {
+		const current = store.geteffect(effect.runid, effect.id);
+		const root = store.getrun(rootrunid);
+		return current?.status === "requested" && root !== null && !terminalstatus(root.status);
+	};
 	const blockrun = (runid: string, reason: string) => {
 		let run = store.getrun(runid);
 		if (!run || terminalstatus(run.status)) return null;
@@ -306,15 +207,13 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			throw new Error(`sleep effect ${effect.id} has invalid deadline`);
 		}
 		let claimed = false;
-		if (effect.dispatchedat === null && effect.dispatchingat === null) {
+		if (isundispatched(effect)) {
 			try {
 				const claim = store.claimeffectdispatching(effect.runid, effect.id, effect.fence);
 				if (!claim.claimed) return false;
 				claimed = true;
 			} catch (error) {
-				const current = store.geteffect(effect.runid, effect.id);
-				const root = store.getrun(rootrunid);
-				if (!current || current.status !== "requested" || !root || terminalstatus(root.status)) return false;
+				if (!effectstillpending(rootrunid, effect)) return false;
 				throw error;
 			}
 		}
@@ -386,13 +285,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			if (closed) return scheduled;
 			scheduled = sleepscheduled || scheduled;
 		}
-		const external = requested.filter(
-			(effect) =>
-				effect.kind !== "sleep" &&
-				effect.kind !== "breakpoint" &&
-				effect.dispatchedat === null &&
-				effect.dispatchingat === null,
-		);
+		const external = requested.filter((effect) => !iscontrol(effect) && isundispatched(effect));
 		if (external.length > 0) {
 			const claimed: effectrecord[] = [];
 			const blockdispatch = (reason: string): boolean => {
@@ -403,9 +296,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			};
 			const revertclaims = (): void => {
 				for (const effect of claimed) {
-					const current = store.geteffect(effect.runid, effect.id);
-					const root = store.getrun(result.run.id);
-					if (!current || current.status !== "requested" || !root || terminalstatus(root.status)) continue;
+					if (!effectstillpending(result.run.id, effect)) continue;
 					store.reverteffectdispatch(effect.runid, effect.id, effect.fence);
 				}
 			};
@@ -415,9 +306,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 					const claim = store.claimeffectdispatching(effect.runid, effect.id, effect.fence);
 					if (claim.claimed) claimed.push(claim.effect);
 				} catch (error) {
-					const current = store.geteffect(effect.runid, effect.id);
-					const root = store.getrun(result.run.id);
-					if (!current || current.status !== "requested" || !root || terminalstatus(root.status)) continue;
+					if (!effectstillpending(result.run.id, effect)) continue;
 					revertclaims();
 					const message = error instanceof Error ? error.message : String(error);
 					if (!blockdispatch(`hidden-turn dispatch intent failed: ${message}`)) return scheduled;
@@ -504,7 +393,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				projectprofileversion: profile.projectprofileversion,
 			});
 			await schedule(result);
-			if (!stale(result)) announce(context, result.run, result.effects);
+			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined);
 		};
 
 	pi.registerCommand("omnipotence", {
@@ -545,7 +434,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				if (existing.sessionid !== sessionid(context)) store.bindsession(sessionid(context), existing.id, true);
 				const resumed = await engine.resume(existing.id);
 				await schedule(resumed);
-				if (!stale(resumed)) announce(context, resumed.run, resumed.effects, "continuing");
+				if (!stale(resumed)) announce(context, resumed.run, waiting(resumed) ? resumed.effects : undefined, "continuing");
 				return;
 			}
 			const process = engine.resolveprocess(factoryprocessid);
@@ -566,7 +455,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			});
 			await schedule(result);
 			const opened = `${request.entry.kind} · ${basename(request.projectroot)}`;
-			if (!stale(result)) announce(context, result.run, result.effects, opened);
+			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined, opened);
 		},
 	});
 	pi.registerCommand("omnipotence-resume", {
@@ -578,7 +467,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const text = String(args ?? "").trim();
 			const result = await engine.resume(run.id, text ? commandjson(text, "resume input") : undefined);
 			await schedule(result);
-			if (!stale(result)) announce(context, result.run, result.effects);
+			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined);
 		},
 	});
 	pi.registerCommand("omnipotence-status", {
@@ -634,7 +523,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		if (!run) return;
 		await ensureloaded();
 		const result = await engine.advance(run.id);
-		if (terminal(result)) {
+		if (terminalstatus(result.status)) {
 			appendstate(result);
 			return;
 		}
@@ -647,11 +536,12 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			appendstate(result);
 			return;
 		}
+		// terminal and blocked already returned, so this only narrows the union for the reads below.
+		if (!waiting(result)) return;
 		const dispatching = result.effects.find(
 			(effect) =>
 				effect.status === "requested" &&
-				effect.kind !== "sleep" &&
-				effect.kind !== "breakpoint" &&
+				!iscontrol(effect) &&
 				effect.dispatchingat !== null &&
 				effect.dispatchedat === null,
 		);
@@ -665,9 +555,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		if (await schedule(result)) return;
 		if (stale(result)) return;
 		if (event.stop_hook_active) return;
-		const missing = result.effects.find(
-			(effect) => effect.status === "requested" && effect.kind !== "sleep" && effect.kind !== "breakpoint",
-		);
+		const missing = result.effects.find((effect) => effect.status === "requested" && !iscontrol(effect));
 		if (!missing) return;
 		return {
 			decision: "block",
@@ -726,14 +614,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			});
 		}
 		const recovered = store.getrun(run.id);
-		if (
-			!unsafe &&
-			recovered &&
-			recovered.status !== "blocked" &&
-			recovered.status !== "completed" &&
-			recovered.status !== "failed" &&
-			recovered.status !== "halted"
-		) {
+		if (!unsafe && recovered && recovered.status !== "blocked" && !terminalstatus(recovered.status)) {
 			await schedule(result);
 		}
 		if (recovered) pi.appendEntry(stateentry, { runid: recovered.id, status: recovered.status });
