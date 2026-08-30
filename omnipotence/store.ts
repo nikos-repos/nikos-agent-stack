@@ -2,7 +2,17 @@ import { Database as database } from "bun:sqlite";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { asserteffectkey, assertprocessid, assertversion, jsonvalueof, parsejson, stablejson } from "./contracts.ts";
+import {
+	asserteffectkey,
+	assertprocessid,
+	assertversion,
+	jsonvalueof,
+	numberfield,
+	objectrecord,
+	parsejson,
+	stablejson,
+	stringfield,
+} from "./contracts.ts";
 import type { effectkind, effectstatus, jsonvalue, orchestrationmode, processparent, runstatus } from "./contracts.ts";
 
 export interface runrecord {
@@ -321,23 +331,6 @@ function asserteffectstatus(value: string): asserts value is effectstatus {
 	if (!Object.hasOwn(effectstatuses, value)) throw new Error(`invalid effect status ${value}`);
 }
 
-function objectvalue(value: jsonvalue, path: string): Record<string, jsonvalue> {
-	if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path}: expected object`);
-	return value;
-}
-
-function stringfield(record: Record<string, jsonvalue>, field: string, path: string): string {
-	const value = record[field];
-	if (typeof value !== "string") throw new Error(`${path}.${field}: expected string`);
-	return value;
-}
-
-function numberfield(record: Record<string, jsonvalue>, field: string, path: string): number {
-	const value = record[field];
-	if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${path}.${field}: expected number`);
-	return value;
-}
-
 function nullablejson(value: string | null, path: string): jsonvalue | null {
 	return value === null ? null : parsejson(value, path);
 }
@@ -598,7 +591,7 @@ function parsehookdelivery(
 	row: eventrow,
 	type: "hook_delivery_pending" | "hook_delivery_failed" | "hook_delivery_completed",
 ): hookdeliveryrecord {
-	const payload = objectvalue(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
+	const payload = objectrecord(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
 	const phase = stringfield(payload, "phase", "event payload");
 	if (phase !== "effect_resolved") throw new Error(`event payload.phase: unsupported hook phase ${phase}`);
 	const status = stringfield(payload, "status", "event payload");
@@ -722,7 +715,7 @@ export class orchestrationstore {
 				previousbyrun.set(event.run_id, event.hash);
 				const payload = parsejson(event.payload_json, `event ${event.run_id}/${event.seq}`);
 				if (isrunprojectionevent(event.type)) {
-					const projectionpayload = objectvalue(payload, "event payload");
+					const projectionpayload = objectrecord(payload, "event payload");
 					runstatusbyid.set(event.run_id, stringfield(projectionpayload, "status", "event payload"));
 					if (schema >= 7) {
 						const projection = eventrunprojection(projectionpayload);
@@ -739,7 +732,7 @@ export class orchestrationstore {
 					}
 				}
 				if (event.type === "lease_claimed") {
-					const projectionpayload = objectvalue(payload, "event payload");
+					const projectionpayload = objectrecord(payload, "event payload");
 					const runid = stringfield(projectionpayload, "runid", "event payload");
 					const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
 					if (runid !== event.run_id) {
@@ -749,7 +742,7 @@ export class orchestrationstore {
 					runclaimepochbyid.set(event.run_id, Math.max(runclaimepochbyid.get(event.run_id) ?? 0, leaseepoch));
 				}
 				if (event.type.startsWith("effect_")) {
-					const projectionpayload = objectvalue(payload, "event payload");
+					const projectionpayload = objectrecord(payload, "event payload");
 					const effectid = stringfield(projectionpayload, "id", "event payload");
 					const status = stringfield(projectionpayload, "status", "event payload");
 					effectstatusbyid.set(effectid, status);
@@ -1256,7 +1249,7 @@ export class orchestrationstore {
 			.all() as effectrow[];
 		for (const row of rows) {
 			const effect = parseeffect(row);
-			const input = objectvalue(effect.input, `effect ${effect.key} input`);
+			const input = objectrecord(effect.input, `effect ${effect.key} input`);
 			if (typeof input.childrunid !== "string") {
 				throw new Error(`effect ${effect.key} input.childrunid: expected string`);
 			}
@@ -1427,15 +1420,14 @@ export class orchestrationstore {
 				const fenced = this.refenceinside(occupied);
 				this.data.query("update runs set session_id = null, updated_at = ? where id = ?").run(now(), fenced.id);
 				this.data.query("delete from sessions where session_id = ?").run(sessionid);
+				// transitioninside already appends the run_status projection for the halt.
 				this.transitioninside(
 					this.requiredrun(fenced.id),
 					"halted",
 					null,
 					`detached from session ${sessionid} in favour of run ${runid}`,
 				);
-				const detached = this.requiredrun(fenced.id);
-				this.appendevent(detached.id, "run_status", jsonvalueof(detached));
-				this.appendevent(detached.id, "session_unbound", { sessionid, runid: detached.id });
+				this.appendevent(fenced.id, "session_unbound", { sessionid, runid: fenced.id });
 			}
 			if (run.sessionid && run.sessionid !== sessionid) {
 				this.data.query("delete from sessions where session_id = ?").run(run.sessionid);
@@ -2095,7 +2087,7 @@ export class orchestrationstore {
 			previousbyrun.set(row.run_id, row.hash);
 			const payload = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
 			if (isrunprojectionevent(row.type)) {
-				const projectionpayload = objectvalue(payload, "event payload");
+				const projectionpayload = objectrecord(payload, "event payload");
 				const status = stringfield(projectionpayload, "status", "event payload");
 				assertstatus(status);
 				const projection = eventrunprojection(projectionpayload);
@@ -2108,7 +2100,7 @@ export class orchestrationstore {
 				}
 			}
 			if (row.type === "lease_claimed") {
-				const projectionpayload = objectvalue(payload, "event payload");
+				const projectionpayload = objectrecord(payload, "event payload");
 				const runid = stringfield(projectionpayload, "runid", "event payload");
 				const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
 				if (runid !== row.run_id) {
@@ -2118,7 +2110,7 @@ export class orchestrationstore {
 				runclaimepochbyid.set(row.run_id, Math.max(runclaimepochbyid.get(row.run_id) ?? 0, leaseepoch));
 			}
 			if (row.type.startsWith("effect_")) {
-				const projectionpayload = objectvalue(payload, "event payload");
+				const projectionpayload = objectrecord(payload, "event payload");
 				const effectid = stringfield(projectionpayload, "id", "event payload");
 				const status = stringfield(projectionpayload, "status", "event payload");
 				asserteffectstatus(status);
@@ -2263,7 +2255,7 @@ export class orchestrationstore {
 			for (const row of rows) {
 				const payload = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
 				if (isrunprojectionevent(row.type)) {
-					const projectionpayload = objectvalue(payload, "event payload");
+					const projectionpayload = objectrecord(payload, "event payload");
 					const id = stringfield(projectionpayload, "id", "event payload");
 					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
 					leaseepochs.set(
@@ -2275,7 +2267,7 @@ export class orchestrationstore {
 					);
 				}
 				if (row.type === "lease_claimed") {
-					const projectionpayload = objectvalue(payload, "event payload");
+					const projectionpayload = objectrecord(payload, "event payload");
 					const runid = stringfield(projectionpayload, "runid", "event payload");
 					if (runid !== row.run_id) throw new Error(`event ${row.id} lease claim run identity mismatch`);
 					const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
@@ -2303,7 +2295,7 @@ export class orchestrationstore {
 			for (const row of rows) {
 				const payloadvalue = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
 				if (isrunprojectionevent(row.type)) {
-					const payload = objectvalue(payloadvalue, "event payload");
+					const payload = objectrecord(payloadvalue, "event payload");
 					const id = stringfield(payload, "id", "event payload");
 					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
 					const mode = decodehistoricalmode(stringfield(payload, "mode", "event payload"));
@@ -2369,7 +2361,7 @@ export class orchestrationstore {
 						);
 				}
 				if (row.type.startsWith("effect_")) {
-					const payload = objectvalue(payloadvalue, "event payload");
+					const payload = objectrecord(payloadvalue, "event payload");
 					const effectid = stringfield(payload, "id", "event payload");
 					const runid = stringfield(payload, "runid", "event payload");
 					if (runid !== row.run_id) throw new Error(`event ${row.id} effect run identity mismatch`);
@@ -2415,13 +2407,13 @@ export class orchestrationstore {
 						);
 				}
 				if (row.type === "session_bound") {
-					const payload = objectvalue(payloadvalue, "event payload");
+					const payload = objectrecord(payloadvalue, "event payload");
 					this.data
 						.query("insert or replace into sessions(session_id, run_id) values (?, ?)")
 						.run(stringfield(payload, "sessionid", "event payload"), row.run_id);
 				}
 				if (row.type === "session_unbound") {
-					const payload = objectvalue(payloadvalue, "event payload");
+					const payload = objectrecord(payloadvalue, "event payload");
 					this.data
 						.query("delete from sessions where session_id = ?")
 						.run(stringfield(payload, "sessionid", "event payload"));
