@@ -13,11 +13,11 @@ import { profileservice } from "./profiles.ts";
 import { runlabel, runsentence } from "./status.ts";
 import { orchestrationstore } from "./store.ts";
 import type { effectrecord, runrecord } from "./store.ts";
-import { installOmnipotenceStop, resetOmnipotenceStop } from "./stop-decision.ts";
+import { installOmnipotenceStop, omnipotenceStop, resetOmnipotenceStop } from "./stop-decision.ts";
 
-export { omnipotenceStop } from "./stop-decision.ts";
-export { factoryflags, factoryrequestfor } from "./factory.ts";
-export { runsentence } from "./status.ts";
+// re-exported from the imported bindings, never with a `from` clause: one binding serves both
+// the public surface and this module's own calls, so the two cannot drift apart.
+export { factoryflags, factoryrequestfor, omnipotenceStop, runsentence };
 
 interface extensioncontext {
 	cwd: string;
