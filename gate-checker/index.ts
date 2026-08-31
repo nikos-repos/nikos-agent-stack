@@ -1509,11 +1509,19 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // would never advance.
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
     const cwd = String(ctx?.cwd ?? ".");
-    if (requestId || continuationCount > 0) {
+    if (continuationCount > 0) {
       if (evidence.repoRoot) ensurelease(evidence.repoRoot);
       return;
     }
-
+    if (requestId) {
+      // a new agent turn with no open continuation means the previous request
+      // ended without settling — abandoned or interrupted. that is a completion:
+      // its lease must not outlive it and block every future mutation.
+      if (activeLease) releaselease(activeLease);
+      activeLease = null;
+      leaseConflict = null;
+      lastBlockingKey = null;
+    }
     evidence = freshEvidence();
     const baseline = capturebaseline(cwd);
     evidence.baselineSha = baseline.sha;

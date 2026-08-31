@@ -65,6 +65,12 @@ export function acquirelease(options) {
   const stale_ms = Number.isFinite(options.stale_ms)
     ? options.stale_ms
     : 30 * 60 * 1000;
+  // an idle-but-alive holder never satisfies the dead-pid rule, so a lease it
+  // abandoned stays unreclaimable forever. past the force window the fence wins:
+  // no legitimate single request holds a worktree for twelve hours.
+  const force_ms = Number.isFinite(options.force_ms)
+    ? options.force_ms
+    : 12 * 60 * 60 * 1000;
   const pid = Number.isInteger(options.pid) ? options.pid : process.pid;
   const owner_id = String(options.owner_id ?? "");
   const request_id = String(options.request_id ?? "");
@@ -98,13 +104,13 @@ export function acquirelease(options) {
       writeFileSync(data_path, JSON.stringify(lease, null, 2) + "\n", "utf8");
       return lease;
     } catch (error) {
-      if (String(error?.code ?? "").toLowerCase() !== "eexist") throw error;
       const conflict = readjson(data_path);
+      const age = now - Number(conflict?.started_at);
+      const holderdead = !processalive(Number(conflict?.pid));
       if (
         attempt === 0 &&
         conflict &&
-        now - Number(conflict.started_at) > stale_ms &&
-        !processalive(Number(conflict.pid))
+        ((age > stale_ms && holderdead) || age > force_ms)
       ) {
         rmSync(path, { recursive: true, force: true });
         recovered = true;

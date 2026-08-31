@@ -887,6 +887,23 @@ const retriedLease = (await leaseWaiter.tool_call!(
 )) as { block?: boolean } | undefined;
 expect(retriedLease?.block !== true, "branch navigation releases the prior worktree lease");
 await leaseWaiter.session_shutdown!({}, ctx);
+// an abandoned request — the holder went idle without a terminal outcome — must
+// release the lease on its next agent turn instead of holding the worktree
+// until shutdown. this is the seam that left the worktree permanently locked.
+await start(leaseOwner, ctx);
+await leaseOwner.tool_call!(
+  { toolName: "write", input: { path: "src/abandoned.txt" } },
+  ctx,
+);
+await leaseOwner.agent_start!({}, ctx);
+const afterAbandon = (await leaseWaiter.tool_call!(
+  { toolName: "write", input: { path: "src/leased.txt" } },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(
+  afterAbandon?.block !== true,
+  "an abandoned request releases its lease on its next agent turn",
+);
 process.env.OMP_GATE_MUTATION_LEASE = "off";
 
 console.log("15. journal recovery");

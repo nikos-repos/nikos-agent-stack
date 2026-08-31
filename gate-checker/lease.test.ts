@@ -60,3 +60,79 @@ test("a dead stale owner can be recovered with a higher fence", () => {
   expect(recovered.fence).toBeGreaterThan(first.fence);
   expect(releaselease(recovered)).toBe(true);
 });
+
+test("a live holder inside the force window keeps the lease", () => {
+  const cwd = repo();
+  const first = acquirelease({
+    cwd,
+    owner_id: "idle-owner",
+    request_id: "request-1",
+    pid: process.pid,
+    now: 1,
+    stale_ms: 10,
+    force_ms: 100,
+  });
+  expect(first.acquired).toBe(true);
+
+  const conflict = acquirelease({
+    cwd,
+    owner_id: "owner-2",
+    request_id: "request-2",
+    pid: process.pid,
+    now: 50,
+    stale_ms: 10,
+    force_ms: 100,
+  });
+  expect(conflict.acquired).toBe(false);
+});
+
+test("a live holder is force-recovered past the force window", () => {
+  const cwd = repo();
+  const first = acquirelease({
+    cwd,
+    owner_id: "idle-owner",
+    request_id: "request-1",
+    pid: process.pid,
+    now: 1,
+    stale_ms: 10,
+    force_ms: 100,
+  });
+  expect(first.acquired).toBe(true);
+
+  const recovered = acquirelease({
+    cwd,
+    owner_id: "owner-2",
+    request_id: "request-2",
+    pid: process.pid,
+    now: 200,
+    stale_ms: 10,
+    force_ms: 100,
+  });
+  expect(recovered.acquired).toBe(true);
+  expect(recovered.recovered).toBe(true);
+  expect(recovered.fence).toBeGreaterThan(first.fence);
+  expect(releaselease(recovered)).toBe(true);
+});
+
+test("the default force window reclaims a live holder after twelve hours", () => {
+  const cwd = repo();
+  const first = acquirelease({
+    cwd,
+    owner_id: "idle-owner",
+    request_id: "request-1",
+    pid: process.pid,
+    now: 1,
+  });
+  expect(first.acquired).toBe(true);
+
+  const recovered = acquirelease({
+    cwd,
+    owner_id: "owner-2",
+    request_id: "request-2",
+    now: 1 + 12 * 60 * 60 * 1000 + 1,
+  });
+  expect(recovered.acquired).toBe(true);
+  expect(recovered.recovered).toBe(true);
+  expect(recovered.fence).toBeGreaterThan(first.fence);
+  expect(releaselease(recovered)).toBe(true);
+});
