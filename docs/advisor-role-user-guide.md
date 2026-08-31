@@ -49,7 +49,7 @@ terra is a native passive advisor. after `/advisor on`, omp monitors the session
 
 omp owns the native `/advisor on` and `/advisor status` commands, advisor routing, concern and blocker interruption, and the advisor ui. the plugin supplies terra configuration only; it does not replace those native surfaces.
 
-terra has `read`, `grep`, and `glob` only. it cannot edit, write, or run commands.
+terra has `read`, `grep`, and `glob` only. it cannot edit, write, or run commands. this restriction applies only to terra; it is not an acceptance criterion for `OMP-DEV` operations.
 
 source: [watchdog source](../advisor/WATCHDOG.yml)
 
@@ -57,11 +57,11 @@ source: [watchdog source](../advisor/WATCHDOG.yml)
 
 terra advises only when inspected source establishes all three links:
 
-1. a current decision or candidate;
+1. a current `OMP-DEV` decision or candidate;
 2. an explicit acceptance criterion or existing observable contract; and
 3. a concrete path by which the candidate violates that criterion or remains materially unverified.
 
-when a link is hypothetical or unobserved, terra stays silent. each recommendation stays focused on one candidate, its acceptance criteria, relevant existing tests, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen a settled design.
+when a link is hypothetical, unobserved, or supported only by an unrelated source, terra stays silent. each recommendation stays focused on one candidate, its acceptance criteria, relevant existing tests, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen a settled design.
 
 when a failed test is involved, terra classifies it before advising:
 
@@ -77,22 +77,22 @@ source: [watchdog source](../advisor/WATCHDOG.yml)
 
 ## evidence in notes
 
-each terra note must include source evidence in its note text:
+each terra note must identify the current `OMP-DEV` candidate from the session update and include source evidence in its note text:
 
-- the exact repository-relative `path`;
-- the one-indexed `line` that establishes the claim;
-- a concrete `claim` that the cited line proves; and
-- the read-snapshot `digest`, copied verbatim from the read result header.
+- the exact repository-relative `path` to an applicable acceptance criterion or observable contract;
+- the one-indexed `line` that establishes that criterion or contract;
+- a concrete `claim` that explains how the identified candidate violates the cited criterion or leaves it materially unverified; and
+- the read-snapshot `digest`, copied verbatim from the same read result as the cited path and line.
 
-terra does not invent or recompute a digest. when no inspected source grounds advice, terra emits no note.
+terra does not use an unrelated read only to supply a digest, and it never invents or recomputes one. when no inspected source grounds advice, terra emits no note.
 
-omp machine-enforces the native `note` and `severity` fields. terra's watchdog instructions require `path`, `line`, `claim`, and the read-snapshot digest inside the note text. verify cited evidence against a current read result before acting on it.
+omp machine-enforces the native `note` and `severity` fields. terra's watchdog instructions require the candidate, `path`, `line`, `claim`, and matching read-snapshot digest inside the note text. concern and blocker remain governed by omp's native advisor semantics; terra never selects either severity solely to enforce its own tool or authority restrictions against `OMP-DEV`. verify cited evidence against a current read result before acting on it.
 
 source: [watchdog source](../advisor/WATCHDOG.yml)
 
 ## authority boundary
 
-- the primary agent remains the sole writer, integrator, and validator.
+- `OMP-DEV` remains the sole writer, integrator, and validator.
 - terra advises from read-only source inspection.
 - native advisor notes are not approvals or gate results.
 - gate results remain the responsibility of the separate gate checker extension.

@@ -192,4 +192,22 @@ test("terra is a native passive advisor with source-backed notes", () => {
 	expect(terra.instructions).toContain("claim");
 	expect(terra.instructions).toContain("read-snapshot digest");
 	expect(terra.instructions).toContain("omp validates only note and severity");
+	expect(terra.instructions).toContain(
+		"this restriction applies only to terra's own operations",
+	);
+	expect(terra.instructions).toContain(
+		"never evaluate OMP-DEV against terra's tool allowlist",
+	);
+	expect(terra.instructions).toContain(
+		"must identify the current OMP-DEV candidate from the session update",
+	);
+	expect(terra.instructions).toContain(
+		"must directly establish the applicable acceptance criterion or existing observable contract",
+	);
+	expect(terra.instructions).toContain(
+		"the digest must belong to that cited read result",
+	);
+	expect(terra.instructions).toContain(
+		"never use an unrelated read only to supply a digest",
+	);
 });
