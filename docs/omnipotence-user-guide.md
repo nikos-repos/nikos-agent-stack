@@ -64,7 +64,7 @@ process code uses the native package api. every process declares a stable id, se
 ```ts
 import { defineprocess } from "nikos-agent-stack/omnipotence";
 
-export default defineprocess({
+export default defineprocess<{ request: string }, { accepted: boolean }>({
 	id: "delivery.review",
 	version: "1.0.0",
 	maxturns: 32,
@@ -98,9 +98,20 @@ available process primitives:
 
 source: `omnipotence/contracts.ts` and `omnipotence/engine.ts`.
 
+### the authoring surface
+
+the `nikos-agent-stack/omnipotence` package subpath resolves to `omnipotence/api.ts` and is the full supported authoring surface. internal module exports are not part of this surface.
+
+| kind | exports |
+| --- | --- |
+| runtime | `defineprocess`, `definehook`, `assertvalid`, `jsonvalueof`, `stablejson` |
+| type-only | `effectkind`, `jsonschema`, `jsonvalue`, `parallelrequest`, `processcontext`, `processparent`, `hookphase`, `hookresult` |
+
+source: `package.json`, `omnipotence/api.ts`, and `plugin.test.ts`.
+
 ## package a local blueprint
 
-create `omnipotence.blueprint.json` beside the declared files. every file needs a sha-256 value. blueprint installation accepts local paths only, copies declared files only, rejects escaping paths and symlinks, and does not run installer scripts.
+create `omnipotence.blueprint.json` beside the declared files. every file needs a sha-256 value. blueprint installation accepts local paths only, copies declared files only, rejects an absolute or traversal path, requires each declared file to resolve to a regular file, and rejects a declared file whose resolved target escapes the package root. a symlink that resolves to a regular file inside the package root passes and is copied. it does not run installer scripts.
 
 ```json
 {
@@ -118,7 +129,7 @@ create `omnipotence.blueprint.json` beside the declared files. every file needs 
 }
 ```
 
-replace `<sha-256>` with the lowercase digest before installation.
+replace `<sha-256>` with the lowercase digest before installation. the manifest also accepts an optional `profile` object, which provides profile defaults for every process it declares, and an optional `export` field on each process or hook entry, which names the module export to load and defaults to `default`.
 
 ```sh
 omnipotence --dry-run blueprint install ./delivery-pack
@@ -126,9 +137,9 @@ omnipotence blueprint install ./delivery-pack
 omnipotence blueprint list
 ```
 
-versions install side by side and use semantic ordering, including prereleases. every manifest declares a minimum compatible engine version. incompatible packages fail before installation or activation. active runs, including forever runs, retain their pinned blueprint version. rollback changes the active version for new runs. removal refuses while a non-terminal run pins that exact version and validates any replacement before activation. the cli loads active and run-pinned blueprints on each invocation. a running omp session loads them once, so restart that session after install, update, rollback, or removal.
+versions install side by side and use semantic ordering, including prereleases. every manifest declares a minimum compatible engine version. incompatible packages fail before installation or activation. active runs, including forever runs, retain their pinned blueprint version. rollback changes the active version for new runs. removal refuses while a non-terminal run pins that exact version and validates any replacement before activation. on each invocation, the cli loads active and run-pinned blueprint modules only for `process` and `hook` commands, `run start`, `run resume`, `effect post`, and `effect resolve-uncertain`. `run status`, `run events`, `run halt`, `run list`, `session`, `profile`, `blueprint`, `doctor`, and `repair` do not load blueprint modules. a running omp session loads them once, so restart that session after install, update, rollback, or removal.
 
-source: `omnipotence/blueprints.ts` and `omnipotence/blueprints.test.ts`.
+source: `omnipotence/blueprints.ts`, `omnipotence/loader.ts`, `omnipotence/cli.ts`, and `omnipotence/blueprints.test.ts`.
 
 ## lifecycle hooks
 
@@ -168,6 +179,36 @@ the four start commands use the same format:
 ```
 
 source: `omnipotence/index.ts`.
+
+### the factory front door
+
+`/factory [--preview] [--fresh] [target]` starts or continues the factory workflow for a project. it runs the `factory.new-project` process. a blueprint that registers this process id must be installed and active.
+
+the target resolves in this order:
+
+- an existing file target becomes the spec, and its parent directory becomes the project root.
+- an existing directory target becomes the project root.
+- without a target, the current working directory becomes the project root.
+- `~` and `~/` expand.
+- a target that starts with `/`, `~`, `./`, or `../` and does not exist is an error. this prevents a typo from resuming the project in the current directory.
+
+inside the project root, the command selects input in this order:
+
+- when `.factory/state.json` is present, it resumes.
+- otherwise, it selects the first available file: `final-plan.md`, `plan.md`, `spec.md`, then `requirements.md`.
+- otherwise, it selects the only markdown file in the directory.
+- a non-path target with none of those files becomes the rough idea.
+- with nothing to go on, the command asks you to describe the project.
+
+`--preview` starts a new run in `plan` mode. without it, a new run uses `babysit` mode.
+
+`/factory` looks up the newest non-terminal root run whose input `projectRoot` equals the resolved project root. child runs never match. it resumes that run and rebinds it to the current omp session when a different session held it.
+
+a `blocked` existing run does not resume. the command reports the blocked reason and tells you to run `/factory --fresh`.
+
+`--fresh` skips the lookup. it does not halt the earlier run. that non-terminal run stays stored. one session cannot hold two active root runs. if the current session holds the earlier run, stop it with `/omnipotence-stop` first.
+
+source: `omnipotence/index.ts`, `omnipotence/factory.ts`, and `omnipotence/store.ts`.
 
 ### choose a start command
 
@@ -250,7 +291,7 @@ source: `omnipotence/processes.ts`, `omnipotence/engine.ts`, `omnipotence/index.
 
 ### inspect, resume, or stop the current run
 
-`/omnipotence-status` shows the active run for the current omp session. it reports `inactive` when this session has no active run.
+`/omnipotence-status` shows the active run for the current omp session. with no active run for this session, it reports `no active omnipotence run`, and the status line shows the eye glyph alone.
 
 ```text
 /omnipotence-status
@@ -272,6 +313,23 @@ resume refuses to guess when an external action has an uncertain result. resolve
 ```
 
 source: `omnipotence/index.ts` and `omnipotence/engine.ts`.
+
+### read the status line
+
+omp shows an `omnipotence` status key. with no active run, it shows the eye glyph alone. with an active run, it shows the glyph, the run label, an optional phase, and a state, joined by ` · `.
+
+the run label is the basename of the input `projectRoot` when the input carries one. otherwise, it is the process id. the phase comes from a requested effect whose key matches `phase/<name>/...`.
+
+| state | condition |
+| --- | --- |
+| `your turn` | waiting for user |
+| `blocked` | blocked |
+| `paused` | halted |
+| `done` | completed |
+| `failed` | failed |
+| `working` | anything else |
+
+source: `omnipotence/index.ts` and `omnipotence/status.ts`.
 
 ### safety and stored state
 
@@ -308,7 +366,22 @@ omnipotence hook list --json
 omnipotence doctor --json
 ```
 
-all mutating commands accept `--dry-run`. all commands accept `--json`. successful json uses `{"ok":true,"data":...}`. errors use `{"ok":false,"error":{"code":"...","message":"..."}}`.
+global flags are `--json`, `--dry-run`, `--help`, and `--version`. an unknown flag for a command is rejected.
+
+| command | flags |
+| --- | --- |
+| `run start` | `--mode --input --profile --process-version --session` |
+| `run resume` | `--input` |
+| `run halt` | `--reason` |
+| `effect post` | `--root --fence --input-hash --status --value --error` |
+| `effect resolve-uncertain` | `--root --fence --input-hash --decision --value --error` |
+| `session bind` | `--force` |
+| `process plan` | `--input` |
+| `profile show` and `profile render` | `--root` |
+| `profile write` and `profile merge` | `--root --input` |
+| `hook probe` | `--input` |
+
+all mutating commands accept `--dry-run`. all commands accept `--json`. a successful command emits `{"ok":true,"data":...}`. a thrown validation or operational error emits `{"ok":false,"error":{"code":"...","message":"..."}}`. `doctor` is the exception: an unhealthy or missing database still emits the outer `ok:true` envelope with an inner `{"ok":false,"issues":[...]}` payload and exit code 3, so automation must read the payload or the exit code.
 
 the standalone cli is one-shot. `run start --mode forever` and `run resume` perform one stored-run operation; they do not own autonomous hidden-turn scheduling. use `/omnipotence-forever` in omp for session-bound continuation.
 
@@ -332,18 +405,18 @@ source: `omnipotence/profiles.ts` and `omnipotence/profiles.test.ts`.
 
 ## state and recovery
 
-state defaults to:
+the omp extension and the standalone cli both take the sqlite path from `OMNIPOTENCE_DB`, which defaults to `~/.omp/nikos-agent-stack/omnipotence.sqlite`.
 
-```text
-~/.omp/nikos-agent-stack/omnipotence.sqlite
-```
+only the standalone cli reads `OMNIPOTENCE_BLUEPRINTS`. it is the blueprint install root and defaults to `~/.omp/nikos-agent-stack/blueprints`.
 
-override it for an isolated environment:
+override the values for an isolated environment:
 
 ```sh
 export OMNIPOTENCE_DB=/path/to/omnipotence.sqlite
 export OMNIPOTENCE_BLUEPRINTS=/path/to/blueprints
 ```
+
+the extension loads active and pinned blueprints from install paths stored in sqlite records. changing `OMNIPOTENCE_BLUEPRINTS` does not redirect blueprints that are already installed.
 
 run state, events, effects, session bindings, hook deliveries, lease claims, profile versions, and blueprint registry data use sqlite. each effect carries a stable key, input hash, and fence. duplicate identical result posts are idempotent. stale or conflicting posts fail closed.
 forever runs append every committed effect and replay event to sqlite, so long-running loops grow durable state instead of discarding old cycles.
@@ -357,7 +430,7 @@ omnipotence effect resolve-uncertain <run-id> <effect-id> \
   --fence <epoch> --input-hash <sha-256> --decision confirm --value '{"result":"confirmed"}'
 ```
 
-available decisions are `confirm`, `fail`, and `retry`.
+`confirm` resolves the effect with your value. `fail` resolves it with your error. `retry` increments the run fence, re-fences every requested sibling effect, clears the uncertain effect back to requested with no value or error, and leaves the run waiting for that effect again. a stale fence or a mismatched input hash is rejected.
 
 verify without mutation:
 
@@ -372,7 +445,7 @@ omnipotence --dry-run repair --json
 omnipotence repair --json
 ```
 
-source: `omnipotence/store.ts`, `omnipotence/store.test.ts`, and `omnipotence/index.test.ts`.
+source: `omnipotence/index.ts`, `omnipotence/cli.ts`, `omnipotence/store.ts`, `omnipotence/store.test.ts`, and `omnipotence/index.test.ts`.
 
 ## remove omnipotence state
 

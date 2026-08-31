@@ -1,14 +1,13 @@
 # ask questionnaire user guide
 
-> a new-project policy extension for omp's native ask tool
+> a phase-declared questionnaire policy extension for omp's native ask tool
 
 ## contents
 
 - [what the extension does](#what-the-extension-does)
 - [quick start](#quick-start)
 - [native ask ownership](#native-ask-ownership)
-- [new-project detection](#new-project-detection)
-- [input sources that arm the policy](#input-sources-that-arm-the-policy)
+- [what arms the policy](#what-arms-the-policy)
 - [guidance injection](#guidance-injection)
 - [tool blocking](#tool-blocking)
 - [success and failure transitions](#success-and-failure-transitions)
@@ -25,16 +24,16 @@
 
 `ask-questionnaire` is one omp extension file that ships inside the `nikos-agent-stack` plugin. it adds no user interface, no transport, and no omp core change.
 
-it does four things:
+it does not inspect user text. the model opens a pending questionnaire by calling the registered `questionnaire_open` tool with an owner and a reason. while a questionnaire is pending, the extension does four things:
 
-1. it detects a direct new-project request in user input.
-2. it injects short questionnaire guidance before the model call while that request is open.
-3. it blocks every tool except `ask` while that request is open.
-4. it clears the request after one successful `ask` result, and it asks for one continuation turn at session stop while the request stays open.
+1. it injects that reason before each model call.
+2. it allows a fixed read-only tool allowlist plus `ask` and `questionnaire_open`.
+3. it blocks every other tool.
+4. it exposes one continuation decision that gate-checker evaluates at session stop.
 
 the plugin declares the extension entry in the package manifest, so omp loads it after installation.
 
-sources: [`ask-questionnaire/index.ts`](../ask-questionnaire/index.ts#L1-L16), [`package.json`](../package.json#L35-L40)
+sources: [scope comment](../ask-questionnaire/index.ts#L1-L15), [tool registration and stop slot](../ask-questionnaire/index.ts#L72-L109), [tool blocking](../ask-questionnaire/index.ts#L125-L143), [`package.json`](../package.json#L37-L43)
 
 ## quick start
 
@@ -42,23 +41,19 @@ sources: [`ask-questionnaire/index.ts`](../ask-questionnaire/index.ts#L1-L16), [
 omp plugin install nikos-agent-stack
 ```
 
-then start a session and send a direct new-project request:
-
-```text
-create a new cli tool for log triage
-```
-
-expected behavior:
+then start a session. ordinary text arms nothing. a questionnaire opens only when the model calls the registered `questionnaire_open` tool with an owner and a reason and the call executes successfully:
 
 | step | observable result |
 |---|---|
-| the request arrives | the extension marks one open request |
-| the model turn starts | omp adds the guidance message to model context, not to the transcript |
-| the model calls a tool that is not `ask` | omp blocks the call and returns the guidance as the reason |
+| `questionnaire_open` runs with a new owner | the tool returns `questionnaire armed by <owner>` and one questionnaire is pending |
+| `questionnaire_open` runs from a different owner while one is pending | the tool refuses the call and leaves the pending questionnaire unchanged |
+| `questionnaire_open` runs from the same owner while one is pending | the tool returns `already open` and keeps the original owner and reason |
+| the model turn starts | omp adds the reason to model context, not to the transcript |
+| the model calls a tool outside the allowlist | omp blocks the call and returns the declaring reason |
 | the model calls `ask` | the native ask dialog opens |
-| the ask result returns without an error | the extension clears the request and omp allows every tool again |
+| the ask result returns without an error | the extension clears the questionnaire and omp allows every tool again |
 
-sources: [event handlers](../ask-questionnaire/index.ts#L105-L152)
+sources: [tool registration](../ask-questionnaire/index.ts#L79-L103), [declaration tests](../ask-questionnaire/index.test.ts#L103-L155)
 
 ## native ask ownership
 
@@ -70,7 +65,7 @@ omp owns the ask tool. this package never renders, times out, or transports a qu
 | questionnaire dialog, tabs, and keyboard controls | omp |
 | custom answer row, notes, previews, and timeouts | omp |
 | remote and collaboration answer routing | omp |
-| new-project detection and tool gating | this extension |
+| questionnaire declaration and tool gating | this extension |
 
 ### native ask schema example
 
@@ -98,77 +93,39 @@ the extension reads only the tool name and the error flag of an ask call. it doe
 
 sources: native ask tool in omp `@oh-my-pi/pi-coding-agent` 17.2.15, `src/tools/ask.ts` (schema `questions[]` with `id`, `question`, `header?`, `options[].label`, `options[].description?`, `options[].preview?`, `multi?`, `recommended?`); [tool handlers in this package](../ask-questionnaire/index.ts#L127-L138)
 
-## new-project detection
+## what arms the policy
 
-one exported regular expression decides the outcome. `initiatesNewProject(text)` returns its test result.
+the only arming path is a successful `questionnaire_open` call. the extension registers no `input` handler. no chat text, rpc request, or headless request arms it.
 
-| part | accepted values |
-|---|---|
-| verb | `bootstrap`, `build`, `create`, `develop`, `initialize`, `make`, `scaffold`, `set up`, `start` |
-| optional pronoun | `me`, `us` |
-| optional article | `a`, `an`, `my`, `our` |
-| optional freshness word | `new`, `brand new`, `brand-new` |
-| optional filler | up to three words of letters, digits, `.`, `+`, `#`, or `-` |
-| noun | `api`, `app`, `application`, `cli`, `codebase`, `dashboard`, `extension`, `library`, `package`, `plugin`, `project`, `repo`, `repository`, `service`, `site`, `tool`, `website` |
-
-behavior details:
-
-- the pattern uses the `i` and `u` flags, so it ignores case and supports unicode letters and digits.
-- word boundaries surround the verb group and the noun.
-- the pattern has no `g` flag and no anchors, so it is stateless and matches anywhere inside the text.
-
-verified matches: `create a new app`, `build me a rest api`, `set up our brand new dashboard`, `scaffold a cli tool`, `initialize my website`, `start a new repository`.
-
-verified non-matches: `read the readme and summarize it`, `fix the auth bug in login.ts`, `explain how the parser works`, empty text.
-
-the detector reads text only. it has no intent model, so a sentence such as `set up a new logging package` arms the policy even when the user means a small change.
-
-sources: [detector](../ask-questionnaire/index.ts#L20-L31), [detector tests](../ask-questionnaire/index.test.ts#L54-L68)
-
-## input sources that arm the policy
-
-the extension listens to omp's interactive-only `input` event. it checks the documented `source` field defensively, but rpc and headless requests do not emit this event and do not arm the policy.
-
-| source | effect |
-|---|---|
-| `interactive` | detection runs |
-| `extension` | the handler returns immediately and detection never runs |
-| `rpc` or headless input | no `input` event; the policy does not arm |
-
-this keeps extension-originated text, such as injected messages and steering prompts from other extensions, from arming the workflow.
-
-arming also requires the native `ask` tool to be active. the extension checks `pi.getActiveTools()` before it marks a request open, because an open request closes only on a successful ask result: arming with `ask` disabled would block every tool until a lifecycle reset.
-
-sources: [omp input event contract](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/extensions/types.ts#L851-L857), [input handler](../ask-questionnaire/index.ts#L105-L108), [source test](../ask-questionnaire/index.test.ts#L99-L105)
+sources: [tool registration](../ask-questionnaire/index.ts#L72-L104), [no-input-handler test](../ask-questionnaire/index.test.ts#L119-L126)
 
 ## guidance injection
 
-while a request is open, the `before_agent_start` handler returns one message:
-
-```text
-this request starts a new project. call the ask tool now with one batched questionnaire before planning, editing, or using another tool.
-```
+there is no fixed guidance sentence. the `reason` argument of `questionnaire_open` is the guidance. while a questionnaire is pending, the `before_agent_start` handler returns that exact reason as one message, so it enters the model context and stays out of the transcript:
 
 | field | value |
 |---|---|
 | `customType` | `nikos-agent-stack.ask-questionnaire.guidance` |
+| `content` | the declaring reason, verbatim |
 | `display` | `false`, so the message stays out of the transcript |
 | `attribution` | not set; omp normalises an absent value to `agent` |
 
-the handler returns nothing when no request is open. omp adds the message on every model turn while the request stays open.
+the registered tool description reads "declare that this phase needs a batched questionnaire before it proceeds."
 
-sources: [guidance text](../ask-questionnaire/index.ts#L33-L39), [before_agent_start handler](../ask-questionnaire/index.ts#L110-L123), [injection test](../ask-questionnaire/index.test.ts#L109-L119)
+the handler returns nothing when no questionnaire is pending. omp adds the message on every model turn while the questionnaire stays pending.
+
+sources: [tool description](../ask-questionnaire/index.ts#L79-L87), [before_agent_start handler](../ask-questionnaire/index.ts#L111-L123), [injection test](../ask-questionnaire/index.test.ts#L159-L173)
 
 ## tool blocking
 
-the `tool_call` handler applies one rule while a request is open:
+the `tool_call` handler applies one rule while a questionnaire is pending:
 
-- `ask` passes. the handler returns nothing.
-- every other tool receives `{ block: true, reason: <guidance> }`.
+- these tools pass: `read`, `grep`, `glob`, `lsp`, `ast_grep`, `inspect_image`, `ask`, and `questionnaire_open`. the handler returns nothing for them.
+- every other tool receives `{ block: true, reason: <the declaring reason> }`.
 
-there is no second allow list. read-only tools such as read, grep, and glob are blocked with the same rule. when no request is open, the handler returns nothing for every tool.
+the allowlist is closed: a tool that is not listed is blocked. with nothing pending, the handler returns nothing.
 
-sources: [tool_call handler](../ask-questionnaire/index.ts#L125-L131), [blocking tests](../ask-questionnaire/index.test.ts#L72-L105)
+sources: [read-only allowlist](../ask-questionnaire/index.ts#L25-L36), [tool_call handler](../ask-questionnaire/index.ts#L125-L131)
 
 ## success and failure transitions
 
@@ -182,29 +139,29 @@ the `tool_result` handler clears the open request only for a successful ask resu
 
 the extension treats an error-free return as success. it does not inspect answers, selected options, or custom input.
 
-sources: [tool_result handler](../ask-questionnaire/index.ts#L133-L138), [transition tests](../ask-questionnaire/index.test.ts#L123-L153)
+sources: [tool_result handler](../ask-questionnaire/index.ts#L133-L138), [transition tests](../ask-questionnaire/index.test.ts#L177-L208)
 
 ## lifecycle resets
 
-three session events clear the open request:
+three session events clear the pending questionnaire:
 
 - `session_start`
 - `session_switch`
 - `session_branch`
 
-the state is one in-memory flag per loaded extension instance, so a context change or a restart never carries a stale request forward.
+the state is one in-memory pending object per loaded extension instance, holding the declaring `owner` and `reason`, so a context change or a restart never carries a stale questionnaire forward.
 
-sources: [state and reset handlers](../ask-questionnaire/index.ts#L92-L100), [lifecycle registration](../ask-questionnaire/index.ts#L148-L151), [reset tests](../ask-questionnaire/index.test.ts#L185-L213)
+sources: [state and reset handlers](../ask-questionnaire/index.ts#L72-L77), [lifecycle registration](../ask-questionnaire/index.ts#L140-L143), [reset tests](../ask-questionnaire/index.test.ts#L237-L265)
 
 ## stop continuation
 
-while a request stays open, the `session_stop` handler returns `{ continue: true, additionalContext: <guidance> }`. omp treats that return as a request for one continuation turn.
+this module registers no `session_stop` handler. it installs its decision in a write-once slot and exports `questionnaireStop`. gate-checker registers the package's only `session_stop` handler and calls the gate completion decision first, then the questionnaire decision, then the omnipotence decision. the questionnaire continuation therefore runs only when the gate completion decision returns nothing, and its `additionalContext` is the declaring reason. omp treats a continuation return as a request for one continuation turn.
 
-- the handler returns nothing after a successful ask result.
-- the handler returns nothing when no request was armed.
-- the handler does not read `stop_hook_active`, so it repeats the request at each stop while the request stays open. a successful ask ends the chain.
+- while a questionnaire is pending, the decision returns `{ continue: true, additionalContext: <the declaring reason> }`.
+- the decision returns nothing after a successful ask result.
+- the decision returns nothing when no questionnaire is pending.
 
-sources: [session_stop handler](../ask-questionnaire/index.ts#L140-L146), [stop tests](../ask-questionnaire/index.test.ts#L157-L181); omp `session_stop` contract in `@oh-my-pi/pi-coding-agent` 17.2.15, `src/extensibility/shared-events.ts`
+sources: [slot installer](../ask-questionnaire/stop-decision.ts#L1-L9), [write-once slot](../stop-slot.ts#L1-L25), [gate-checker stop chain](../gate-checker/index.ts#L2259-L2263)
 
 ## installation
 
@@ -229,12 +186,12 @@ the package manifest declares what omp loads:
 
 | manifest field | effect |
 |---|---|
-| `omp.extensions` | omp loads `./gate-checker/index.ts` and `./ask-questionnaire/index.ts` |
-| `files` | the published package ships both extension entries, the gate-checker modules, advisor setup and watchdog files, and the readme |
+| `omp.extensions` | omp loads `./gate-checker/index.ts`, `./omnipotence/index.ts`, and `./ask-questionnaire/index.ts` |
+| `files` | the published package ships the three extension entries, `stop-slot.ts`, `ask-questionnaire/stop-decision.ts`, the gate-checker modules, the omnipotence modules, `docs/omnipotence-user-guide.md`, advisor setup and watchdog files, and the readme |
 
 run `/advisor-install` to configure the native terra advisor; see the [terra advisor user guide](advisor-role-user-guide.md). see the [gates plugin user guide](gates-plugin-user-guide.md) for gate behavior.
 
-sources: [`package.json`](../package.json#L32-L56), [manifest test](../plugin.test.ts)
+sources: [`package.json`](../package.json#L37-L76), [manifest test](../plugin.test.ts)
 
 ## updates and removal
 
@@ -249,7 +206,7 @@ notes:
 - removal stops the policy at the next start. an open request never survives a restart, because the state is in memory only.
 - omp records the installed version and the enabled state in its own plugin manager state; that record is omp behavior, not package behavior.
 
-sources: [state and reset handlers](../ask-questionnaire/index.ts#L92-L100), [`package.json`](../package.json#L35-L58)
+sources: [state and reset handlers](../ask-questionnaire/index.ts#L72-L77), [`package.json`](../package.json#L37-L76)
 
 ## focused tests
 
@@ -257,10 +214,10 @@ the repository holds two focused test files. `package.json#files` does not publi
 
 | file | coverage |
 |---|---|
-| [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | detector matches and non-matches, arming from direct input, extension-source rejection, ask-only allowance, guidance injection, success and failure transitions, stop continuation, and the three lifecycle resets |
+| [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | explicit declaration, owner conflict and same-owner retry, the read-only allowlist and blocking, reason injection, ask-result transitions, the exported stop decision, and the three lifecycle resets |
 | [`plugin.test.ts`](../plugin.test.ts) | manifest surface, declared extension entries, file allowlist, and a runtime import that proves each declared entry exports a factory function |
 
-the tests drive the extension through a fake extension api. they observe handler return values only, never internal state.
+the questionnaire test file contains no detector or input-source tests. the tests drive the extension through a fake extension api. they observe handler return values only, never internal state.
 
 documented verification commands, for a maintainer to run in a clean checkout:
 
@@ -271,7 +228,7 @@ bun run test
 
 `bun run test` also runs the gate-checker unit tests and the wiring probe.
 
-sources: [test harness](../ask-questionnaire/index.test.ts#L1-L50), [`package.json` scripts](../package.json#L59-L61)
+sources: [test harness](../ask-questionnaire/index.test.ts#L1-L50), [`package.json` scripts](../package.json#L78-L80)
 
 ## troubleshooting
 
@@ -279,27 +236,26 @@ sources: [test harness](../ask-questionnaire/index.test.ts#L1-L50), [`package.js
 
 check in this order:
 
-1. the phrase matches the detector table above.
-2. the text arrived through omp's interactive input event.
-3. the plugin is installed and enabled, and omp restarted after installation.
+1. the plugin is loaded.
+2. the model called `questionnaire_open` and the call returned `questionnaire armed by <owner>`.
 
-the omp event contract fires `input` for interactive submissions, so a flow that never emits that event never arms the policy.
+no chat phrase and no input event can arm this module.
 
 ### every tool is blocked
 
-one request is open. call the native `ask` tool, or start, switch, or branch the session to clear the state.
+a pending questionnaire blocks only tools outside the allowlist. `read`, `grep`, `glob`, `lsp`, `ast_grep`, `inspect_image`, `ask`, and `questionnaire_open` still work. a successful `ask` result or a session start, switch, or branch clears the pending questionnaire.
 
 ### blocking never stops
 
-the request closes only on a successful ask result or a lifecycle reset. inspect one cause:
+the questionnaire closes only on a successful ask result or a lifecycle reset. inspect one cause:
 
-- each ask call returns an error, which keeps the request open by design.
+- each ask call returns an error, which keeps the questionnaire pending by design.
 
-a request opens only while `ask` is active, so an inactive `ask` cannot strand a session.
+the read-only allowlist stays open while a questionnaire is pending, so an agent can still inspect the repository and retry the ask.
 
 ### the session keeps continuing at stop
 
-the same open request drives the continuation. a successful ask ends it.
+a pending questionnaire supplies the continuation context and a successful `ask` ends it. gate-checker's completion decision runs first, so a stop can show gate guidance instead of the questionnaire reason when both need a continuation.
 
 ### the guidance is missing from the transcript
 
@@ -309,31 +265,33 @@ this is expected. the message uses `display: false` and enters model context onl
 
 the dialog belongs to the installed omp version. this package does not render it and cannot change it.
 
-sources: [handlers](../ask-questionnaire/index.ts#L105-L152)
+sources: [handlers](../ask-questionnaire/index.ts#L106-L143), [handler tests](../ask-questionnaire/index.test.ts#L159-L265)
 
 ## limitations
 
 - the package contains no dialog, no preview renderer, no note editor, no timeout, no external editor, and no collaboration transport. every one of those belongs to native omp ask.
 - the package changes no omp core file, controls no prompt queue, and forces no tool choice.
-- one flag holds the state, so several new-project requests collapse into one requirement and one successful ask clears it.
-- detection is a regular expression over raw text. it misses paraphrases outside the verb and noun lists and matches incidental phrases that use those words.
-- blocking has no exception for read-only tools.
+- one in-memory `{ owner, reason }` object holds the state and does not survive a reload.
+- there is no text detector: only an explicit `questionnaire_open` call arms the policy.
+- blocking exempts a fixed read-only allowlist plus `ask` and declaration retries.
 - success means an ask result without an error. the extension does not check answer quality or answer count.
 - the state is in memory. it does not persist across restarts, and the lifecycle handlers clear it.
 
-sources: [extension scope comment](../ask-questionnaire/index.ts#L1-L16), [handlers](../ask-questionnaire/index.ts#L92-L152)
+sources: [extension scope comment](../ask-questionnaire/index.ts#L1-L16), [handlers](../ask-questionnaire/index.ts#L72-L143)
 
 ## source map
 
 | path | contents |
 |---|---|
-| [`ask-questionnaire/index.ts#L20-L31`](../ask-questionnaire/index.ts#L20-L31) | new-project detector and the exported `initiatesNewProject` helper |
-| [`ask-questionnaire/index.ts#L33-L39`](../ask-questionnaire/index.ts#L33-L39) | guidance text and custom message type |
-| [`ask-questionnaire/index.ts#L41-L88`](../ask-questionnaire/index.ts#L41-L88) | documented event payload and result shapes |
-| [`ask-questionnaire/index.ts#L92-L108`](../ask-questionnaire/index.ts#L92-L108) | request state, reset helper, and input detection |
-| [`ask-questionnaire/index.ts#L110-L131`](../ask-questionnaire/index.ts#L110-L131) | guidance injection and tool blocking |
-| [`ask-questionnaire/index.ts#L133-L146`](../ask-questionnaire/index.ts#L133-L146) | ask result transitions and stop continuation |
-| [`ask-questionnaire/index.ts#L148-L151`](../ask-questionnaire/index.ts#L148-L151) | session lifecycle resets |
+| [`ask-questionnaire/index.ts#L23`](../ask-questionnaire/index.ts#L23) | guidance custom message type |
+| [`ask-questionnaire/index.ts#L25-L36`](../ask-questionnaire/index.ts#L25-L36) | read-only tool allowlist |
+| [`ask-questionnaire/index.ts#L40-L68`](../ask-questionnaire/index.ts#L40-L68) | event payload interfaces |
+| [`ask-questionnaire/index.ts#L79-L104`](../ask-questionnaire/index.ts#L79-L104) | `questionnaire_open` tool registration |
+| [`ask-questionnaire/index.ts#L114-L123`](../ask-questionnaire/index.ts#L114-L123) | reason injection |
+| [`ask-questionnaire/index.ts#L133-L138`](../ask-questionnaire/index.ts#L133-L138) | ask-result clearing |
+| [`ask-questionnaire/index.ts#L140-L143`](../ask-questionnaire/index.ts#L140-L143) | session lifecycle resets |
 | [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | focused behavior tests |
 | [`package.json`](../package.json) | extension entries, publish allowlist, and test script |
 | [`plugin.test.ts`](../plugin.test.ts) | manifest and load-surface tests |
+| [`ask-questionnaire/stop-decision.ts`](../ask-questionnaire/stop-decision.ts) | questionnaire slot installer, release helper, and exported decision |
+| [`stop-slot.ts`](../stop-slot.ts) | independent write-once stop slots and the shared `StopDecision` type that the gate-checker owner calls |

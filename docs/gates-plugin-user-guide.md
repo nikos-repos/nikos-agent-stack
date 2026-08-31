@@ -9,6 +9,8 @@
 - [quick start](#quick-start)
 - [engagement levels](#engagement-levels)
 - [automatic extension behavior](#automatic-extension-behavior)
+  - [interrogate tool](#interrogate-tool)
+  - [session-stop decision order](#session-stop-decision-order)
 - [gate rule reference](#gate-rule-reference)
 - [configuration](#configuration)
 - [custom forbidden markers](#custom-forbidden-markers)
@@ -118,7 +120,7 @@ source: [declared extension entries and package contents](../package.json)
 /gates-engage
 ```
 
-this command shows the active level, each rule mode, the configured verification command, and the configuration source.
+with no argument, this command prints the active level, the marker, claim, manifest, subagent, snapshot, verification, complexity, commit, runtime, and runaway status lines, plus the configuration source. it prints no separate lines for the inline notice, scratchpad coverage, `no-absolute-home-path`, missing interrogation, or advisory risk; see [engagement levels](#engagement-levels) for those modes.
 
 ### use the normal coding profile
 
@@ -134,7 +136,7 @@ medium blocks unfinished added lines, unsupported file or test claims, contradic
 /gates-engage high
 ```
 
-high blocks every rule family. it blocks a failing configured verification command, but it does not invent a verifier. configure verification with `OMP_VERIFY_CMD` before a session or with `verifyCmd` in persisted configuration; trailing command text is rejected.
+high blocks the completion, citation, snapshot, manifest, subagent-claim, verification, commit, scratchpad, and runtime families. a configured complexity command stays warning-only at every level, and scope risk findings stay advisory at every level. it blocks a failing configured verification command, but it does not invent a verifier. configure verification with `OMP_VERIFY_CMD` before a session or with `verifyCmd` in persisted configuration; trailing command text is rejected.
 
 ### use warnings only
 
@@ -144,11 +146,13 @@ high blocks every rule family. it blocks a failing configured verification comma
 
 low keeps delivery findings advisory, but a missing scratchpad record still forces a continuation.
 
-### disable all checks and recording
+### disable gate checks
 
 ```text
 /gates-disable
 ```
+
+`/gates-disable` stops enforcement and scratchpad checks. the extension still opens a `request_start` journal entry and a terminal journal entry for each request, and still records a `no_git` ledger entry when the working directory is not a git repository.
 
 slash level changes apply in the current session and persist for later sessions. direct edits to persisted configuration are not reloaded by a live slash call: restart omp before a slash level change after an edit, or set the relevant `OMP_*` environment before the session.
 
@@ -171,16 +175,21 @@ source: [command registration and live policy updates](../gate-checker/index.ts)
 |---|---:|---:|---:|---:|
 | inline marker notice after `write` or `edit` | off | on | on | on |
 | forbidden markers in added lines | off | warn | block | block |
+| absolute home path in an added line (`no-absolute-home-path`) | off | warn | block | block |
+| missing interrogate call for a changed generation (`missing_interrogation`) | off | warn | block | block |
 | parent file and test claims | off | warn | block | block |
 | snapshot tag references | off | off | warn | block |
 | missing subagent manifest | off | off | auto | block |
 | subagent claims against the diff | off | warn | block | block |
 | configured verification command | off | warn | block | block |
+| configured complexity command on changed paths (`complexity_failed`) | off | warn | warn | warn |
 | clean tracked working tree | off | off | off | block |
 | scratchpad record for every active identity | off | block | block | block |
 | gate integrity (lease conflict, journal recovery, unreadable scope) | off | warn | block | block |
 | telemetry | off | on | on | on |
 | stalemate release and continuation cap | on | on | on | on |
+
+medium and high emit blocking `no_test_run` when files changed, no verification command is configured, and no passing test runner was observed. scope risk findings (`risk.*`) stay warning-level at every enabled level.
 
 `auto` means:
 
@@ -225,6 +234,12 @@ successful `write` and `edit` results receive an inline notice when that call ad
 
 source: [inline additions and tool-result hook](../gate-checker/index.ts), [completion predicate](../gate-checker/predicates.js)
 
+### interrogate tool
+
+the extension registers an `interrogate` tool with write approval and three required string fields: `unnecessary`, `deleted`, and `simplified`. while gates are enabled and the request changed files, one call is required when the generation adds a file, renames a file, creates an untracked file, or changes a dependency manifest or lockfile. a missing call warns at low and blocks at medium and high with rule `missing_interrogation`. the answer is recorded against the generation fingerprint, so a later changed generation needs a new call.
+
+source: [interrogate tool and trigger checks](../gate-checker/index.ts)
+
 ### final response enforcement
 
 at session stop, the plugin partitions findings into warnings and blocks:
@@ -236,14 +251,22 @@ at session stop, the plugin partitions findings into warnings and blocks:
 
 source: [session-stop enforcement and runaway protection](../gate-checker/index.ts)
 
+### session-stop decision order
+
+gate-checker registers the package's only `session_stop` handler. it evaluates the gate completion decision first, then the ask-questionnaire decision, then the omnipotence decision, through independent write-once slots. the first decision that qualifies wins, so stop precedence does not depend on extension load order.
+
+source: [session-stop handler registration](../gate-checker/index.ts), [write-once stop slots](../stop-slot.ts)
+
 ### when final enforcement is skipped
 
 final checks do not run when:
 
 - the active level is off.
 - the request made no tool calls, has no final assistant text, and has no journal recovery.
-- no final assistant text exists, the request did not use the user-question tool, and no journal recovery exists.
+- no final assistant text exists, the request did not use the user-question tool, changed no file, had no tool error, and no journal recovery exists.
 - the request used the user-question tool, changed no file, has no journal recovery, and every active agent session has a valid scratchpad record.
+
+a `write` or `edit`, or any failed tool call, keeps the final checks running even with no final assistant text.
 
 verification and commit checks also require at least one observed changed file. read-only work is not required to run tests or create a commit.
 
@@ -254,6 +277,8 @@ source: [session-stop early returns and change gate](../gate-checker/index.ts)
 | rule id | condition | resolution |
 |---|---|---|
 | `forbidden_marker` | an added line contains a default or project marker | implement the behavior or remove the marker |
+| `no-absolute-home-path` | an added line still carries an absolute home path after an interruption | remove the absolute home path from the added line |
+| `missing_interrogation` | the changed generation has no interrogate call | call `interrogate` for this generation |
 | `fabricated_modification` | the final response claims a backticked file changed, but the observed diff does not contain it | change the file or remove the claim |
 | `fabricated_test_result` | the final response claims tests passed without a successful recognized test-runner call or configured verification run | run the tests or remove the claim |
 | `ungrounded_snapshot_tag` | the response cites a four-hex read or edit snapshot tag that this request did not receive | use a current tool result or remove the tag |
@@ -262,11 +287,15 @@ source: [session-stop early returns and change gate](../gate-checker/index.ts)
 | `subagent_fabricated_modification` | subagent prose claims a file changed outside the observed diff | verify and correct the report |
 | `subagent_unverified_test` | a subagent claims tests passed without parent-session test evidence | run the tests in the parent session |
 | `verify_failed` | the configured verification command exits nonzero or times out | fix the failure; do not weaken the check |
+| `no_test_run` | medium or high changed files with no configured verifier and no observed passing test runner | run the project test command or set a verify command |
+| `complexity_failed` | the configured complexity command failed on the changed paths | warning only |
 | `uncommitted_changes` | high mode finds tracked unstaged or staged changes | commit the logical unit or lower the engagement level |
 | `missing_frustration_record` | an active main or subagent server session has no valid scratchpad record | call `record_frustration` for that session |
 | `mutation_lease_conflict` | another gate-aware session holds the worktree mutation lease | wait for that session to finish, then retry |
 | `recovery_required` | the request journal is malformed, stale, or policy-incompatible | start a fresh request |
 | `scope_unavailable` | git is present but the repository scope could not be resolved | repair the repository, then retry |
+
+advisory `risk.*` ids — `risk.auth_permissions`, `risk.dependencies`, `risk.migration`, `risk.public_contract`, `risk.file_deletion`, `risk.rename`, `risk.mode_change`, `risk.binary`, `risk.submodule`, `risk.destructive_operation` — are listed under [advisory risk rules](#advisory-risk-rules).
 
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 
@@ -293,6 +322,8 @@ format:
 
 set `verifyCmd` to the verification command your project uses.
 
+set `complexityCmd` to the project complexity command. when a request changed files, the configured command runs against those paths and produces warning-only `complexity_failed` findings.
+
 ### configuration precedence
 
 1. the persisted configuration file.
@@ -302,12 +333,15 @@ set `verifyCmd` to the verification command your project uses.
 
 `OMP_VERIFY_CMD` supplies a verification command when the persisted configuration does not contain one.
 
+`OMP_COMPLEXITY_CMD` supplies a complexity command when the persisted configuration does not contain one.
+
 ### environment variables
 
 | variable | purpose |
 |---|---|
 | `OMP_GATES_LEVEL` | selects `off`, `low`, `medium`, or `high` when no persisted config takes precedence |
 | `OMP_VERIFY_CMD` | sets the verification command when the config file does not set one |
+| `OMP_COMPLEXITY_CMD` | sets the complexity command when the config file does not set one |
 | `OMP_DELIVERY_GATES` | maps an enabled value to high |
 | `OMP_GATE_CONFIG` | redirects the persisted configuration file |
 | `OMP_GATE_LEDGER` | redirects the telemetry ledger |
@@ -321,7 +355,7 @@ export OMP_VERIFY_CMD='bun test'
 omp
 ```
 
-because the persisted file has higher precedence, remove or edit it before an environment-only override can change the level. slash commands preserve the in-memory verification command. after editing the persisted file, restart omp before any slash level change; a live slash call does not reload disk and can rewrite the stale verifier. alternatively, set the relevant `OMP_*` environment before the session, subject to persisted-config precedence. `/gates-disable` also preserves the verifier for later re-engagement.
+because the persisted file has higher precedence, remove or edit it before an environment-only override can change the level. slash commands preserve the in-memory verification and complexity commands. after editing the persisted file, restart omp before any slash level change; a live slash call does not reload disk and can rewrite the stale verifier. alternatively, set the relevant `OMP_*` environment before the session, subject to persisted-config precedence. `/gates-disable` also preserves the verifier for later re-engagement.
 
 source: [configuration loading, saving, and precedence](../gate-checker/config.js), [slash command behavior](../gate-checker/index.ts)
 
@@ -348,7 +382,9 @@ rules:
 - lines beginning with `#` are comments.
 - custom markers extend the defaults; they do not replace them.
 - matching is case-insensitive.
-- checks apply only to added lines.
+- checks apply only to added lines in code files: `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, `.rs`, `.go`, `.java`, `.rb`, `.sh`, `.c`, `.h`, `.cpp`, `.cs`, `.swift`, and `.kt`.
+
+an added marker in markdown, html, or any other path produces no completion finding. the inline notice, the final check, and the cutover command share this predicate.
 
 ### default markers
 
@@ -385,7 +421,7 @@ at agent start, the extension captures:
 
 - the current commit.
 - the repository root.
-- the current unstaged dirty-file set.
+- the staged, unstaged, and non-ignored untracked paths, including both endpoints of a rename.
 
 at session stop, it combines:
 
@@ -393,9 +429,9 @@ at session stop, it combines:
 - current unstaged changes.
 - current staged changes.
 
-it then excludes files that were already unstaged at the baseline. paths come from added, copied, modified, and renamed changes. untracked files and deletions are outside this diff set.
+baseline dirt that never changes stays out of the request. a baseline-dirty path returns to the request as soon as its content or existence changes after the request started. tracked deletions and new untracked files are inside the request scope.
 
-source: [baseline and diff derivation](../gate-checker/index.ts)
+source: [baseline and diff derivation](../gate-checker/index.ts), [request scope](../gate-checker/scope.js)
 
 ### low: no git
 
@@ -443,7 +479,7 @@ behavior:
 - failed results always run again after a continuation.
 - a passing configured run counts as evidence for a final “tests passed” claim.
 
-the plugin does not guess a default extension-level test command. without a configured command, the verification rule is off even at high level.
+the plugin does not guess a default extension-level test command. when medium or high has changed files and no `verifyCmd`, the extension emits blocking `no_test_run` unless the parent session already observed a passing recognized test runner.
 
 source: [verification execution and cache](../gate-checker/index.ts), [level display](../gate-checker/config.js)
 
@@ -453,10 +489,10 @@ the canonical agent directory is `PI_CODING_AGENT_DIR` when set, otherwise
 `~/.omp/agent`. when this script exists:
 
 ```text
-<agent-dir>/skills/git-pushing/scripts/smart_commit.sh
+<agent-dir>/skills/git-commit/scripts/smart_commit.sh
 ```
 
-the extension rewrites supported bash commit commands before execution.
+the extension resolves this script path once at module load, and rewrites supported bash commit commands before execution.
 
 ### routed forms
 
@@ -472,7 +508,9 @@ the extension rewrites supported bash commit commands before execution.
 - preserves shell commands before and after the commit segment.
 - removes a redundant leading `git add` because the script stages changes.
 - leaves `git commit --amend` unchanged.
-- does not rewrite quoted text or unrelated script names such as `my_smart_commit.sh`.
+- rewrites a quoted or unquoted token or path that ends in `smart_commit.sh`.
+- leaves a prefixed name such as `my_smart_commit.sh` alone.
+- leaves an already absolute path that already carries `--no-push` unchanged.
 
 routing creates a local commit only. it does not publish or push.
 
@@ -574,7 +612,7 @@ if a `none` record follows any failed tool result or a continuation forced by an
 
 ### automatic gate records
 
-the extension writes a machine-authored scratchpad record for every warning or blocking gate outcome. its gate evidence names the exact rule and event, and `source` is `auto`. it satisfies main-session coverage in that same `session_stop`, but never a child session because each child has a different server session identity. an agent can append a separate `source: "agent"` record with its own perspective.
+the extension writes a machine-authored record for every applied warning or blocking outcome except `missing_frustration_record`. that failure stays unsatisfied until an agent writes a valid record, so the coverage rule cannot satisfy itself. every active identity still needs its own record. its gate evidence names the exact rule and event, and `source` is `auto`. it satisfies main-session coverage in that same `session_stop`, but never a child session because each child has a different server session identity. an agent can append a separate `source: "agent"` record with its own perspective.
 
 source: [scratchpad tool and identity coverage](../gate-checker/index.ts), [record validation and taxonomy](../gate-checker/frustrations.js), [level policy](../gate-checker/config.js)
 
@@ -611,8 +649,10 @@ nikos-gates <command>
 omnipotence --help
 ```
 
-supported `nikos-gates` commands are `audit`, `cutover`, and `stats`. an unknown
-command prints the usage summary.
+supported `nikos-gates` commands are `advisor install`, `audit`, `cutover`, and `stats`. an
+unknown command prints the usage summary. the extension also registers the `/advisor-install`
+slash command, which takes no arguments. see the [advisor role user guide](advisor-role-user-guide.md)
+for what terra does.
 
 from a repository checkout, `bun run gate-checker/gate-cli.js <command>` runs
 the same interface without a global install or link.
@@ -639,8 +679,9 @@ cutover scans:
 - committed additions between the base and the current commit.
 - unstaged additions.
 - staged additions.
+- non-ignored untracked files, with their whole content read as added lines.
 
-if the base does not resolve, cutover falls back to the root commit. the explicit marker file still extends the default marker list.
+cutover resolves the request scope for these paths. if the base does not resolve, cutover falls back to the root commit. the explicit marker file still extends the default marker list.
 
 exit codes:
 
@@ -747,12 +788,12 @@ source: [configuration precedence](../gate-checker/config.js)
 
 ### high says verification is off
 
-high does not invent a test command. set `OMP_VERIFY_CMD` before starting omp when the persisted config has no verifier, or edit `verifyCmd` in the persisted configuration, restart omp, then run:
+high does not invent a test command. with changed files and no `verifyCmd`, medium and high emit blocking `no_test_run` unless the parent session already observed a passing recognized test runner. set `OMP_VERIFY_CMD` before starting omp when the persisted config has no verifier, or edit `verifyCmd` in the persisted configuration, restart omp, then run:
 
 ```text
 /gates-engage high
 ```
-source: [high-level description](../gate-checker/config.js)
+source: [high-level description](../gate-checker/config.js), [no-test-run check](../gate-checker/index.ts)
 
 ### a test-success statement is rejected
 
@@ -794,7 +835,7 @@ source: [commit policy](../gate-checker/config.js), [clean-tree predicate](../ga
 
 ### commit routing does not occur
 
-confirm that `smart_commit.sh` exists under `PI_CODING_AGENT_DIR` when set, otherwise under `~/.omp/agent/skills/git-pushing/scripts/`. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally not rewritten.
+confirm that `smart_commit.sh` exists under `PI_CODING_AGENT_DIR` when set, otherwise under `~/.omp/agent/skills/git-commit/scripts/`. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally not rewritten.
 
 source: [commit routing activation](../gate-checker/index.ts)
 
@@ -815,7 +856,7 @@ the working build adds deterministic repository scopes without changing native o
 
 `scope.js` resolves four immutable scopes:
 
-- `request`: committed, staged, unstaged, and new untracked changes since the request baseline, excluding files already dirty at that baseline.
+- `request`: committed, staged, unstaged, and new untracked changes since the request baseline. baseline dirt that never changes stays out; a baseline-dirty path returns when its content or existence changes after the request started. tracked deletions and new untracked files are inside the scope.
 - `uncommitted`: current staged, unstaged, and untracked changes.
 - `base`: the merge base of a supplied ref through the current commit.
 - `commit`: one resolved commit against its parent.
@@ -867,13 +908,13 @@ scope audits report stable advisory rule ids for:
 
 these findings remain advisory. no finding means that no deterministic rule matched; it does not prove safety.
 
-### opt-in cooperative mutation lease
+### cooperative mutation lease
 
-set `OMP_GATE_MUTATION_LEASE=1` to coordinate gate-aware sessions that share one git worktree.
+the lease is enabled by default whenever the gate policy is enabled. set `OMP_GATE_MUTATION_LEASE` to `0`, `false`, or `off` to disable it.
 
-the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. stale recovery requires both the configured age and a dead owner process. native `write`, `edit`, `bash`, and non-isolated `task` calls are blocked for a conflicting gate-aware session.
+the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. acquisition is lazy: the extension takes the lease at the first mutation-capable call (`write`, `edit`, `bash`, and a `task` that is not isolated), so read-only work never holds it. a conflict hard-blocks the mutation call at every enabled level and also raises `mutation_lease_conflict` at stop. the lease releases on a terminal request outcome, on session shutdown, and when a new request starts with the previous one abandoned. reclaim needs an age above 30 minutes with a dead holder process, or force-reclaims any holder after 12 hours.
 
-the lease cannot exclude external editors or arbitrary processes. it is disabled by default.
+the lease cannot exclude external editors or arbitrary processes.
 
 ## verification and development
 
@@ -882,9 +923,9 @@ source for the public surface. it declares:
 
 | manifest field | contents |
 |---|---|
-| `omp.extensions` | `./gate-checker/index.ts` and `./ask-questionnaire/index.ts`, the entries omp loads |
-| `bin` | `nikos-gates`, mapped to `gate-checker/gate-cli.js` |
-| `exports` | `./gate-cli`, for importing the command-line surface |
+| `omp.extensions` | `./gate-checker/index.ts`, `./omnipotence/index.ts`, and `./ask-questionnaire/index.ts`, the entries omp loads |
+| `bin` | `nikos-gates`, mapped to `gate-checker/gate-cli.js`, and `omnipotence` |
+| `exports` | `./gate-cli` and `./omnipotence` |
 | `files` | the runtime file allowlist the plugin manager installs |
 
 run every focused test, the package-contract test, and the end-to-end wiring probe from the repository root:
@@ -917,10 +958,10 @@ use isolated configuration and ledger paths when running `index.ts` directly so 
 | [provenance.js](../gate-checker/provenance.js) | native task result and lifecycle normalization |
 | [journal.js](../gate-checker/journal.js) | versioned session journal reducer and branch reconstruction |
 | [risks.js](../gate-checker/risks.js) | deterministic advisory diff rules |
-| [lease.js](../gate-checker/lease.js) | opt-in cooperative worktree mutation lease |
+| [lease.js](../gate-checker/lease.js) | cooperative worktree mutation lease |
 | [config.js](../gate-checker/config.js) | engagement levels, rule-family mapping, persistence, precedence, and status text |
 | [predicates.js](../gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
-| [gate-cli.js](../gate-checker/gate-cli.js) | scope audit, cutover, and stats command-line interface |
+| [gate-cli.js](../gate-checker/gate-cli.js) | advisor installer, scope audit, cutover, and stats command-line interface |
 | [ledger.js](../gate-checker/ledger.js) | append-only events, explicit release metrics, safe reading, and aggregation |
 | [frustrations.js](../gate-checker/frustrations.js) | scratchpad record validation, taxonomy, server-bound identity coverage, and automatic gate records |
 | [wiring-check.ts](../gate-checker/wiring-check.ts) | isolated end-to-end extension probe |

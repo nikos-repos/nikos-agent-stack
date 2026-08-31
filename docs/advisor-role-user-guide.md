@@ -34,8 +34,8 @@ source: [package command](../package.json), [advisor setup command](../advisor/i
 the setup command:
 
 - preserves top-level instructions and every non-terra advisor;
-- normalizes advisor names, then replaces or adds terra;
-- validates the native watchdog schema before writing;
+- normalizes names only to find and drop an existing terra entry, keeps every other advisor name as written, then appends the packaged terra entry;
+- checks before writing for a top-level mapping, a string `instructions`, an `advisors` list, and each advisor's string `name`, optional string `model` and `instructions`, string-list `tools`, and boolean `enabled`;
 - writes atomically to `WATCHDOG.yml`, or to an existing `WATCHDOG.yaml` when no `.yml` file exists; and
 - is idempotent: a repeated setup leaves the same terra configuration.
 
