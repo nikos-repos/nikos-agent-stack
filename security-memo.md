@@ -47,3 +47,36 @@ vulnerability; each item is an unverified assumption or an accepted scope bounda
 - **`omnipotence/api.ts` is a wildcard barrel**, so every internal export from the store,
   engine, and loader is public by accident. narrowing it is a breaking change to the
   published `./omnipotence` export and needs a version decision.
+
+## 2026-08-31 — lease fix and api narrowing
+
+### resolved
+
+- **`gate-checker` mutation lease deadlock.** fixed in two parts: `agent_start` now
+  settles an abandoned request (new turn, no open continuation) and releases its lease,
+  and `acquirelease` force-reclaims any lease older than twelve hours even when the
+  holder pid is alive. covered by three new `lease.test.ts` cases and a wiring probe
+  ("an abandoned request releases its lease on its next agent turn"). note: running
+  sessions keep the old behaviour until they reload the extension.
+- **`omnipotence/api.ts` wildcard barrel.** narrowed to the authoring surface:
+  `defineprocess`, `definehook`, `assertvalid`, `jsonvalueof`, `stablejson` plus the
+  authoring types. `plugin.test.ts` pins no-wildcards and the exact runtime value set.
+  verified: zero in-repo consumers, zero imports from installed production blueprints,
+  and the documented `defineprocess` install → load → resolve path works through the
+  narrowed barrel.
+
+### refined findings
+
+- **`loader.ts` coercion (updated, narrower than first filed).** `definehook` does
+  validate phase, priority range, and timeoutms range (`hooks.ts`), so the gap is only
+  that `processvalue`/`hookvalue` discard type errors before those validators run:
+  `priority: "high"` silently loads at priority 100, a non-number `maxturns` silently
+  takes the default. still open; fixing it changes behaviour for malformed blueprints.
+
+### newly observed, out of scope
+
+- **installed blueprint integrity drift.** re-installing the production
+  `factory-workflow/1.0.0` blueprint from `~/.omp/nikos-agent-stack/blueprints` fails
+  with `hooks/factory-guard.ts hash mismatch` — the on-disk files no longer match the
+  manifest hashes recorded at install time. pre-existing, in user state outside the
+  repo. reinstall or re-seal the manifest deliberately.
