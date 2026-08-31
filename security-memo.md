@@ -80,3 +80,20 @@ vulnerability; each item is an unverified assumption or an accepted scope bounda
   with `hooks/factory-guard.ts hash mismatch` — the on-disk files no longer match the
   manifest hashes recorded at install time. pre-existing, in user state outside the
   repo. reinstall or re-seal the manifest deliberately.
+
+## 2026-08-31 — user-guide refresh
+
+### newly observed, out of scope
+
+- **the mutation lease still strands delegated writers.** the twelve-hour force reclaim
+  and the abandoned-request release both hold, but neither covers the common delegation
+  shape. a parent that makes one mutation-capable call takes the lease
+  (`gate-checker/index.ts:1584-1589`) and keeps it until its own request reaches a
+  terminal outcome, so every subagent it spawns is hard-blocked at
+  `gate-checker/index.ts:1590-1603` for the rest of the parent turn. a subagent that
+  takes the lease and then yields leaks it the same way: it is idle but alive, so the
+  dead-pid rule in `gate-checker/lease.js:112-117` never fires and the next sibling
+  blocks. observed four times during this doc refresh; each writer had to be unblocked by
+  hand before it could edit. candidate fixes, none applied: release the lease when a
+  subagent yields, scope the lease per changed path set instead of per worktree, or let a
+  parent lend its lease to its own children.
