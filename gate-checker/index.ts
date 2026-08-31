@@ -702,6 +702,27 @@ export function canskipuserquestion(
   return askeduser && changedcount === 0 && !journalrecovery && !missingfrustration;
 }
 
+// the mutation-capable classification, shared by lazy lease acquisition and
+// the conflict block in tool_call. a `task` counts as mutating only when it is
+// not explicitly isolated: isolated work never needs the shared worktree lease.
+function ismutationtool(
+  toolName: string,
+  input: Record<string, unknown> | undefined,
+): boolean {
+  let isolated = input?.isolated === true;
+  if (toolName === "task" && Array.isArray(input?.tasks)) {
+    isolated = input.tasks.length > 0 && input.tasks.every(
+      (item) =>
+        Boolean(item) &&
+        typeof item === "object" &&
+        "isolated" in item &&
+        item.isolated === true,
+    );
+  }
+  return toolName === "write" || toolName === "edit" ||
+    toolName === "bash" || (toolName === "task" && !isolated);
+}
+
 // --- delivery gates (verify + commit), armed by env var ---------------------
 //
 // the citation and completion gates answer "did the work happen and is it
@@ -1097,7 +1118,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         baseline_dirty: [...baseline.dirty].sort(),
         baseline_snapshots: baseline.snapshots,
       });
-      ensurelease(baseline.repo_root);
       try {
         ctx?.ui?.setStatus?.("gate", armingStatus());
       } catch {}
@@ -1181,7 +1201,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineSnapshots = state.baseline_snapshots;
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
-    ensurelease(state.repo_root);
   };
   const terminaljournal = (
     outcome: string,
@@ -1509,10 +1528,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // would never advance.
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
     const cwd = String(ctx?.cwd ?? ".");
-    if (continuationCount > 0) {
-      if (evidence.repoRoot) ensurelease(evidence.repoRoot);
-      return;
-    }
+    if (continuationCount > 0) return;
     if (requestId) {
       // a new agent turn with no open continuation means the previous request
       // ended without settling — abandoned or interrupted. that is a completion:
@@ -1534,9 +1550,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       baseline_sha: baseline.sha,
       baseline_dirty: [...baseline.dirty].sort(),
       baseline_snapshots: baseline.snapshots,
-      policy_fingerprint: policyfingerprint(),
     });
-    if (baseline.repo_root) ensurelease(baseline.repo_root);
 
     // no git — fall back to first-touch content hashing (see tool_call below)
     if (baseline.sha === null) {
@@ -1567,33 +1581,25 @@ export default function gateChecker(pi: ExtensionAPI): void {
     bindrepository(input, ctx);
 
     reportrepositorylimit(input, ctx);
-    if (leaseConflict) {
-      let isolated = input?.isolated === true;
-      if (toolName === "task" && Array.isArray(input?.tasks)) {
-        isolated = input.tasks.length > 0 && input.tasks.every(
-          (item) =>
-            Boolean(item) &&
-            typeof item === "object" &&
-            "isolated" in item &&
-            item.isolated === true,
-        );
-      }
-      const mutating = toolName === "write" || toolName === "edit" ||
-        toolName === "bash" || (toolName === "task" && !isolated);
-      if (mutating) {
-        let owner = "another gate-aware session";
-        const conflict = leaseConflict.conflict;
-        if (
-          conflict &&
-          typeof conflict === "object" &&
-          "owner_id" in conflict &&
-          typeof conflict.owner_id === "string"
-        ) owner = conflict.owner_id;
-        return {
-          block: true,
-          reason: `mutation lease held by ${owner}; retry after that session releases it`,
-        };
-      }
+    // lazy lease: acquire here — after repository binding, immediately before
+    // the conflict evaluation, and only for a mutation-capable operation.
+    // read-only discovery never touches the lease, so it never holds the
+    // worktree and never blocks another session's mutation.
+    const mutating = ismutationtool(toolName, input);
+    if (mutating && evidence.repoRoot) ensurelease(evidence.repoRoot);
+    if (leaseConflict && mutating) {
+      let owner = "another gate-aware session";
+      const conflict = leaseConflict.conflict;
+      if (
+        conflict &&
+        typeof conflict === "object" &&
+        "owner_id" in conflict &&
+        typeof conflict.owner_id === "string"
+      ) owner = conflict.owner_id;
+      return {
+        block: true,
+        reason: `mutation lease held by ${owner}; retry after that session releases it`,
+      };
     }
 
     if (toolName === "ask") evidence.askedUser = true;

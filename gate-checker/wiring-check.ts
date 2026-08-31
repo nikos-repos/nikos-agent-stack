@@ -5,7 +5,7 @@
 // dirtied before agent_start lands in baselineDirty and is subtracted from the
 // diff by design, which is not the scenario under test.
 import { execSync } from "child_process";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync } from "fs";
 import { tmpdir } from "os";
 import { resolve } from "path";
 
@@ -856,8 +856,39 @@ console.log("14. cooperative mutation lease");
 process.env.OMP_GATE_MUTATION_LEASE = "1";
 const leaseOwner = mkHandlers();
 const leaseWaiter = mkHandlers();
+// observable lease state: the lease directory under the probe repo's git
+// common dir. empty (or absent) means no session holds the worktree lease.
+const leaseDir = resolve(repo, ".git", "omp-gates", "leases");
+const held = (): boolean => {
+  try {
+    // a held lease is a directory keyed by worktree identity; the sibling
+    // `<key>.fence` file is the monotonic fence counter and always remains.
+    return readdirSync(leaseDir, { withFileTypes: true }).some((e) => e.isDirectory());
+  } catch {
+    return false;
+  }
+};
 await start(leaseOwner, ctx);
 await start(leaseWaiter, ctx);
+expect(!held(), "request startup acquires no lease before any mutation");
+// read-only discovery: creates no lease and blocks nobody.
+const readLease = (await leaseWaiter.tool_call!(
+  { toolName: "read", input: { path: "src/a.txt" } },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(readLease?.block !== true, "read-only inspection is never lease-blocked");
+expect(!held(), "read-only repository inspection creates no lease");
+// the first mutation acquires the lease — and it was not blocked by a session
+// that had only read.
+const ownerWrite = (await leaseOwner.tool_call!(
+  { toolName: "write", input: { path: "src/leased.txt" } },
+  ctx,
+)) as { block?: boolean } | undefined;
+expect(
+  ownerWrite?.block !== true,
+  "a session that only read does not block another session's first mutation",
+);
+expect(held(), "the first mutation acquires the lease");
 const blockedLease = (await leaseWaiter.tool_call!(
   { toolName: "write", input: { path: "src/leased.txt" } },
   ctx,
@@ -880,12 +911,13 @@ const isolatedTask = (await leaseWaiter.tool_call!(
 )) as { block?: boolean } | undefined;
 expect(isolatedTask?.block !== true, "isolated task work does not need the shared lease");
 await leaseOwner.session_tree!({}, ctx);
+expect(!held(), "branch navigation releases the prior worktree lease");
 await start(leaseWaiter, ctx);
 const retriedLease = (await leaseWaiter.tool_call!(
   { toolName: "write", input: { path: "src/leased.txt" } },
   ctx,
 )) as { block?: boolean } | undefined;
-expect(retriedLease?.block !== true, "branch navigation releases the prior worktree lease");
+expect(retriedLease?.block !== true, "a released lease is reacquired by the next mutation");
 await leaseWaiter.session_shutdown!({}, ctx);
 // an abandoned request — the holder went idle without a terminal outcome — must
 // release the lease on its next agent turn instead of holding the worktree
@@ -895,7 +927,9 @@ await leaseOwner.tool_call!(
   { toolName: "write", input: { path: "src/abandoned.txt" } },
   ctx,
 );
+expect(held(), "the abandoned-request holder did acquire its lease");
 await leaseOwner.agent_start!({}, ctx);
+expect(!held(), "the abandoned request releases its lease on its next agent turn");
 const afterAbandon = (await leaseWaiter.tool_call!(
   { toolName: "write", input: { path: "src/leased.txt" } },
   ctx,
@@ -904,6 +938,7 @@ expect(
   afterAbandon?.block !== true,
   "an abandoned request releases its lease on its next agent turn",
 );
+await leaseWaiter.session_shutdown!({}, ctx);
 process.env.OMP_GATE_MUTATION_LEASE = "off";
 
 console.log("15. journal recovery");
