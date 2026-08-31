@@ -160,6 +160,18 @@ test("the package exposes only the declared public surface", async () => {
 		const extension = await import(new URL(entry, import.meta.url).href);
 		expect(typeof extension.default).toBe("function");
 	}
+	// the omnipotence api is the authoring surface: a wildcard barrel would make every
+	// internal export public by accident, so pin no wildcards and exactly these values.
+	const apisource = readFileSync(resolve(root, "omnipotence/api.ts"), "utf8");
+	expect(apisource).not.toContain("export *");
+	const api = await import(new URL("omnipotence/api.ts", import.meta.url).href);
+	expect(Object.keys(api).sort()).toEqual([
+		"assertvalid",
+		"definehook",
+		"defineprocess",
+		"jsonvalueof",
+		"stablejson",
+	]);
 });
 
 test("terra is a native passive advisor with source-backed notes", () => {
