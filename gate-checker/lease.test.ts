@@ -1,8 +1,8 @@
 import { afterEach as aftereach, expect, test } from "bun:test";
 import { execFileSync as execfilesync } from "node:child_process";
-import { mkdtempSync as mkdtempsync, rmSync as rmsync } from "node:fs";
+import { chmodSync as chmodsync, mkdtempSync as mkdtempsync, rmSync as rmsync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { acquirelease, releaselease } from "./lease.js";
 
 const repos: string[] = [];
@@ -135,4 +135,22 @@ test("the default force window reclaims a live holder after twelve hours", () =>
   expect(recovered.recovered).toBe(true);
   expect(recovered.fence).toBeGreaterThan(first.fence);
   expect(releaselease(recovered)).toBe(true);
+});
+
+test("a non-eexist acquisition failure propagates instead of becoming a conflict", () => {
+  const cwd = repo();
+  const first = acquirelease({ cwd, owner_id: "owner-1", request_id: "request-1" });
+  expect(first.acquired).toBe(true);
+  releaselease(first);
+
+  // remove the recovered lease directory, then make its parent read-only so
+  // re-creating it fails with eacces — infrastructure failure, not contention.
+  const leasesdir = dirname(first.path as string);
+  rmsync(first.path as string, { recursive: true, force: true });
+  chmodsync(leasesdir, 0o555);
+  try {
+    expect(() => acquirelease({ cwd, owner_id: "owner-2", request_id: "request-2" })).toThrow();
+  } finally {
+    chmodsync(leasesdir, 0o755);
+  }
 });

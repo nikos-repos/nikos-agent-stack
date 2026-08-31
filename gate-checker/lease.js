@@ -104,6 +104,9 @@ export function acquirelease(options) {
       writeFileSync(data_path, JSON.stringify(lease, null, 2) + "\n", "utf8");
       return lease;
     } catch (error) {
+      // only a held lease is a conflict; every other failure — permissions,
+      // full disk, renamed parent — is infrastructure and must propagate.
+      if (String(error?.code ?? "").toLowerCase() !== "eexist") throw error;
       const conflict = readjson(data_path);
       const age = now - Number(conflict?.started_at);
       const holderdead = !processalive(Number(conflict?.pid));
