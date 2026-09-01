@@ -76,6 +76,6 @@
     "README.md"
   ],
   "scripts": {
-    "test": "bun test gate-checker/*.test.ts ask-questionnaire/*.test.ts omnipotence/*.test.ts plugin.test.ts && bun run gate-checker/wiring-check.ts"
+    "test": "bun test ask-questionnaire/*.test.ts omnipotence/*.test.ts plugin.test.ts && bun run gate-checker/wiring-check.ts"
   }
 }

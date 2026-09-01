@@ -1,374 +1,159 @@
-/**
- * @module gate-checker/frustrations
- * @description append-only jsonl scratchpad for every frustration a session or
- * subagent encounters. the gate-checker enforces a record for every active
- * identity, so the tool this module backs is the escape valve the agent uses
- * to satisfy that gate.
- *
- * never throws. a broken scratchpad must not break the agent — mirrors
- * ledger.js.
- *
- * record shape:
- *   { ts, request_id, session_file, session_id, agent_id, primary_goal, complaint, type, severity, evidence[], source }
- *
- * evidence variants:
- *   { kind: "gate", event_id, rule }
- *   { kind: "snapshot", path, line, digest, claim }
- *   { kind: "command", command, exit_code, output }
- */
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
+import { dirname, resolve as resolvePath } from "node:path";
+import { isRecord, isText, parseJsonObject } from "./predicates.js";
 
-import { appendFileSync, mkdirSync, existsSync, readFileSync } from "fs";
-import { resolve as resolvePath, dirname } from "path";
-import { homedir } from "os";
-import { randomUUID } from "crypto";
-
-// omp_gate_frustrations redirects the scratchpad, same rationale as the ledger
-// env var: a test run must not pollute real data.
-export const FRUSTRATION_PATH =
-  process.env.OMP_GATE_FRUSTRATIONS ||
+export const FRUSTRATION_PATH = process.env.OMP_GATE_FRUSTRATIONS ||
   resolvePath(homedir(), ".omp/gate-checker/frustrations.jsonl");
-
-const FIXED_TYPES = [
-  "tooling",
-  "environment",
-  "requirements",
-  "workflow",
-  "test",
-  "dependency",
-  "performance",
-  "other",
-  "none",
-];
-
+const FIXED_TYPES = ["tooling", "environment", "requirements", "workflow", "test", "dependency", "performance", "other", "none"];
 const FIXED_SEVERITIES = ["low", "medium", "high", "blocker"];
 
-function nonemptystring(value) {
-  return typeof value === "string" && value.trim().length > 0;
-}
+const nonempty = (value) => isText(value) && value.trim().length > 0;
+const timestamp = (value) => nonempty(value) && Number.isFinite(Date.parse(value));
 
-function validtimestamp(value) {
-  return nonemptystring(value) && Number.isFinite(Date.parse(value));
-}
-
-/**
- * loads the active taxonomy. fixed defaults are always present; a project may
- * extend both lists via `<repo>/.omp/gates-frustrations.json`.
- *
- * @param {string} [repoRoot]
- * @returns {{types: string[], severities: string[]}}
- */
 export function loadTaxonomy(repoRoot) {
   const types = [...FIXED_TYPES];
   const severities = [...FIXED_SEVERITIES];
-  if (repoRoot) {
-    const ext = resolvePath(repoRoot, ".omp/gates-frustrations.json");
+  if (isText(repoRoot) && repoRoot) {
     try {
-      if (existsSync(ext)) {
-        const data = JSON.parse(readFileSync(ext, "utf-8"));
-        if (Array.isArray(data.types)) {
-          for (const t of data.types) {
-            if (nonemptystring(t) && !types.includes(t)) types.push(t);
-          }
-        }
-        if (Array.isArray(data.severities)) {
-          for (const s of data.severities) {
-            if (nonemptystring(s) && !severities.includes(s)) severities.push(s);
-          }
-        }
+      const data = existsSync(resolvePath(repoRoot, ".omp/gates-frustrations.json"))
+        ? parseJsonObject(readFileSync(resolvePath(repoRoot, ".omp/gates-frustrations.json"), "utf8"))
+        : null;
+      for (const [key, values] of [["types", types], ["severities", severities]]) {
+        if (!data || !Array.isArray(data[key])) continue;
+        for (const value of data[key]) if (nonempty(value) && !values.includes(value)) values.push(value);
       }
-    } catch {
-      // a broken extension file must not widen or narrow the taxonomy
-    }
+    } catch {}
   }
   return { types, severities };
 }
 
-function validevidence(ev) {
-  if (!ev || typeof ev !== "object" || Array.isArray(ev)) return false;
-  if (ev.kind === "gate")
-    return nonemptystring(ev.event_id) && nonemptystring(ev.rule);
-  if (ev.kind === "snapshot")
-    return (
-      nonemptystring(ev.path) &&
-      Number.isInteger(ev.line) &&
-      ev.line > 0 &&
-      nonemptystring(ev.digest) &&
-      nonemptystring(ev.claim)
-    );
-  if (ev.kind === "command")
-    return (
-      nonemptystring(ev.command) &&
-      Number.isInteger(ev.exit_code) &&
-      typeof ev.output === "string"
-    );
-  return false;
+function validEvidence(evidence) {
+  if (!isRecord(evidence)) return false;
+  if (evidence.kind === "gate") return nonempty(evidence.event_id) && nonempty(evidence.rule);
+  if (evidence.kind === "snapshot") return nonempty(evidence.path) &&
+    Number.isInteger(evidence.line) && evidence.line > 0 && nonempty(evidence.digest) && nonempty(evidence.claim);
+  return evidence.kind === "command" && nonempty(evidence.command) &&
+    Number.isInteger(evidence.exit_code) && isText(evidence.output);
 }
 
-function recordtaxonomyroot(record, repoRoot) {
-  if (nonemptystring(repoRoot)) return repoRoot;
-  return nonemptystring(record?.repo_root) ? record.repo_root : undefined;
+function taxonomyRoot(record, repoRoot) {
+  return nonempty(repoRoot) ? repoRoot : isRecord(record) && nonempty(record.repo_root)
+    ? record.repo_root : undefined;
 }
 
-function validstoredrecord(record, repoRoot) {
-  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
-  if (
-    !validtimestamp(record.ts) ||
-    !nonemptystring(record.request_id) ||
-    !nonemptystring(record.agent_id) ||
-    !nonemptystring(record.session_file) ||
-    !nonemptystring(record.session_id) ||
-    !nonemptystring(record.primary_goal) ||
-    !nonemptystring(record.complaint) ||
-    !nonemptystring(record.type) ||
-    !nonemptystring(record.severity) ||
-    !Array.isArray(record.evidence) ||
-    record.evidence.length === 0
-  )
+function validStoredRecord(record, repoRoot) {
+  if (!isRecord(record) || !timestamp(record.ts) || !nonempty(record.request_id) ||
+      !nonempty(record.agent_id) || !nonempty(record.session_file) || !nonempty(record.session_id) ||
+      !nonempty(record.primary_goal) || !nonempty(record.complaint) || !nonempty(record.type) ||
+      !nonempty(record.severity) || !Array.isArray(record.evidence) || !record.evidence.length)
     return false;
-  if (record.source !== undefined && record.source !== "agent" && record.source !== "auto")
+  if (record.source !== undefined && record.source !== "agent" && record.source !== "auto") return false;
+  const [evidence] = record.evidence;
+  if (record.type === "none" && (record.complaint !== "none" || record.severity !== "low" ||
+      record.evidence.length !== 1 || !isRecord(evidence) || evidence.kind !== "gate" || evidence.rule !== "clean_turn"))
     return false;
-  if (record.type === "none") {
-    const [evidence] = record.evidence;
-    if (
-      record.complaint !== "none" ||
-      record.severity !== "low" ||
-      record.evidence.length !== 1 ||
-      evidence?.kind !== "gate" ||
-      evidence?.rule !== "clean_turn"
-    )
-      return false;
-  }
-  const { types, severities } = loadTaxonomy(repoRoot);
-  return (
-    types.includes(record.type) &&
-    severities.includes(record.severity) &&
-    record.evidence.every(validevidence)
-  );
+  const taxonomy = loadTaxonomy(repoRoot);
+  return taxonomy.types.includes(record.type) && taxonomy.severities.includes(record.severity) &&
+    record.evidence.every(validEvidence);
 }
 
-/**
- * validates and normalises a record. injects trusted request and session
- * identity values. invalid input returns
- * { ok: false, error }, never throws. type "none" is the clean-turn signal:
- * it forces complaint "none" and severity "low", drops agent evidence, and
- * injects one trusted gate entry.
- *
- * @param {Record<string, unknown>} input
- * @param {{repoRoot?: string, requestId?: string, cwd?: string, sessionFile?: string, sessionId?: string, source?: string}} [options]
- * @returns {{ok: true, record: Record<string, unknown>} | {ok: false, error: string}}
- */
 export function validateRecord(input, options = {}) {
   try {
-    if (!input || typeof input !== "object" || Array.isArray(input))
-      return { ok: false, error: "record must be an object" };
-    const session_file = nonemptystring(options.sessionFile)
-      ? options.sessionFile
-      : null;
-    if (!session_file)
-      return { ok: false, error: "session_file is required" };
-    const session_id = nonemptystring(options.sessionId)
-      ? options.sessionId
-      : null;
-    if (!session_id)
-      return { ok: false, error: "session_id is required" };
-    // source is extension-controlled; a client-sent input.source never
-    // reaches the stored record
-    const source = options.source === "auto" ? "auto" : "agent";
-
+    if (!isRecord(input)) return { ok: false, error: "record must be an object" };
+    const session_file = nonempty(options.sessionFile) ? options.sessionFile : null;
+    if (!session_file) return { ok: false, error: "session_file is required" };
+    const session_id = nonempty(options.sessionId) ? options.sessionId : null;
+    if (!session_id) return { ok: false, error: "session_id is required" };
     const agent_id = input.agent_id;
     const primary_goal = input.primary_goal;
     const complaint = input.complaint;
     const type = input.type;
     const severity = input.severity;
-    // a clean turn carries no agent evidence: drop what was sent and inject
-    // the one trusted entry
-    const evidence =
-      type === "none"
-        ? [{ kind: "gate", event_id: randomUUID(), rule: "clean_turn" }]
-        : input.evidence;
-
-    if (!nonemptystring(agent_id))
-      return { ok: false, error: "agent_id is required" };
-    if (!nonemptystring(primary_goal))
-      return { ok: false, error: "primary_goal is required" };
-    if (!nonemptystring(complaint))
-      return { ok: false, error: "complaint is required" };
-    if (!nonemptystring(type))
-      return { ok: false, error: "type is required" };
-    if (!nonemptystring(severity))
-      return { ok: false, error: "severity is required" };
-
-    const repoRoot = recordtaxonomyroot(input, options.repoRoot);
-    const { types, severities } = loadTaxonomy(repoRoot);
-    if (!types.includes(type))
-      return { ok: false, error: `type "${type}" is not in the taxonomy` };
-    if (!severities.includes(severity))
-      return { ok: false, error: `severity "${severity}" is not in the taxonomy` };
-    if (type === "none" && complaint !== "none")
-      return { ok: false, error: 'type "none" requires complaint "none"' };
-    if (type === "none" && severity !== "low")
-      return { ok: false, error: 'type "none" requires severity "low"' };
-
-    if (!Array.isArray(evidence) || evidence.length === 0)
+    const evidence = type === "none"
+      ? [{ kind: "gate", event_id: randomUUID(), rule: "clean_turn" }]
+      : input.evidence;
+    if (!nonempty(agent_id)) return { ok: false, error: "agent_id is required" };
+    if (!nonempty(primary_goal)) return { ok: false, error: "primary_goal is required" };
+    if (!nonempty(complaint)) return { ok: false, error: "complaint is required" };
+    if (!nonempty(type)) return { ok: false, error: "type is required" };
+    if (!nonempty(severity)) return { ok: false, error: "severity is required" };
+    const repoRoot = taxonomyRoot(input, options.repoRoot);
+    const taxonomy = loadTaxonomy(repoRoot);
+    if (!taxonomy.types.includes(type)) return { ok: false, error: `type "${type}" is not in the taxonomy` };
+    if (!taxonomy.severities.includes(severity)) return { ok: false, error: `severity "${severity}" is not in the taxonomy` };
+    if (type === "none" && complaint !== "none") return { ok: false, error: 'type "none" requires complaint "none"' };
+    if (type === "none" && severity !== "low") return { ok: false, error: 'type "none" requires severity "low"' };
+    if (!Array.isArray(evidence) || !evidence.length)
       return { ok: false, error: "at least one evidence entry is required" };
-    for (const ev of evidence) {
-      if (!validevidence(ev))
-        return { ok: false, error: "invalid evidence entry" };
-    }
-
-    const request_id = nonemptystring(options.requestId)
-      ? options.requestId
-      : null;
-    if (!request_id)
-      return { ok: false, error: "request_id is required" };
-
+    if (!evidence.every(validEvidence)) return { ok: false, error: "invalid evidence entry" };
+    const request_id = nonempty(options.requestId) ? options.requestId : null;
+    if (!request_id) return { ok: false, error: "request_id is required" };
     const ts = input.ts === undefined ? new Date().toISOString() : input.ts;
-    if (!validtimestamp(ts))
-      return { ok: false, error: "ts must be a valid timestamp" };
-
-    const record = {
-      ts,
-      request_id,
-      session_file,
-      session_id,
-      agent_id,
-      primary_goal,
-      complaint,
-      type,
-      severity,
-      evidence,
-      source,
-    };
-    if (nonemptystring(repoRoot)) {
-      record.repo_root = repoRoot;
-    }
-    if (typeof options.cwd === "string") record.cwd = options.cwd;
-
-    if (!validstoredrecord(record, repoRoot))
-      return { ok: false, error: "record is incomplete" };
-    return { ok: true, record };
-  } catch (e) {
-    return { ok: false, error: String(e?.message ?? e) };
+    if (!timestamp(ts)) return { ok: false, error: "ts must be a valid timestamp" };
+    const record = { ts, request_id, session_file, session_id, agent_id, primary_goal, complaint, type, severity, evidence,
+      source: options.source === "auto" ? "auto" : "agent" };
+    if (nonempty(repoRoot)) record.repo_root = repoRoot;
+    if (isText(options.cwd)) record.cwd = options.cwd;
+    return validStoredRecord(record, repoRoot)
+      ? { ok: true, record }
+      : { ok: false, error: "record is incomplete" };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-/**
- * atomically appends a complete validated record as one jsonl line. raw or
- * invalid input is rejected and never appended. never throws.
- *
- * @param {Record<string, unknown>} record
- * @param {string} [path]
- * @param {{repoRoot?: string}} [options]
- * @returns {{ok: true} | {ok: false, error: string}}
- */
 export function appendRecord(record, path = FRUSTRATION_PATH, options = {}) {
   try {
-    const repoRoot = recordtaxonomyroot(record, options?.repoRoot);
-    if (!validstoredrecord(record, repoRoot))
-      return { ok: false, error: "record must be complete and validated" };
-
-    const dir = dirname(path);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    appendFileSync(path, JSON.stringify(record) + "\n", "utf-8");
+    const repoRoot = taxonomyRoot(record, options.repoRoot);
+    if (!validStoredRecord(record, repoRoot)) return { ok: false, error: "record must be complete and validated" };
+    const parent = dirname(path);
+    if (!existsSync(parent)) mkdirSync(parent, { recursive: true });
+    appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
     return { ok: true };
-  } catch (e) {
-    return { ok: false, error: String(e?.message ?? e) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-/**
- * reads every complete record from the jsonl file. corrupt or malformed lines
- * are skipped. never throws.
- *
- * @param {string} [path]
- * @param {{repoRoot?: string}} [options]
- * @returns {Array<Record<string, unknown>>}
- */
 export function readRecords(path = FRUSTRATION_PATH, options = {}) {
   try {
     if (!existsSync(path)) return [];
-    return readFileSync(path, "utf-8")
-      .split("\n")
-      .filter(Boolean)
-      .map((l) => {
-        try {
-          return JSON.parse(l);
-        } catch {
-          return null;
-        }
-      })
-      .filter(
-        (record) =>
-          record !== null &&
-          validstoredrecord(
-            record,
-            recordtaxonomyroot(record, options?.repoRoot),
-          ),
-      );
+    return readFileSync(path, "utf8").split("\n").filter(Boolean).map(parseJsonObject)
+      .filter((record) => isRecord(record) && validStoredRecord(record, taxonomyRoot(record, options.repoRoot)));
   } catch {
     return [];
   }
 }
 
-/**
- * given the current session's records and the identities that need a record,
- * returns the readable labels that are missing. only complete records count,
- * and their server-derived session identity must match.
- *
- * @param {Array<Record<string, unknown>>} records
- * @param {Array<string | {agent_id: string, session_file: string | null}>} identities
- * @param {string} [repoRoot]
- * @returns {string[]}
- */
 export function missingIdentities(records, identities, repoRoot) {
-  const covered = new Set();
-  for (const r of records) {
-    if (validstoredrecord(r, recordtaxonomyroot(r, repoRoot))) {
-      covered.add(r.session_file);
-    }
-  }
+  const covered = new Set(records.filter((record) => validStoredRecord(record, taxonomyRoot(record, repoRoot)))
+    .map((record) => record.session_file));
   const missing = [];
-  for (const id of identities) {
-    const agentId = typeof id === "string" ? id : id?.agent_id;
-    const sessionFile = typeof id === "string" ? null : id?.session_file;
-    if (
-      typeof agentId === "string" &&
-      (typeof sessionFile !== "string" || !sessionFile || !covered.has(sessionFile))
-    )
-      missing.push(agentId);
+  for (const identity of identities) {
+    const agent_id = isText(identity) ? identity : isRecord(identity) ? identity.agent_id : null;
+    const session_file = isText(identity) || !isRecord(identity) ? null : identity.session_file;
+    if (isText(agent_id) && (!isText(session_file) || !session_file || !covered.has(session_file))) missing.push(agent_id);
   }
   return missing;
 }
 
-/**
- * builds a machine-authored record for an automatic failed gate. fills
- * complaint from detail, type is always workflow, and severity tracks the
- * blocking flag. the record is marked source "auto".
- *
- * @param {{request_id: string, rule: string, detail: string, blocking: boolean, event_id?: string, agent_id?: string, primary_goal?: string, repo_root?: string|null, cwd?: string, session_file?: string, session_id?: string}} fields
- * @returns {Record<string, unknown>}
- */
 export function automaticGateRecord(fields) {
-  const event_id =
-    typeof fields.event_id === "string" && fields.event_id
-      ? fields.event_id
-      : randomUUID();
-  return {
+  const record = {
     ts: new Date().toISOString(),
     request_id: fields.request_id,
-    agent_id: typeof fields.agent_id === "string" ? fields.agent_id : "main",
+    agent_id: isText(fields.agent_id) ? fields.agent_id : "main",
     session_file: fields.session_file,
     session_id: fields.session_id,
-    primary_goal:
-      typeof fields.primary_goal === "string"
-        ? fields.primary_goal
-        : "complete the active request",
+    primary_goal: isText(fields.primary_goal) ? fields.primary_goal : "complete the active request",
     complaint: fields.detail,
     type: "workflow",
     severity: fields.blocking ? "high" : "medium",
-    evidence: [{ kind: "gate", event_id, rule: fields.rule }],
+    evidence: [{ kind: "gate", event_id: isText(fields.event_id) && fields.event_id ? fields.event_id : randomUUID(), rule: fields.rule }],
     source: "auto",
-    ...(typeof fields.repo_root === "string" ? { repo_root: fields.repo_root } : {}),
-    ...(typeof fields.cwd === "string" ? { cwd: fields.cwd } : {}),
   };
+  if (isText(fields.repo_root)) record.repo_root = fields.repo_root;
+  if (isText(fields.cwd)) record.cwd = fields.cwd;
+  return record;
 }
