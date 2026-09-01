@@ -35,6 +35,7 @@ const {
   heartbeatlease,
   inspectlease,
   releaselease,
+  releasestalelease,
 } = await import("./lease.js");
 const {
   installQuestionnaireStop,
@@ -287,6 +288,24 @@ try {
     assert(heartbeatlease(lease) === true, "mutation lease heartbeat must renew");
     assert(releaselease(lease) === true, "mutation lease must release its owner");
     assert(inspectlease({ cwd }).status === "free", "released mutation lease must be free");
+    const stale = acquirelease({
+      cwd,
+      owner_id: "owner-2",
+      request_id: "request-2",
+      session_id: "session-2",
+      session_file: join(stateRoot, "stale-session.jsonl"),
+      agent_id: "main",
+      tool_call_id: "write-2",
+      tool_name: "write",
+      target: "src/a.txt",
+      acquisition_wait_ms: 0,
+    });
+    assert(stale.pid === process.pid, "stale recovery fixture must keep a live holder pid");
+    assert(releasestalelease(stale, {
+      now: stale.heartbeat_at + 2_000,
+      stale_heartbeat_ms: 1_000,
+    }) === true, "expired heartbeat must release even while the holder pid remains live");
+    assert(inspectlease({ cwd }).status === "free", "stale recovery must clear the held lease");
   }
 
   {
