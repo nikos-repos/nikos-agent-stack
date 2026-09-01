@@ -935,7 +935,7 @@ these findings remain advisory. no finding means that no deterministic rule matc
 
 the lease is enabled at startup by default. set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it; unset and every other value enable it. other delivery gates remain independent.
 
-this is a cooperative worktree operation lease, not a request lease. after validation and provider or user approval, the extension acquires it immediately before one mutation-capable operation executes. approval waits hold no lease. a matching terminal tool event releases the lease; a background bash operation remains owned until its terminal async update, cancellation, or stale recovery. `task` coordinates children but does not acquire a lease, and read-only tools and targets outside the bound worktree do not acquire one.
+this is a cooperative worktree operation lease, not a request lease. after validation and provider or user approval, the extension acquires it immediately before one mutation-capable operation executes. approval waits hold no lease. a matching terminal tool event releases the lease; a background bash operation remains owned until terminal async state, matching job-snapshot completion, cancellation, or stale recovery. `task` coordinates children but does not acquire a lease, and read-only tools and targets outside the bound worktree bypass it.
 
 the holder renews a heartbeat while the operation is active. stale recovery uses heartbeat freshness, not shared process liveness as the primary signal; `--stale-only` refuses a fresh heartbeat. conflicts identify the holder and provide the safe status command rather than becoming a later session-stop failure.
 

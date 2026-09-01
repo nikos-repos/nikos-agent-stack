@@ -133,17 +133,25 @@ const COMMIT_SCRIPT_PATH = resolvePath(
 
 // --- event shapes -----------------------------------------------------------
 
-interface ToolCallEvent {
-  toolName: string;
-  toolCallId: string;
-  input: Record<string, unknown>;
-}
-
-interface BeforeToolExecuteEvent {
+interface LeaseEventInput {
   toolName: string;
   toolCallId: string;
   input?: Record<string, unknown>;
   sessionId?: string;
+}
+
+interface ToolCallEvent extends LeaseEventInput {
+  input: Record<string, unknown>;
+}
+
+interface AsyncJobSnapshotItem {
+  id: string;
+  status?: string;
+}
+
+interface AsyncJobSnapshot {
+  running?: AsyncJobSnapshotItem[];
+  recent?: AsyncJobSnapshotItem[];
 }
 
 interface LeaseScope {
@@ -158,6 +166,8 @@ interface HeartbeatTimer {
 interface ActiveOperation {
   lease: Record<string, unknown>;
   timer: HeartbeatTimer;
+  pollTimer?: HeartbeatTimer;
+  asyncJobId: string | null;
   toolName: string;
   target: string | null;
   backgroundRunning: boolean;
@@ -182,6 +192,11 @@ interface ExtensionContext {
     getSessionFile?(): string | undefined;
     getSessionId?(): string;
   };
+  getAsyncJobSnapshot?(): AsyncJobSnapshot | null;
+  invokeTool?(
+    params: Record<string, unknown>,
+    options?: { signal?: AbortSignal; onUpdate?: unknown },
+  ): Promise<unknown>;
   ui?: {
     notify?(message: string, type?: string): void;
     setStatus?(key: string, text: string): void;
@@ -770,17 +785,50 @@ function isInternalUri(value: string): boolean {
   return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(trimmed) &&
     !/^[A-Za-z]:[\\/]/.test(trimmed);
 }
+function effectiveLeaseInput(
+  toolName: string,
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  if (
+    toolName !== "edit" ||
+    typeof input.path === "string" ||
+    Array.isArray(input.paths)
+  ) return input;
+  const patch = typeof input.input === "string"
+    ? input.input
+    : typeof input._input === "string"
+    ? input._input
+    : "";
+  if (!patch) return input;
+  const paths: string[] = [];
+  for (const line of patch.split(/\r?\n/)) {
+    const match = /^\s*\[([^#\r\n]+)#[0-9a-f]{4}\]\s*$/i.exec(line);
+    if (!match) continue;
+    let path = match[1]!.trim();
+    if (
+      path.length >= 2 &&
+      (path[0] === "'" || path[0] === '"') &&
+      path.at(-1) === path[0]
+    ) path = path.slice(1, -1);
+    if (path) paths.push(path);
+  }
+  if (paths.length === 0) return input;
+  return paths.length === 1
+    ? { ...input, path: paths[0], paths }
+    : { ...input, paths };
+}
+
 
 export function leasescope(
-  event: BeforeToolExecuteEvent,
+  event: LeaseEventInput,
   context: ExtensionContext,
   repoRoot: string | null,
 ): LeaseScope | null {
   if (!repoRoot) return null;
   const root = canonicalPath(repoRoot);
   if (!root) return null;
-  const input = event.input ?? {};
   const toolName = String(event.toolName ?? "");
+  const input = effectiveLeaseInput(toolName, event.input ?? {});
   const contextCwd = String(context?.cwd ?? ".");
 
   if (toolName === "task") return null;
@@ -824,13 +872,21 @@ export function leasescope(
   const cwd = canonicalPath(absolutePathPreserving(contextCwd, declaredCwd));
   return cwd && isInside(root, cwd) ? { cwd, target: null } : null;
 }
-export function operationAgentId(sessionFile: string | null | undefined): string | null {
+export function operationAgentId(
+  sessionFile: string | null | undefined,
+  sessionId?: string | null,
+): string | null {
   if (!sessionFile || !existsSync(sessionFile)) return null;
   const name = basename(sessionFile);
   const suffix = name.match(/\.(?:jsonl?|ndjson)$/i)?.[0] ?? "";
   const stem = suffix ? name.slice(0, -suffix.length) : name;
   if (!stem) return null;
-  return suffix && existsSync(`${dirname(sessionFile)}${suffix}`) ? stem : "main";
+  if (suffix && existsSync(`${dirname(sessionFile)}${suffix}`)) return stem;
+  if (
+    stem === "main" ||
+    (sessionId && (stem === sessionId || stem.endsWith(`_${sessionId}`)))
+  ) return "main";
+  return null;
 }
 
 type LeaseRelation = "same" | "parent" | "child" | "sibling" | "unknown";
@@ -884,6 +940,13 @@ function asyncExecutionState(details: unknown): string | null {
   if (!asyncDetails || typeof asyncDetails !== "object") return null;
   const state = (asyncDetails as Record<string, unknown>).state;
   return typeof state === "string" ? state.trim().toLowerCase() : null;
+}
+function asyncExecutionJobId(details: unknown): string | null {
+  if (!details || typeof details !== "object") return null;
+  const asyncDetails = (details as Record<string, unknown>).async;
+  if (!asyncDetails || typeof asyncDetails !== "object") return null;
+  const jobId = (asyncDetails as Record<string, unknown>).jobId;
+  return typeof jobId === "string" && jobId.trim() ? jobId.trim() : null;
 }
 
 
@@ -1231,6 +1294,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     String(process.env.OMP_GATE_MUTATION_LEASE ?? "").trim().toLowerCase(),
   );
   const activeOperations = new Map<string, ActiveOperation>();
+  let builtinWrappersRegistered = false;
 
   const leaseFields = (lease: Record<string, unknown>): Record<string, unknown> => ({
     path: lease.path,
@@ -1250,6 +1314,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (!operation) return false;
     activeOperations.delete(toolCallId);
     clearInterval(operation.timer as unknown as number);
+    if (operation.pollTimer) clearInterval(operation.pollTimer as unknown as number);
     let released = false;
     try {
       released = Boolean(releaselease(operation.lease));
@@ -1270,6 +1335,42 @@ export default function gateChecker(pi: ExtensionAPI): void {
     for (const [toolCallId, operation] of activeOperations) {
       if (!operation.backgroundRunning) releaseOperation(toolCallId, reason);
     }
+  };
+  const asyncPollIntervalMs = 50;
+  const pollAsyncOperation = (
+    toolCallId: string,
+    operation: ActiveOperation,
+    context: ExtensionContext,
+  ): void => {
+    if (operation.pollTimer || typeof context?.getAsyncJobSnapshot !== "function") return;
+    const poll = (): void => {
+      if (activeOperations.get(toolCallId) !== operation) return;
+      let snapshot: AsyncJobSnapshot | null;
+      try {
+        snapshot = context.getAsyncJobSnapshot?.() ?? null;
+      } catch {
+        return;
+      }
+      if (!snapshot || !operation.asyncJobId) return;
+      const running = Array.isArray(snapshot.running) ? snapshot.running : [];
+      const runningJob = running.find((job) => String(job?.id ?? "") === operation.asyncJobId);
+      if (
+        runningJob &&
+        String(runningJob.status ?? "running").trim().toLowerCase() === "running"
+      ) return;
+      const recentJob = Array.isArray(snapshot.recent)
+        ? snapshot.recent.find((job) => String(job?.id ?? "") === operation.asyncJobId)
+        : undefined;
+      const status = String(recentJob?.status ?? "").trim().toLowerCase();
+      releaseOperation(
+        toolCallId,
+        status && status !== "running" ? `async_${status}` : "async_completed",
+      );
+    };
+    const timer = setInterval(poll, asyncPollIntervalMs) as unknown as HeartbeatTimer;
+    timer.unref?.();
+    operation.pollTimer = timer;
+    poll();
   };
   const releaseStaleSessionLease = (
     repoRoot: string | null,
@@ -1324,7 +1425,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     } catch {}
   };
   const acquireOperation = async (
-    event: BeforeToolExecuteEvent,
+    event: LeaseEventInput,
     ctx: ExtensionContext,
     scope: LeaseScope,
   ): Promise<ToolCallResult | void> => {
@@ -1342,7 +1443,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       };
     }
     const operationRequestId = requestId ?? randomUUID();
-    const agentId = operationAgentId(sessionFile);
+    const agentId = operationAgentId(sessionFile, sessionId);
     const metadata = {
       cwd: scope.cwd,
       owner_id: leaseOwnerId,
@@ -1422,6 +1523,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     activeOperations.set(toolCallId, {
       lease: result,
       timer,
+      asyncJobId: null,
       toolName: event.toolName,
       target: scope.target,
       backgroundRunning: false,
@@ -1437,6 +1539,67 @@ export default function gateChecker(pi: ExtensionAPI): void {
         ts: Date.now(),
       });
     }
+  };
+  const registerBuiltinWrappers = (): void => {
+    if (builtinWrappersRegistered) return;
+    const getAllTools = (pi as unknown as { getAllTools?: () => unknown }).getAllTools;
+    if (typeof getAllTools !== "function") return;
+    let configuredTools: unknown;
+    try {
+      configuredTools = getAllTools.call(pi);
+    } catch {
+      return;
+    }
+    if (!Array.isArray(configuredTools)) return;
+    let registered = false;
+    for (const candidate of configuredTools as Array<Record<string, unknown>>) {
+      const name = typeof candidate?.name === "string" ? candidate.name : "";
+      if (!["write", "edit", "bash"].includes(name)) continue;
+      const sourceInfo = candidate?.sourceInfo;
+      if (
+        !sourceInfo ||
+        typeof sourceInfo !== "object" ||
+        (sourceInfo as Record<string, unknown>).source !== "builtin"
+      ) continue;
+      const description = typeof candidate.description === "string"
+        ? candidate.description
+        : "";
+      if (!description || candidate.parameters === undefined) continue;
+      pi.registerTool({
+        name,
+        label: name,
+        description,
+        parameters: candidate.parameters as never,
+        approval: name === "bash" ? "exec" : "write",
+        execute: async (
+          toolCallId: string,
+          params: Record<string, unknown>,
+          signal: AbortSignal | undefined,
+          onUpdate: unknown,
+          ctx: ExtensionContext,
+        ): Promise<unknown> => {
+          const event: LeaseEventInput = {
+            toolName: name,
+            toolCallId,
+            input: params,
+            sessionId: ctx?.sessionManager?.getSessionId?.(),
+          };
+          const scope = leasescope(event, ctx, evidence.repoRoot);
+          const blocked = scope
+            ? await acquireOperation(event, ctx, scope)
+            : undefined;
+          if (blocked?.block) {
+            throw new Error(blocked.reason ?? "mutation lease is unavailable");
+          }
+          if (typeof ctx?.invokeTool !== "function") {
+            throw new Error(`native ${name} tool is unavailable`);
+          }
+          return ctx.invokeTool(params, { signal, onUpdate });
+        },
+      } as never);
+      registered = true;
+    }
+    builtinWrappersRegistered = registered;
   };
 
   const bindrepository = (
@@ -1605,6 +1768,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (!willContinue) releaseOrphanedOperations("agent_end");
   });
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
+    registerBuiltinWrappers();
     restorejournal(ctx);
     const status = requestId
       ? `${armingStatus()} · resumed`
@@ -2018,6 +2182,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // otherwise the retry would measure only the retry's own edits and the cap
   // would never advance.
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
+    registerBuiltinWrappers();
     const cwd = String(ctx?.cwd ?? ".");
     if (continuationCount > 0) return;
     // a new agent turn with no open continuation means any non-background
@@ -2061,8 +2226,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, ctx: ExtensionContext): Promise<ToolCallResult | void> => {
     evidence.hadToolCalls = true;
     // `off` means off. without this the handler still bound a repository,
-    // rewrote a commit into the git-commit script, and prepended the gate
-    // nudge to every subagent after /gates-disable.
+    // rewrote a commit, and prepended the gate nudge after /gates-disable.
     if (!policy.enabled) return;
     const { toolName, input } = event;
 
@@ -2117,26 +2281,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return { input: { ...input, task: nudge + task } };
     }
   });
-  pi.on(
-    "before_tool_execute",
-    async (
-      event: BeforeToolExecuteEvent,
-      ctx: ExtensionContext,
-    ): Promise<ToolCallResult | void> => {
-      if (!policy.enabled || !leaseEnabled) return;
-      const scope = leasescope(event, ctx, evidence.repoRoot);
-      if (!scope) return;
-      return acquireOperation(event, ctx, scope);
-    },
-  );
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx: ExtensionContext): Promise<ToolResultEventResult | void> => {
     const { toolName, content, isError, input, details } = event;
     const toolCallId = String(event.toolCallId ?? "");
     const operation = activeOperations.get(toolCallId);
-    const asyncRunning = asyncExecutionState(details) === "running";
+    const asyncRunning =
+      toolName === "bash" && asyncExecutionState(details) === "running";
     if (operation && asyncRunning) {
       operation.backgroundRunning = true;
+      operation.asyncJobId = asyncExecutionJobId(details);
+      if (operation.asyncJobId) pollAsyncOperation(toolCallId, operation, ctx);
     } else if (operation) {
       releaseOperation(toolCallId, isError ? "tool_error" : "tool_result");
     }

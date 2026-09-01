@@ -16,8 +16,8 @@ process.env.OMP_GATE_FRUSTRATIONS = resolve(home, "frustrations.jsonl"); // keep
 // isolate the dial too: a real /gates-engage config must not change what this
 // check measures, and this check must not overwrite the real one
 process.env.OMP_GATE_CONFIG = resolve(home, "config.json");
-// delivery gates stay enabled while the mutation lease is opt-in. operation
-// cases enable the lease explicitly so every case controls its own bracket and cleanup.
+// delivery gates stay enabled while operation cases control the mutation lease
+// explicitly so each case owns its bracket and cleanup.
 process.env.OMP_DELIVERY_GATES = "1";
 process.env.OMP_GATE_MUTATION_LEASE = "off";
 const probeVerifyCmd = "test -f verified.txt";
@@ -47,10 +47,15 @@ git("git add -A && git commit -q -m init");
 type H = (e: unknown, c: unknown) => unknown;
 type Cmd = (args: string, c: unknown) => Promise<void>;
 type RegisteredTool = {
+  name: string;
+  label?: string;
+  description?: string;
+  parameters?: unknown;
+  approval?: string;
   execute: (
     toolCallId: string,
     params: Record<string, unknown>,
-    signal: undefined,
+    signal: unknown,
     onUpdate: unknown,
     context: unknown,
   ) => Promise<unknown>;
@@ -58,6 +63,7 @@ type RegisteredTool = {
 type Harness = {
   recordFrustration?: RegisteredTool;
   interrogate?: RegisteredTool;
+  wrappers: Record<string, RegisteredTool>;
   events: Record<string, (payload: unknown) => void>;
 };
 const harnesses = new WeakMap<Record<string, H>, Harness>();
@@ -74,12 +80,17 @@ const zod = {
 };
 const mkHandlers = () => {
   const h: Record<string, H> = {};
-  const harness: Harness = { events: {} };
+  const harness: Harness = { wrappers: {}, events: {} };
   harnesses.set(h, harness);
   gateChecker({
     zod,
     on: (n: string, f: H) => { h[n] = f; },
     registerCommand: (n: string, o: { handler: Cmd }) => { commands[n] = o.handler; },
+    getAllTools: () => [
+      { name: "write", description: "native write", parameters: schema, sourceInfo: { source: "builtin" } },
+      { name: "edit", description: "native edit", parameters: schema, sourceInfo: { source: "builtin" } },
+      { name: "bash", description: "native bash", parameters: schema, sourceInfo: { source: "builtin" } },
+    ],
     registerTool: (tool: unknown) => {
       if (
         tool &&
@@ -90,6 +101,9 @@ const mkHandlers = () => {
       ) {
         if (tool.name === "record_frustration") harness.recordFrustration = tool as RegisteredTool;
         if (tool.name === "interrogate") harness.interrogate = tool as RegisteredTool;
+        if (tool.name === "write" || tool.name === "edit" || tool.name === "bash") {
+          harness.wrappers[tool.name] = tool as RegisteredTool;
+        }
       }
     },
     events: {
@@ -112,6 +126,11 @@ const mainSession = {
   getSessionId: () => mainSessionId,
 };
 let assistantText = "updated `src/a.txt` as requested.";
+const nativeCalls: Array<{ params: unknown; options: unknown }> = [];
+const invokeNative = async (params: unknown, options: unknown) => {
+  nativeCalls.push({ params, options });
+  return { content: [], details: undefined };
+};
 const ctx = {
   cwd: repo,
   hasUI: false,
@@ -119,6 +138,7 @@ const ctx = {
     getBranch: () => [{ type: "message", message: { role: "assistant", content: assistantText } }],
     ...mainSession,
   },
+  invokeTool: invokeNative,
   ui: { setStatus: () => {}, notify: () => {} },
 };
 
@@ -863,6 +883,10 @@ writeFileSync(resolve(leaseRepo, "tracked.txt"), "before\n");
 leaseGit("git add -A && git commit -q -m init");
 const leaseOutside = mkdtempSync(resolve(tmpdir(), "probe-operation-outside-"));
 symlinkSync(leaseOutside, resolve(leaseRepo, "escape"));
+const asyncSnapshots = new Map<string, {
+  running: Array<{ id: string; status: string }>;
+  recent: Array<{ id: string; status: string }>;
+}>();
 const operationContext = (id: string) => ({
   cwd: leaseRepo,
   hasUI: false,
@@ -873,10 +897,12 @@ const operationContext = (id: string) => ({
     getSessionFile: () => resolve(home, `${id}.json`),
     getSessionId: () => id,
   },
+  invokeTool: invokeNative,
+  getAsyncJobSnapshot: () => asyncSnapshots.get(id) ?? null,
   ui: { setStatus: () => {}, notify: () => {} },
 });
 const leaseStatus = () => inspectlease({ cwd: leaseRepo });
-const leaseFree = () => leaseStatus().status !== "held";
+const leaseFree = () => leaseStatus().status === "free" && leaseStatus().exists === false;
 const leaseBefore = async (
   h: Record<string, H>,
   id: string,
@@ -885,10 +911,16 @@ const leaseBefore = async (
   context: unknown,
 ) => {
   await h.tool_call!({ toolName, toolCallId: id, input }, context);
-  return h.before_tool_execute!(
-    { toolName, toolCallId: id, input, sessionId: id },
-    context,
-  );
+  const wrapper = harnesses.get(h)?.wrappers[toolName];
+  if (!wrapper) return undefined;
+  try {
+    return await wrapper.execute(id, input, undefined, undefined, context);
+  } catch (error) {
+    return {
+      block: true,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
 };
 const leaseResult = async (
   h: Record<string, H>,
@@ -984,6 +1016,34 @@ for (const [index, { state, isError }] of asyncStates.entries()) {
   );
   expect(leaseFree(), `async ${state} terminal update clears the physical holder`);
 }
+const asyncPoll = mkHandlers();
+const asyncPollContext = operationContext("async-poll");
+const asyncPollJobId = "job-async-poll";
+asyncSnapshots.set("async-poll", {
+  running: [{ id: asyncPollJobId, status: "running" }],
+  recent: [],
+});
+await start(asyncPoll, asyncPollContext, false);
+const asyncPollCall = "async-poll-call";
+await leaseBefore(asyncPoll, asyncPollCall, "bash", { command: "printf running" }, asyncPollContext);
+await leaseResult(
+  asyncPoll,
+  asyncPollCall,
+  "bash",
+  asyncPollContext,
+  false,
+  { async: { state: "running", jobId: asyncPollJobId, type: "bash" } },
+  { command: "printf running" },
+);
+expect(leaseStatus().status === "held", "async snapshot poll keeps a running job owned");
+asyncSnapshots.set("async-poll", {
+  running: [],
+  recent: [{ id: asyncPollJobId, status: "completed" }],
+});
+const { promise: asyncPollWait, resolve: resolveAsyncPollWait } = Promise.withResolvers<void>();
+setTimeout(resolveAsyncPollWait, 75);
+await asyncPollWait;
+expect(leaseFree(), "async snapshot poll releases after the matching job completes");
 
 const asyncWaitHolder = mkHandlers();
 const asyncWaitHolderContext = operationContext("async-wait-holder");

@@ -588,6 +588,11 @@ test("lease scope classifies only canonical worktree operations", () => {
 		{ toolName: "write", input: { path: "src/existing.txt" }, expected: { cwd: root, target: "src/existing.txt" } },
 		{ toolName: "edit", input: { path: "src/new.txt" }, expected: { cwd: root, target: "src/new.txt" } },
 		{ toolName: "edit", input: { paths: ["src/existing.txt"] }, expected: { cwd: root, target: "src/existing.txt" } },
+		{
+			toolName: "edit",
+			input: { input: "*** Begin Patch\n[src/existing.txt#ABCD]\nCUT 1.=1\n*** End Patch\n" },
+			expected: { cwd: root, target: "src/existing.txt" },
+		},
 		{ toolName: "edit", input: { paths: ["src/existing.txt", "src/new.txt"] }, expected: { cwd: root, target: null } },
 		{ toolName: "edit", input: { paths: ["src/existing.txt", resolvePath(outside, "outside.txt")] }, expected: { cwd: root, target: "src/existing.txt" } },
 		{ toolName: "edit", input: { paths: ["local://artifact.txt", "xd://artifact.txt"] }, expected: null },
@@ -646,6 +651,15 @@ const zod = {
 	literal: (_value: string) => schema,
 };
 const handlers: Record<string, (event: unknown, context: unknown) => unknown> = {};
+const tools: Record<string, {
+	name: string;
+	label?: string;
+	description?: string;
+	parameters?: unknown;
+	approval?: string;
+	execute: (...args: unknown[]) => Promise<unknown>;
+}> = {};
+const delegated: Array<{ params: unknown; options: unknown }> = [];
 const sessionFile = path.resolve(process.env.PROBE_STATE!, "multi.jsonl");
 fs.writeFileSync(sessionFile, "");
 const context = {
@@ -655,13 +669,27 @@ const context = {
 		getSessionFile: () => sessionFile,
 		getSessionId: () => "multi-session",
 	},
+	invokeTool: async (params: unknown, options: unknown) => {
+		delegated.push({ params, options });
+		return { content: [], details: undefined };
+	},
 	ui: { setStatus: () => {} },
 };
 mod.default({
 	zod,
 	on: (name: string, handler: (event: unknown, context: unknown) => unknown) => { handlers[name] = handler; },
+	getAllTools: () => [
+		{ name: "edit", description: "native edit", parameters: schema, sourceInfo: { source: "builtin" } },
+	],
 	registerCommand: () => {},
-	registerTool: () => {},
+	registerTool: (tool: {
+		name: string;
+		label?: string;
+		description?: string;
+		parameters?: unknown;
+		approval?: string;
+		execute: (...args: unknown[]) => Promise<unknown>;
+	}) => { tools[tool.name] = tool; },
 	events: { on: () => {} },
 	appendEntry: () => {},
 } as never);
@@ -673,11 +701,24 @@ const input = {
 };
 await handlers.agent_start!({}, context);
 await handlers.tool_call!({ toolName: "edit", toolCallId: "multi", input }, context);
-const before = await handlers.before_tool_execute!(
-	{ toolName: "edit", toolCallId: "multi", input, sessionId: "multi-session" },
-	context,
-) as { block?: boolean } | undefined;
-if (before?.block === true) throw new Error("first multi-edit did not acquire");
+const wrapper = tools.edit;
+if (
+	!wrapper ||
+	wrapper.name !== "edit" ||
+	wrapper.label !== "edit" ||
+	wrapper.description !== "native edit" ||
+	wrapper.parameters !== schema ||
+	wrapper.approval !== "write"
+) throw new Error("builtin edit wrapper did not preserve metadata");
+const signal = new AbortController().signal;
+const onUpdate = () => {};
+await wrapper.execute("multi", input, signal, onUpdate, context);
+if (
+	delegated.length !== 1 ||
+	delegated[0]?.params !== input ||
+	(delegated[0]?.options as { signal?: unknown; onUpdate?: unknown }).signal !== signal ||
+	(delegated[0]?.options as { signal?: unknown; onUpdate?: unknown }).onUpdate !== onUpdate
+) throw new Error("builtin edit wrapper did not delegate with execution channels");
 const status = lease.inspectlease({ cwd: process.env.PROBE_REPO! });
 if (status.status !== "held" || status.record?.target !== null) throw new Error("first multi-edit did not bind the worktree lease");
 await handlers.tool_result!(
@@ -743,16 +784,28 @@ const zod = {
 	number: () => schema,
 	literal: (_value: string) => schema,
 };
+type RegisteredTool = {
+	name: string;
+	label?: string;
+	description?: string;
+	parameters?: unknown;
+	approval?: string;
+	execute: (...args: unknown[]) => Promise<unknown>;
+};
 type Gate = {
 	handlers: Record<string, (event: unknown, context: unknown) => unknown>;
 	commands: Record<string, (args: string, context: unknown) => Promise<void>>;
+	tools: Record<string, RegisteredTool>;
 	context: Record<string, unknown>;
 	notifications: string[];
+	nativeCalls: Array<{ params: unknown; options: unknown }>;
 };
 const makeGate = (id: string): Gate => {
 	const handlers: Gate["handlers"] = {};
 	const commands: Gate["commands"] = {};
+	const tools: Gate["tools"] = {};
 	const notifications: string[] = [];
+	const nativeCalls: Gate["nativeCalls"] = [];
 	const sessionFile = path.resolve(childDirectory, id + ".jsonl");
 	fs.writeFileSync(sessionFile, "");
 	const context = {
@@ -762,6 +815,10 @@ const makeGate = (id: string): Gate => {
 			getSessionFile: () => sessionFile,
 			getSessionId: () => id + "-session",
 		},
+		invokeTool: async (params: unknown, options: unknown) => {
+			nativeCalls.push({ params, options });
+			return { content: [], details: undefined };
+		},
 		ui: {
 			notify: (message: string, type?: string) => notifications.push((type ?? "") + ":" + message),
 			setStatus: () => {},
@@ -770,25 +827,43 @@ const makeGate = (id: string): Gate => {
 	mod.default({
 		zod,
 		on: (name: string, handler: (event: unknown, context: unknown) => unknown) => { handlers[name] = handler; },
+		getAllTools: () => [
+			{ name: "write", description: "native write", parameters: schema, sourceInfo: { source: "builtin" } },
+			{ name: "edit", description: "native edit", parameters: schema, sourceInfo: { source: "builtin" } },
+			{ name: "bash", description: "native bash", parameters: schema, sourceInfo: { source: "builtin" } },
+		],
 		registerCommand: (name: string, spec: { handler: (args: string, context: unknown) => Promise<void> }) => { commands[name] = spec.handler; },
-		registerTool: () => {},
+		registerTool: (tool: RegisteredTool) => { tools[tool.name] = tool; },
 		events: { on: () => {} },
 		appendEntry: () => {},
 	} as never);
-	return { handlers, commands, context, notifications };
+	return { handlers, commands, tools, context, notifications, nativeCalls };
 };
 const start = async (gate: Gate) => {
 	await gate.handlers.agent_start!({}, gate.context);
 };
 const before = async (gate: Gate, toolCallId: string) => {
+	const input = { path: "tracked.txt" };
 	await gate.handlers.tool_call!(
-		{ toolName: "write", toolCallId, input: { path: "tracked.txt" } },
+		{ toolName: "write", toolCallId, input },
 		gate.context,
 	);
-	return await gate.handlers.before_tool_execute!(
-		{ toolName: "write", toolCallId, input: { path: "tracked.txt" }, sessionId: toolCallId },
-		gate.context,
-	) as { block?: boolean; reason?: string } | undefined;
+	const wrapper = gate.tools.write;
+	if (!wrapper) throw new Error("builtin write wrapper was not registered");
+	try {
+		return await wrapper.execute(
+			toolCallId,
+			input,
+			undefined,
+			undefined,
+			gate.context,
+		) as { block?: boolean; reason?: string } | undefined;
+	} catch (error) {
+		return {
+			block: true,
+			reason: error instanceof Error ? error.message : String(error),
+		};
+	}
 };
 const result = async (gate: Gate, toolCallId: string) => {
 	await gate.handlers.tool_result!(
@@ -815,6 +890,55 @@ await start(waiter);
 await holder.commands["gates-lease"]!("status", holder.context);
 const initial = last(holder);
 if (!initial.includes("enabled: on") || !initial.includes("owned active operations: 0") || !initial.includes("current holder")) throw new Error("status did not report the initial lease state");
+const rawEdit = { input: "*** Begin Patch\\n[tracked.txt#ABCD]\\nCUT 1.=1\\n*** End Patch\\n" };
+await holder.handlers.tool_call!(
+	{ toolName: "edit", toolCallId: "raw-edit-call", input: rawEdit },
+	holder.context,
+);
+await holder.tools.edit!.execute(
+	"raw-edit-call",
+	rawEdit,
+	undefined,
+	undefined,
+	holder.context,
+);
+if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status !== "held") {
+	throw new Error("raw hashline edit did not acquire a repository lease");
+}
+await holder.handlers.tool_result!(
+	{ toolName: "edit", toolCallId: "raw-edit-call", input: rawEdit, content: [], details: undefined, isError: false },
+	holder.context,
+);
+const revisedOutside = { path: path.resolve(process.env.PROBE_REPO!, "..", "outside.txt") };
+await holder.handlers.tool_call!(
+	{ toolName: "write", toolCallId: "revised-outside-call", input: { path: "tracked.txt" } },
+	holder.context,
+);
+await holder.tools.write!.execute(
+	"revised-outside-call",
+	revisedOutside,
+	undefined,
+	undefined,
+	holder.context,
+);
+if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status === "held") {
+	throw new Error("effective outside target reused the pre-approval repository scope");
+}
+await holder.handlers.tool_call!(
+	{ toolName: "write", toolCallId: "revised-inside-call", input: revisedOutside },
+	holder.context,
+);
+await holder.tools.write!.execute(
+	"revised-inside-call",
+	{ path: "tracked.txt" },
+	undefined,
+	undefined,
+	holder.context,
+);
+if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status !== "held") {
+	throw new Error("effective inside target did not acquire after an outside pre-approval input");
+}
+await result(holder, "revised-inside-call");
 const first = await before(holder, "holder-call");
 if (first?.block === true) throw new Error("holder could not acquire");
 await holder.commands["gates-lease"]!("off", holder.context);
@@ -829,8 +953,10 @@ if (second?.block === true) throw new Error("holder could not reacquire");
 await waiter.commands["gates-lease"]!("off", waiter.context);
 if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status !== "held") throw new Error("off released another gate owner's lease");
 await waiter.commands["gates-lease"]!("on", waiter.context);
+const nativeCallsBeforeConflict = waiter.nativeCalls.length;
 const conflict = await before(waiter, "waiter-conflict");
 const reason = conflict?.reason ?? "";
+if (waiter.nativeCalls.length !== nativeCallsBeforeConflict) throw new Error("lease refusal invoked the native tool");
 const statusAction = "nikos-gates lease status --cwd '" + process.env.PROBE_REPO! + "'";
 for (const label of ["agent:", "session:", "request:", "tool call:", "tool name:", "target:", "pid:", "age:", "heartbeat age:", "fence:", "relation: sibling", statusAction]) {
 	if (!reason.includes(label)) throw new Error("conflict omitted " + label);
@@ -862,10 +988,20 @@ delete process.env.OMP_GATE_MUTATION_LEASE;
 const unset = makeGate("unset");
 await start(unset);
 const unsetResult = await before(unset, "unset-call");
-if (unsetResult?.block === true) throw new Error("unset lease default blocked a repository write");
-const unsetStatus = lease.inspectlease({ cwd: process.env.PROBE_REPO! });
-if (unsetStatus.status !== "held") throw new Error("unset lease default did not acquire a repository write lease");
+if (unsetResult?.block === true) throw new Error("default-on lease startup blocked a repository write");
+if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status !== "held") {
+	throw new Error("default-on lease startup did not acquire a repository write lease");
+}
 await result(unset, "unset-call");
+process.env.OMP_GATE_MUTATION_LEASE = "true";
+const explicitOn = makeGate("explicit-on");
+await start(explicitOn);
+const explicitOnResult = await before(explicitOn, "explicit-on-call");
+if (explicitOnResult?.block === true) throw new Error("explicit on blocked a repository write");
+if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status !== "held") {
+	throw new Error("explicit on did not acquire a repository write lease");
+}
+await result(explicitOn, "explicit-on-call");
 process.env.OMP_GATE_MUTATION_LEASE = "off";
 const explicitOff = makeGate("explicit-off");
 await start(explicitOff);
@@ -898,15 +1034,20 @@ console.log("@@" + JSON.stringify({ ok: true }));
 
 test("operation agent ids require materialized session provenance", () => {
 	const sessions = tempdir("gate-agent-id-");
-	const rootSession = resolvePath(sessions, "root.jsonl");
-	const childDirectory = resolvePath(sessions, "root");
+	const rootSessionId = "01a05eba-ffc9-774a-bbbf-d3b6e425209f";
+	const rootStem = `2026-09-01T20-48-28-617Z_${rootSessionId}`;
+	const rootSession = resolvePath(sessions, `${rootStem}.jsonl`);
+	const childDirectory = resolvePath(sessions, rootStem);
 	const childSession = resolvePath(childDirectory, "worker.jsonl");
+	const orphanSession = resolvePath(sessions, "orphan.jsonl");
 	writeFileSync(rootSession, "");
+	writeFileSync(orphanSession, "");
 	mkdirSync(childDirectory);
 	writeFileSync(childSession, "");
 
 	expect(operationAgentId(resolvePath(sessions, "missing.jsonl"))).toBeNull();
-	expect(operationAgentId(rootSession)).toBe("main");
+	expect(operationAgentId(rootSession, rootSessionId)).toBe("main");
+	expect(operationAgentId(orphanSession, "unrelated-session")).toBeNull();
 	expect(operationAgentId(childSession)).toBe("worker");
 	for (const suffix of ["json", "ndjson"]) {
 		const parent = resolvePath(sessions, `parent-${suffix}.${suffix}`);
