@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import gatechecker from "./index.ts";
+import { acquirelease, inspectlease, releaselease } from "./lease.js";
 
 const repos: string[] = [];
 
@@ -30,6 +31,32 @@ function repo() {
   git("add", ".");
   git("commit", "-q", "-m", "initial");
   return cwd;
+}
+
+function holder(cwd: string, overrides: Record<string, unknown> = {}) {
+  return acquirelease({
+    cwd,
+    owner_id: "owner-cli",
+    request_id: "request-cli",
+    session_id: "session-cli",
+    session_file: "session-cli.jsonl",
+    agent_id: "agent-cli",
+    tool_call_id: "call-cli",
+    tool_name: "edit",
+    target: "src/a.txt",
+    pid: process.pid,
+    acquisition_wait_ms: 0,
+    poll_jitter_ms: 0,
+    ...overrides,
+  });
+}
+
+function runlease(cwd: string, ...args: string[]) {
+  return spawnsync(
+    "bun",
+    ["run", join(import.meta.dir, "gate-cli.js"), "lease", ...args, "--cwd", cwd],
+    { encoding: "utf8" },
+  );
 }
 
 test("audit prints a deterministic uncommitted scope without exposing a model tool", () => {
@@ -194,6 +221,161 @@ test("stats still print the frustration summary when the ledger is empty", () =>
   expect(text.stdout).toContain("frustrations     1  (agent 1, auto 0, legacy 0)");
   expect(text.stdout).toContain("1  none");
 });
+
+test("lease status prints rich holder metadata", () => {
+  const root = repo();
+  const cwd = join(root, "dir with spaces");
+  mkdirsync(cwd);
+  const lease = holder(cwd);
+  const result = runlease(cwd, "status");
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("agent: agent-cli");
+  expect(result.stdout).toContain("session: session-cli");
+  expect(result.stdout).toContain("request: request-cli");
+  expect(result.stdout).toContain("tool name: edit");
+  expect(result.stdout).toContain("target: src/a.txt");
+  expect(result.stdout).toContain("tool call: call-cli");
+  expect(result.stdout).toContain(`pid: ${process.pid}`);
+  expect(result.stdout).toContain("age: ");
+  expect(result.stdout).toContain("heartbeat age: ");
+  expect(result.stdout).toContain("fence: 1");
+  expect(result.stdout).toContain("relation: unknown");
+  expect(result.stdout).toContain(`inspect with: nikos-gates lease status --cwd '${cwd}'`);
+  expect(releaselease(lease)).toBe(true);
+});
+
+test("lease status json exposes the current holder record", () => {
+  const cwd = repo();
+  const lease = holder(cwd);
+  const result = runlease(cwd, "status", "--json");
+
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toMatchObject({
+    status: "held",
+    valid: true,
+    record: {
+      owner_id: "owner-cli",
+      request_id: "request-cli",
+      session_id: "session-cli",
+      session_file: "session-cli.jsonl",
+      agent_id: "agent-cli",
+      tool_call_id: "call-cli",
+      tool_name: "edit",
+      target: "src/a.txt",
+      pid: process.pid,
+    },
+  });
+  expect(releaselease(lease)).toBe(true);
+});
+
+test("lease stale-only refuses a fresh heartbeat", () => {
+  const cwd = repo();
+  const lease = holder(cwd);
+  const result = runlease(cwd, "release", "--stale-only");
+
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("heartbeat is fresh");
+  expect(inspectlease({ cwd }).status).toBe("held");
+  expect(releaselease(lease)).toBe(true);
+});
+
+test("lease stale-only releases stale holders and records the manual release", () => {
+  const cwd = repo();
+  const lease = holder(cwd);
+  const leasefile = join(lease.path, "lease.json");
+  const record = JSON.parse(readfilesync(leasefile, "utf8"));
+  record.acquired_at = 0;
+  record.heartbeat_at = 0;
+  writefilesync(leasefile, `${JSON.stringify(record)}\n`);
+  const ledger = join(cwd, "manual-release.jsonl");
+  const result = spawnsync(
+    "bun",
+    ["run", join(import.meta.dir, "gate-cli.js"), "lease", "release", "--stale-only", "--cwd", cwd],
+    { encoding: "utf8", env: { ...process.env, OMP_GATE_LEDGER: ledger } },
+  );
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("released stale lease");
+  expect(existssync(lease.path)).toBe(false);
+  expect(inspectlease({ cwd }).status).toBe("free");
+  expect(JSON.parse(readfilesync(ledger, "utf8"))).toMatchObject({
+    event: "lease_manual_release",
+    mode: "stale-only",
+    reason: "stale heartbeat",
+    owner_id: "owner-cli",
+    tool_call_id: "call-cli",
+  });
+});
+
+test("lease force requires a reason and exact holder identity", () => {
+  const cwd = repo();
+  const lease = holder(cwd);
+  const missingreason = runlease(
+    cwd,
+    "release",
+    "--force",
+    "--owner-id",
+    "owner-cli",
+    "--tool-call-id",
+    "call-cli",
+  );
+  expect(missingreason.status).toBe(2);
+  expect(existssync(lease.path)).toBe(true);
+
+  const mismatch = runlease(
+    cwd,
+    "release",
+    "--force",
+    "--owner-id",
+    "wrong-owner",
+    "--tool-call-id",
+    "call-cli",
+    "--reason",
+    "operator authorization",
+  );
+  expect(mismatch.status).toBe(1);
+  expect(mismatch.stderr).toContain("identity mismatch");
+  expect(existssync(lease.path)).toBe(true);
+  expect(releaselease(lease)).toBe(true);
+});
+
+test("lease force removes the physical holder and records the reason", () => {
+  const cwd = repo();
+  const lease = holder(cwd);
+  const ledger = join(cwd, "manual-force.jsonl");
+  const result = spawnsync(
+    "bun",
+    [
+      "run",
+      join(import.meta.dir, "gate-cli.js"),
+      "lease",
+      "release",
+      "--cwd",
+      cwd,
+      "--force",
+      "--owner-id",
+      "owner-cli",
+      "--tool-call-id",
+      "call-cli",
+      "--reason",
+      "operator authorization",
+    ],
+    { encoding: "utf8", env: { ...process.env, OMP_GATE_LEDGER: ledger } },
+  );
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("released lease");
+  expect(existssync(lease.path)).toBe(false);
+  expect(JSON.parse(readfilesync(ledger, "utf8"))).toMatchObject({
+    event: "lease_manual_release",
+    mode: "force",
+    reason: "operator authorization",
+    owner_id: "owner-cli",
+    tool_call_id: "call-cli",
+  });
+});
+
 
 function agentdir() {
   const cwd = mkdtempsync(join(tmpdir(), "gate-cli-advisor-"));

@@ -5,9 +5,10 @@
 // dirtied before agent_start lands in baselineDirty and is subtracted from the
 // diff by design, which is not the scenario under test.
 import { execSync } from "child_process";
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync } from "fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { resolve } from "path";
+import { acquirelease, inspectlease, releaselease } from "./lease.js";
 
 const home = mkdtempSync(resolve(tmpdir(), "probe-home-"));
 process.env.OMP_GATE_LEDGER = resolve(home, "ledger.jsonl"); // keep the real tuning data untouched
@@ -15,11 +16,9 @@ process.env.OMP_GATE_FRUSTRATIONS = resolve(home, "frustrations.jsonl"); // keep
 // isolate the dial too: a real /gates-engage config must not change what this
 // check measures, and this check must not overwrite the real one
 process.env.OMP_GATE_CONFIG = resolve(home, "config.json");
+// delivery gates stay enabled while the mutation lease is opt-in. operation
+// cases enable the lease explicitly so every case controls its own bracket and cleanup.
 process.env.OMP_DELIVERY_GATES = "1";
-// the mutation lease is on by default (index.ts leaseEnabled). every section
-// except 14 simulates several sessions against one shared probe repo for
-// reasons unrelated to the lease, so they would all conflict. section 14 owns
-// the lease scenario and turns it on for itself.
 process.env.OMP_GATE_MUTATION_LEASE = "off";
 const probeVerifyCmd = "test -f verified.txt";
 process.env.OMP_VERIFY_CMD = probeVerifyCmd;
@@ -852,93 +851,555 @@ for (const [label, report, shouldBlock] of [
   for (const path of paths) rmSync(path, { recursive: true, force: true });
 }
 
-console.log("14. cooperative mutation lease");
+console.log("14. operation lease classifier and lifecycle");
 process.env.OMP_GATE_MUTATION_LEASE = "1";
-const leaseOwner = mkHandlers();
-const leaseWaiter = mkHandlers();
-// observable lease state: the lease directory under the probe repo's git
-// common dir. empty (or absent) means no session holds the worktree lease.
-const leaseDir = resolve(repo, ".git", "omp-gates", "leases");
-const held = (): boolean => {
-  try {
-    // a held lease is a directory keyed by worktree identity; the sibling
-    // `<key>.fence` file is the monotonic fence counter and always remains.
-    return readdirSync(leaseDir, { withFileTypes: true }).some((e) => e.isDirectory());
-  } catch {
-    return false;
-  }
-};
-await start(leaseOwner, ctx);
-await start(leaseWaiter, ctx);
-expect(!held(), "request startup acquires no lease before any mutation");
-// read-only discovery: creates no lease and blocks nobody.
-const readLease = (await leaseWaiter.tool_call!(
-  { toolName: "read", input: { path: "src/a.txt" } },
-  ctx,
-)) as { block?: boolean } | undefined;
-expect(readLease?.block !== true, "read-only inspection is never lease-blocked");
-expect(!held(), "read-only repository inspection creates no lease");
-// the first mutation acquires the lease — and it was not blocked by a session
-// that had only read.
-const ownerWrite = (await leaseOwner.tool_call!(
-  { toolName: "write", input: { path: "src/leased.txt" } },
-  ctx,
-)) as { block?: boolean } | undefined;
-expect(
-  ownerWrite?.block !== true,
-  "a session that only read does not block another session's first mutation",
-);
-expect(held(), "the first mutation acquires the lease");
-const blockedLease = (await leaseWaiter.tool_call!(
-  { toolName: "write", input: { path: "src/leased.txt" } },
-  ctx,
-)) as { block?: boolean } | undefined;
-expect(blockedLease?.block === true, "a second session cannot use native mutation tools");
-const blockedBash = (await leaseWaiter.tool_call!(
-  { toolName: "bash", input: { command: "git status --short" } },
-  ctx,
-)) as { block?: boolean } | undefined;
-expect(blockedBash?.block === true, "a conflicting session cannot bypass the lease through bash");
-const isolatedTask = (await leaseWaiter.tool_call!(
-  {
-    toolName: "task",
-    input: {
-      tasks: [{ task: "inspect", isolated: true }],
-      context: "read only",
-    },
+writeProbeConfig("medium", "true");
+const leaseRepo = mkdtempSync(resolve(tmpdir(), "probe-operation-repo-"));
+const leaseGit = (command: string) =>
+  execSync(command, { cwd: leaseRepo, encoding: "utf-8", stdio: "pipe" });
+leaseGit("git init -q .");
+leaseGit("git config user.email t@t.t && git config user.name t");
+writeFileSync(resolve(leaseRepo, "tracked.txt"), "before\n");
+leaseGit("git add -A && git commit -q -m init");
+const leaseOutside = mkdtempSync(resolve(tmpdir(), "probe-operation-outside-"));
+symlinkSync(leaseOutside, resolve(leaseRepo, "escape"));
+const operationContext = (id: string) => ({
+  cwd: leaseRepo,
+  hasUI: false,
+  sessionManager: {
+    getBranch: () => [
+      { type: "message", message: { role: "assistant", content: "operation complete." } },
+    ],
+    getSessionFile: () => resolve(home, `${id}.json`),
+    getSessionId: () => id,
   },
-  ctx,
-)) as { block?: boolean } | undefined;
-expect(isolatedTask?.block !== true, "isolated task work does not need the shared lease");
-await leaseOwner.session_tree!({}, ctx);
-expect(!held(), "branch navigation releases the prior worktree lease");
-await start(leaseWaiter, ctx);
-const retriedLease = (await leaseWaiter.tool_call!(
-  { toolName: "write", input: { path: "src/leased.txt" } },
-  ctx,
-)) as { block?: boolean } | undefined;
-expect(retriedLease?.block !== true, "a released lease is reacquired by the next mutation");
-await leaseWaiter.session_shutdown!({}, ctx);
-// an abandoned request — the holder went idle without a terminal outcome — must
-// release the lease on its next agent turn instead of holding the worktree
-// until shutdown. this is the seam that left the worktree permanently locked.
-await start(leaseOwner, ctx);
-await leaseOwner.tool_call!(
-  { toolName: "write", input: { path: "src/abandoned.txt" } },
-  ctx,
+  ui: { setStatus: () => {}, notify: () => {} },
+});
+const leaseStatus = () => inspectlease({ cwd: leaseRepo });
+const leaseFree = () => leaseStatus().status !== "held";
+const leaseBefore = async (
+  h: Record<string, H>,
+  id: string,
+  toolName: string,
+  input: Record<string, unknown>,
+  context: unknown,
+) => {
+  await h.tool_call!({ toolName, toolCallId: id, input }, context);
+  return h.before_tool_execute!(
+    { toolName, toolCallId: id, input, sessionId: id },
+    context,
+  );
+};
+const leaseResult = async (
+  h: Record<string, H>,
+  id: string,
+  toolName: string,
+  context: unknown,
+  isError = false,
+  details: unknown = undefined,
+  input: Record<string, unknown> = {},
+) => h.tool_result!(
+  { toolName, toolCallId: id, input, content: [], details, isError },
+  context,
 );
-expect(held(), "the abandoned-request holder did acquire its lease");
-await leaseOwner.agent_start!({}, ctx);
-expect(!held(), "the abandoned request releases its lease on its next agent turn");
-const afterAbandon = (await leaseWaiter.tool_call!(
-  { toolName: "write", input: { path: "src/leased.txt" } },
-  ctx,
+
+const scopeCases: Array<{
+  label: string;
+  toolName: string;
+  input: Record<string, unknown>;
+}> = [
+  { label: "task", toolName: "task", input: { task: "inspect" } },
+  { label: "local uri", toolName: "write", input: { path: "local://artifact.txt" } },
+  { label: "xd uri", toolName: "edit", input: { path: "xd://artifact.txt" } },
+  { label: "outside path", toolName: "write", input: { path: resolve(leaseOutside, "outside.txt") } },
+  { label: "symlink escape", toolName: "write", input: { path: "escape/new.txt" } },
+];
+for (const [index, item] of scopeCases.entries()) {
+  const h = mkHandlers();
+  const context = operationContext(`scope-${index}`);
+  await start(h, context, false);
+  const outcome = (await leaseBefore(h, `scope-${index}`, item.toolName, item.input, context)) as
+    | { block?: boolean }
+    | undefined;
+  expect(outcome?.block !== true, `${item.label} does not block`);
+  expect(leaseFree(), `${item.label} acquires no lease`);
+}
+
+const foregroundCases = [
+  { label: "foreground success", isError: false },
+  { label: "foreground error", isError: true },
+];
+for (const [index, item] of foregroundCases.entries()) {
+  const h = mkHandlers();
+  const context = operationContext(`foreground-${index}`);
+  await start(h, context, false);
+  const call = `foreground-${index}`;
+  const outcome = (await leaseBefore(h, call, "write", { path: "tracked.txt" }, context)) as
+    | { block?: boolean }
+    | undefined;
+  expect(outcome?.block !== true, `${item.label} acquires`);
+  expect(leaseStatus().status === "held", `${item.label} owns while executing`);
+  await leaseResult(h, call, "write", context, item.isError, undefined, { path: "tracked.txt" });
+  expect(leaseFree(), `${item.label} releases on terminal result`);
+}
+
+const asyncStates = [
+  { state: "completed", isError: false },
+  { state: "failed", isError: true },
+  { state: "cancelled", isError: false },
+];
+for (const [index, { state, isError }] of asyncStates.entries()) {
+  const h = mkHandlers();
+  const context = operationContext(`async-${index}`);
+  await start(h, context, false);
+  const call = `async-${index}`;
+  const outcome = (await leaseBefore(h, call, "bash", { command: "printf running" }, context)) as
+    | { block?: boolean }
+    | undefined;
+  expect(outcome?.block !== true, `async ${state} acquires`);
+  await leaseResult(h, call, "bash", context, isError, { async: { state: "running" } });
+  expect(leaseStatus().status === "held", `async ${state} stays owned while running`);
+  await h.agent_end!({ willContinue: false }, context);
+  expect(leaseStatus().status === "held", `async ${state} stays owned after normal agent end`);
+  await h.agent_start!({}, context);
+  expect(leaseStatus().status === "held", `async ${state} survives the next agent start`);
+  await recordFrustration(h, context, "main");
+  if (h.session_stop) {
+    await h.session_stop!({}, context);
+    expect(leaseStatus().status === "held", `async ${state} survives terminal journal`);
+  }
+  await h.tool_execution_update!(
+    {
+      type: "tool_execution_update",
+      toolCallId: call,
+      toolName: "bash",
+      args: { command: "printf running" },
+      partialResult: {
+        content: [],
+        details: { async: { state } },
+        isError,
+      },
+    },
+    context,
+  );
+  expect(leaseFree(), `async ${state} terminal update clears the physical holder`);
+}
+
+const asyncWaitHolder = mkHandlers();
+const asyncWaitHolderContext = operationContext("async-wait-holder");
+await start(asyncWaitHolder, asyncWaitHolderContext, false);
+const asyncWaitHolderCall = (await leaseBefore(
+  asyncWaitHolder,
+  "async-wait-holder-call",
+  "write",
+  { path: "tracked.txt" },
+  asyncWaitHolderContext,
 )) as { block?: boolean } | undefined;
+expect(asyncWaitHolderCall?.block !== true, "the async wait holder acquires");
+
+const asyncWaiter = mkHandlers();
+const asyncWaiterContext = operationContext("async-waiter");
+await start(asyncWaiter, asyncWaiterContext, false);
+process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS = "100";
+let asyncWaitHolderReleased = false;
+let asyncWaitHolderResult: Promise<void>;
+asyncWaitHolderResult = new Promise<void>((resolvePromise, rejectPromise) => {
+  setTimeout(() => {
+    leaseResult(asyncWaitHolder, "async-wait-holder-call", "write", asyncWaitHolderContext)
+      .then(() => {
+        asyncWaitHolderReleased = true;
+        resolvePromise();
+      })
+      .catch(rejectPromise);
+  }, 0);
+});
+const asyncWaiterCall = (await leaseBefore(
+  asyncWaiter,
+  "async-waiter-call",
+  "write",
+  { path: "tracked.txt" },
+  asyncWaiterContext,
+)) as { block?: boolean } | undefined;
+await asyncWaitHolderResult;
+expect(asyncWaitHolderReleased, "the holder result releases during waiter backoff");
+expect(asyncWaiterCall?.block !== true, "the waiter acquires after holder result");
+expect(leaseStatus().status === "held", "the waiter owns after asynchronous acquisition");
+await leaseResult(asyncWaiter, "async-waiter-call", "write", asyncWaiterContext);
+expect(leaseFree(), "the asynchronous waiter releases the physical lease");
+delete process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS;
+
+const holder = mkHandlers();
+const holderContext = operationContext("retry-holder");
+await start(holder, holderContext, false);
+const holderCall = (await leaseBefore(
+  holder,
+  "retry-holder-call",
+  "write",
+  { path: "tracked.txt" },
+  holderContext,
+)) as { block?: boolean } | undefined;
+expect(holderCall?.block !== true, "retry holder acquires");
+const waiter = mkHandlers();
+const waiterContext = operationContext("retry-waiter");
+await start(waiter, waiterContext, false);
+process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS = "0";
+const timedOut = (await leaseBefore(
+  waiter,
+  "retry-waiter-call",
+  "write",
+  { path: "tracked.txt" },
+  waiterContext,
+)) as { block?: boolean } | undefined;
+expect(timedOut?.block === true, "a timed-out call is blocked locally");
+await leaseResult(holder, "retry-holder-call", "write", holderContext);
+const retried = (await leaseBefore(
+  waiter,
+  "retry-waiter-retry",
+  "write",
+  { path: "tracked.txt" },
+  waiterContext,
+)) as { block?: boolean } | undefined;
+expect(retried?.block !== true, "a later retry acquires after release");
+await leaseResult(waiter, "retry-waiter-retry", "write", waiterContext);
+const retryStop = (await waiter.session_stop!({}, waiterContext)) as
+  | { additionalContext?: string }
+  | undefined;
 expect(
-  afterAbandon?.block !== true,
-  "an abandoned request releases its lease on its next agent turn",
+  !(retryStop?.additionalContext?.includes("mutation_lease_conflict") ?? false),
+  "a timed-out operation never poisons request completion",
 );
-await leaseWaiter.session_shutdown!({}, ctx);
+delete process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS;
+
+const abort = mkHandlers();
+const abortContext = operationContext("abort");
+await start(abort, abortContext, false);
+await leaseBefore(abort, "abort-call", "edit", { path: "tracked.txt" }, abortContext);
+await abort.agent_end!({ willContinue: false }, abortContext);
+expect(leaseFree(), "terminal agent abort releases the operation");
+
+const yielded = mkHandlers();
+const yieldedContext = operationContext("yielded");
+await start(yielded, yieldedContext, false);
+await leaseBefore(yielded, "yielded-call", "edit", { path: "tracked.txt" }, yieldedContext);
+await yielded.agent_end!({ willContinue: false }, yieldedContext);
+expect(leaseFree(), "a yielded child releases before its sibling");
+const sibling = mkHandlers();
+const siblingContext = operationContext("sibling");
+await start(sibling, siblingContext, false);
+const siblingCall = (await leaseBefore(
+  sibling,
+  "sibling-call",
+  "edit",
+  { path: "tracked.txt" },
+  siblingContext,
+)) as { block?: boolean } | undefined;
+expect(siblingCall?.block !== true, "the next sibling can acquire");
+await leaseResult(sibling, "sibling-call", "edit", siblingContext);
+
+const shutdown = mkHandlers();
+const shutdownContext = operationContext("shutdown");
+await start(shutdown, shutdownContext, false);
+await leaseBefore(shutdown, "shutdown-call", "write", { path: "tracked.txt" }, shutdownContext);
+await shutdown.session_shutdown!({}, shutdownContext);
+expect(leaseFree(), "session shutdown releases leftovers");
+
+const restored = mkHandlers();
+const restoredContext = operationContext("restored");
+await start(restored, restoredContext, false);
+await leaseBefore(restored, "restored-call", "write", { path: "tracked.txt" }, restoredContext);
+await restored.session_tree!({}, restoredContext);
+expect(leaseFree(), "journal restore releases leftovers");
+
+const lifecycle = mkHandlers();
+const lifecycleContext = operationContext("lifecycle-parent");
+await start(lifecycle, lifecycleContext, false);
+await lifecycle.tool_call!(
+  { toolName: "read", toolCallId: "lifecycle-read", input: { path: "tracked.txt" } },
+  lifecycleContext,
+);
+const childSessionFile = resolve(home, "lifecycle-child.json");
+const staleLifecycle = (status: string) => acquirelease({
+  cwd: leaseRepo,
+  owner_id: `owner-${status}`,
+  request_id: `request-${status}`,
+  session_id: `session-${status}`,
+  session_file: childSessionFile,
+  agent_id: "lifecycle-child",
+  tool_call_id: `call-${status}`,
+  tool_name: "write",
+  target: "tracked.txt",
+  acquisition_wait_ms: 0,
+  now: 0,
+});
+for (const status of ["completed", "failed", "aborted"]) {
+  const stale = staleLifecycle(status);
+  expect(stale.acquired === true, `child ${status} seeds a stale operation`);
+  emit(lifecycle, "task:subagent:lifecycle", {
+    id: `child-${status}`,
+    status,
+    sessionFile: childSessionFile,
+  });
+  expect(leaseFree(), `child ${status} lifecycle reconciles stale ownership`);
+}
+const fresh = acquirelease({
+  cwd: leaseRepo,
+  owner_id: "owner-fresh",
+  request_id: "request-fresh",
+  session_id: "session-fresh",
+  session_file: childSessionFile,
+  agent_id: "lifecycle-child",
+  tool_call_id: "call-fresh",
+  tool_name: "write",
+  target: "tracked.txt",
+  acquisition_wait_ms: 0,
+  now: Date.now(),
+});
+emit(lifecycle, "task:subagent:lifecycle", {
+  id: "child-fresh",
+  status: "completed",
+  sessionFile: childSessionFile,
+});
+expect(leaseStatus().status === "held", "fresh child heartbeat is not reclaimed");
+releaselease(fresh);
+expect(leaseFree(), "fresh child cleanup remains fenced");
+
+console.log("14b. incident-shaped lease wave");
+const incidentMain = mkHandlers();
+const incidentMainContext = operationContext("incident-main");
+const incidentFree = (label: string) => {
+  const status = inspectlease({ cwd: leaseRepo });
+  const free = status.status === "free" && status.exists === false;
+  expect(free, `${label} leaves no holder`);
+  return free;
+};
+const incidentRows = [
+  { kind: "foreground", id: "incident-main-foreground", command: "printf foreground" },
+  {
+    kind: "scout",
+    id: "incident-scout-1",
+    task: "read the repository",
+    artifact: "local://incident-scout-1.txt",
+  },
+  {
+    kind: "scout",
+    id: "incident-scout-2",
+    task: "read the repository",
+    artifact: "local://incident-scout-2.txt",
+  },
+  {
+    kind: "scout",
+    id: "incident-scout-3",
+    task: "read the repository",
+    artifact: "local://incident-scout-3.txt",
+  },
+  {
+    kind: "scout",
+    id: "incident-scout-4",
+    task: "read the repository",
+    artifact: "local://incident-scout-4.txt",
+  },
+  {
+    kind: "writer",
+    id: "incident-writer-1",
+    task: "edit the first repository file",
+    path: "incident-writer-1.txt",
+  },
+  {
+    kind: "writer",
+    id: "incident-writer-2",
+    task: "edit the second repository file",
+    path: "incident-writer-2.txt",
+  },
+  {
+    kind: "writer",
+    id: "incident-writer-3",
+    task: "edit the third repository file",
+    path: "incident-writer-3.txt",
+  },
+  {
+    kind: "writer",
+    id: "incident-writer-4",
+    task: "edit the fourth repository file",
+    path: "incident-writer-4.txt",
+  },
+  {
+    kind: "abort",
+    id: "incident-aborted-writer",
+    task: "edit then abort",
+    path: "incident-aborted-writer.txt",
+  },
+  { kind: "background", id: "incident-background", command: "printf background" },
+] as const;
+let incidentWritersCompleted = 0;
+let previousWriterYielded = false;
+await start(incidentMain, incidentMainContext, false);
+for (const row of incidentRows) {
+  if (row.kind === "foreground") {
+    const call = (await leaseBefore(
+      incidentMain,
+      row.id,
+      "bash",
+      { command: row.command },
+      incidentMainContext,
+    )) as { block?: boolean } | undefined;
+    expect(call?.block !== true, "main foreground bash acquires");
+    expect(leaseStatus().status === "held", "main foreground bash owns while running");
+    await leaseResult(
+      incidentMain,
+      row.id,
+      "bash",
+      incidentMainContext,
+      false,
+      undefined,
+      { command: row.command },
+    );
+    incidentFree("main foreground bash result");
+    continue;
+  }
+  if (row.kind === "background") {
+    const call = (await leaseBefore(
+      incidentMain,
+      row.id,
+      "bash",
+      { command: row.command },
+      incidentMainContext,
+    )) as { block?: boolean } | undefined;
+    expect(call?.block !== true, "background bash acquires");
+    await leaseResult(
+      incidentMain,
+      row.id,
+      "bash",
+      incidentMainContext,
+      false,
+      { async: { state: "running" } },
+      { command: row.command },
+    );
+    expect(leaseStatus().status === "held", "background bash stays owned while running");
+    await incidentMain.tool_execution_update!(
+      {
+        type: "tool_execution_update",
+        toolCallId: row.id,
+        toolName: "bash",
+        args: { command: row.command },
+        partialResult: {
+          content: [],
+          details: { async: { state: "completed" } },
+          isError: false,
+        },
+      },
+      incidentMainContext,
+    );
+    incidentFree("background bash completed update");
+    continue;
+  }
+
+  const taskCall = `${row.id}-task`;
+  const taskInput = { task: row.task };
+  const task = (await leaseBefore(
+    incidentMain,
+    taskCall,
+    "task",
+    taskInput,
+    incidentMainContext,
+  )) as { block?: boolean } | undefined;
+  expect(task?.block !== true, `${row.id} task spawn stays unleased`);
+  incidentFree(`${row.id} task spawn`);
+
+  const child = mkHandlers();
+  const childContext = operationContext(row.id);
+  await start(child, childContext, false);
+  if (row.kind === "scout") {
+    const readCall = `${row.id}-read`;
+    const read = (await leaseBefore(
+      child,
+      readCall,
+      "read",
+      { path: "tracked.txt" },
+      childContext,
+    )) as { block?: boolean } | undefined;
+    expect(read?.block !== true, `${row.id} stays read-only`);
+    await leaseResult(child, readCall, "read", childContext, false, undefined, {
+      path: "tracked.txt",
+    });
+    incidentFree(`${row.id} read result`);
+
+    const artifactCall = `${row.id}-artifact`;
+    const artifact = (await leaseBefore(
+      child,
+      artifactCall,
+      "write",
+      { path: row.artifact },
+      childContext,
+    )) as { block?: boolean } | undefined;
+    expect(artifact?.block !== true, `${row.id} writes a local artifact`);
+    incidentFree(`${row.id} local artifact`);
+    await leaseResult(child, artifactCall, "write", childContext, false, undefined, {
+      path: row.artifact,
+    });
+    incidentFree(`${row.id} local artifact result`);
+    await child.agent_end!({ willContinue: false }, childContext);
+  } else if (row.kind === "writer") {
+    const call = (await leaseBefore(
+      child,
+      row.id,
+      "edit",
+      { path: row.path },
+      childContext,
+    )) as { block?: boolean } | undefined;
+    expect(
+      call?.block !== true,
+      previousWriterYielded
+        ? `${row.id} edits after its sibling yields`
+        : `${row.id} acquires`,
+    );
+    expect(leaseStatus().status === "held", `${row.id} owns while editing`);
+    await leaseResult(child, row.id, "edit", childContext, false, undefined, {
+      path: row.path,
+    });
+    const released = incidentFree(`${row.id} edit result`);
+    await child.agent_end!({ willContinue: false }, childContext);
+    const yielded = incidentFree(`${row.id} yield`);
+    if (call?.block !== true && released && yielded) incidentWritersCompleted++;
+    previousWriterYielded = true;
+  } else {
+    const call = (await leaseBefore(
+      child,
+      row.id,
+      "edit",
+      { path: row.path },
+      childContext,
+    )) as { block?: boolean } | undefined;
+    expect(call?.block !== true, "aborted writer acquires");
+    expect(leaseStatus().status === "held", "aborted writer owns while editing");
+    await child.agent_end!({ willContinue: false }, childContext);
+    incidentFree("aborted writer");
+  }
+  await leaseResult(
+    incidentMain,
+    taskCall,
+    "task",
+    incidentMainContext,
+    false,
+    undefined,
+    taskInput,
+  );
+}
+expect(incidentWritersCompleted === 4, "all four writers complete");
+await recordFrustration(incidentMain, incidentMainContext, "main");
+const incidentStop = (await incidentMain.session_stop!({}, incidentMainContext)) as
+  | { continue?: boolean; additionalContext?: string }
+  | undefined;
+expect(
+  incidentStop === undefined || incidentStop.continue !== true,
+  "incident main stop finishes cleanly",
+);
+expect(
+  !(incidentStop?.additionalContext?.includes("mutation_lease_conflict") ?? false),
+  "incident main stop has no mutation_lease_conflict",
+);
+incidentFree("incident main stop");
+rmSync(leaseRepo, { recursive: true, force: true });
+rmSync(leaseOutside, { recursive: true, force: true });
 process.env.OMP_GATE_MUTATION_LEASE = "off";
 
 console.log("15. journal recovery");

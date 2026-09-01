@@ -291,7 +291,6 @@ source: [session-stop early returns and change gate](../gate-checker/index.ts)
 | `complexity_failed` | the configured complexity command failed on the changed paths | warning only |
 | `uncommitted_changes` | high mode finds tracked unstaged or staged changes | commit the logical unit or lower the engagement level |
 | `missing_frustration_record` | an active main or subagent server session has no valid scratchpad record | call `record_frustration` for that session |
-| `mutation_lease_conflict` | another gate-aware session holds the worktree mutation lease | wait for that session to finish, then retry |
 | `recovery_required` | the request journal is malformed, stale, or policy-incompatible | start a fresh request |
 | `scope_unavailable` | git is present but the repository scope could not be resolved | repair the repository, then retry |
 
@@ -346,6 +345,7 @@ set `complexityCmd` to the project complexity command. when a request changed fi
 | `OMP_GATE_CONFIG` | redirects the persisted configuration file |
 | `OMP_GATE_LEDGER` | redirects the telemetry ledger |
 | `OMP_GATE_FRUSTRATIONS` | redirects the scratchpad record file |
+| `OMP_GATE_MUTATION_LEASE` | enables the mutation lease at startup by default; set it to `0`, `false`, or `off` to disable it at startup |
 
 shell examples:
 
@@ -649,7 +649,7 @@ nikos-gates <command>
 omnipotence --help
 ```
 
-supported `nikos-gates` commands are `advisor install`, `audit`, `cutover`, and `stats`. an
+supported `nikos-gates` commands are `advisor install`, `audit`, `cutover`, `lease`, and `stats`. an
 unknown command prints the usage summary. the extension also registers the `/advisor-install`
 slash command, which takes no arguments. see the [advisor role user guide](advisor-role-user-guide.md)
 for what terra does.
@@ -716,6 +716,28 @@ stats include record count, continuation chains, resolved chains, cap hits, cap-
 
 source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js), [scratchpad reader](../gate-checker/frustrations.js)
 
+### lease
+
+inspect a cooperative worktree operation lease:
+
+```sh
+nikos-gates lease status [--cwd path] [--json]
+```
+
+the text result identifies the holder's agent, session, request, tool call and name, target, pid, age, heartbeat age, fence, relation, and a safe status command. an unproven relation is reported as `unknown`.
+
+recover a lease without deleting lease directories:
+
+```sh
+nikos-gates lease release [--cwd path] --stale-only
+nikos-gates lease release [--cwd path] --force \
+  --owner-id id --tool-call-id id --reason text
+```
+
+`--stale-only` uses the heartbeat stale policy and needs no owner or tool-call identity. `--force` requires the exact current owner id, tool-call id, and a reason; it refuses an identity mismatch. an agent must obtain direct user authorization before it uses `--force`. each successful manual release records `lease_manual_release` in the existing ledger.
+
+source: [lease cli](../gate-checker/gate-cli.js), [lease records and recovery](../gate-checker/lease.js), [ledger](../gate-checker/ledger.js)
+
 ## telemetry and tuning
 
 ### ledger
@@ -738,6 +760,7 @@ record types:
 | `chain_end` | records resolved, stalemate, or cap-reached continuation chains |
 | `no_git` | records no-git operation |
 | `process_shape` | records whether the request matched the structured-process workload |
+| `lease_manual_release` | records a successful stale-only or authorized force release |
 
 ### tuning signals
 
@@ -910,11 +933,17 @@ these findings remain advisory. no finding means that no deterministic rule matc
 
 ### cooperative mutation lease
 
-the lease is enabled by default whenever the gate policy is enabled. set `OMP_GATE_MUTATION_LEASE` to `0`, `false`, or `off` to disable it.
+the lease is enabled at startup by default. set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it; unset and every other value enable it. other delivery gates remain independent.
 
-the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. acquisition is lazy: the extension takes the lease at the first mutation-capable call (`write`, `edit`, `bash`, and a `task` that is not isolated), so read-only work never holds it. a conflict hard-blocks the mutation call at every enabled level and also raises `mutation_lease_conflict` at stop. the lease releases on a terminal request outcome, on session shutdown, and when a new request starts with the previous one abandoned. reclaim needs an age above 30 minutes with a dead holder process, or force-reclaims any holder after 12 hours.
+this is a cooperative worktree operation lease, not a request lease. after validation and provider or user approval, the extension acquires it immediately before one mutation-capable operation executes. approval waits hold no lease. a matching terminal tool event releases the lease; a background bash operation remains owned until its terminal async update, cancellation, or stale recovery. `task` coordinates children but does not acquire a lease, and read-only tools and targets outside the bound worktree do not acquire one.
 
-the lease cannot exclude external editors or arbitrary processes.
+the holder renews a heartbeat while the operation is active. stale recovery uses heartbeat freshness, not shared process liveness as the primary signal; `--stale-only` refuses a fresh heartbeat. conflicts identify the holder and provide the safe status command rather than becoming a later session-stop failure.
+
+use `/gates-lease status`, `/gates-lease on`, or `/gates-lease off` to inspect or change the current session without restarting omp. `on` enables and `off` disables the lease live for the current session; neither changes startup behavior. `off` releases only this gate instance's idle lease and refuses while it tracks an active operation.
+
+the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. it only coordinates gate-aware native tools in the bound worktree. external editors and arbitrary processes remain outside this guarantee.
+
+source: [lease integration](../gate-checker/index.ts), [lease records and recovery](../gate-checker/lease.js), [lease cli](../gate-checker/gate-cli.js)
 
 ## verification and development
 
@@ -961,7 +990,7 @@ use isolated configuration and ledger paths when running `index.ts` directly so 
 | [lease.js](../gate-checker/lease.js) | cooperative worktree mutation lease |
 | [config.js](../gate-checker/config.js) | engagement levels, rule-family mapping, persistence, precedence, and status text |
 | [predicates.js](../gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
-| [gate-cli.js](../gate-checker/gate-cli.js) | advisor installer, scope audit, cutover, and stats command-line interface |
+| [gate-cli.js](../gate-checker/gate-cli.js) | advisor installer, scope audit, cutover, lease recovery, and stats command-line interface |
 | [ledger.js](../gate-checker/ledger.js) | append-only events, explicit release metrics, safe reading, and aggregation |
 | [frustrations.js](../gate-checker/frustrations.js) | scratchpad record validation, taxonomy, server-bound identity coverage, and automatic gate records |
 | [wiring-check.ts](../gate-checker/wiring-check.ts) | isolated end-to-end extension probe |

@@ -37,9 +37,9 @@
 // ============================================================================
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { existsSync, statSync } from "fs";
+import { existsSync, realpathSync, statSync } from "fs";
 import { execSync } from "child_process";
-import { dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "path";
 import { homedir } from "os";
 import { randomUUID } from "crypto";
 import {
@@ -79,7 +79,15 @@ import {
 } from "./provenance.js";
 import { journal_type, journalfrombranch, journal_version } from "./journal.js";
 import { auditscope } from "./risks.js";
-import { acquirelease, releaselease } from "./lease.js";
+import {
+  acquireleaseasync,
+  formatleasestatus,
+  heartbeatintervalms,
+  heartbeatlease,
+  inspectlease,
+  releaselease,
+  releasestalelease,
+} from "./lease.js";
 import {
   validateRecord as validateFrustration,
   appendRecord as appendFrustration,
@@ -131,6 +139,30 @@ interface ToolCallEvent {
   input: Record<string, unknown>;
 }
 
+interface BeforeToolExecuteEvent {
+  toolName: string;
+  toolCallId: string;
+  input?: Record<string, unknown>;
+  sessionId?: string;
+}
+
+interface LeaseScope {
+  cwd: string;
+  target: string | null;
+}
+
+interface HeartbeatTimer {
+  unref?: () => void;
+}
+
+interface ActiveOperation {
+  lease: Record<string, unknown>;
+  timer: HeartbeatTimer;
+  toolName: string;
+  target: string | null;
+  backgroundRunning: boolean;
+}
+
 interface ToolResultEvent {
   toolName: string;
   toolCallId: string;
@@ -176,7 +208,7 @@ interface ToolResultEventResult {
 }
 
 export interface GateFailure {
-  gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk" | "lease";
+  gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk";
   rule: string;
   detail: string;
   // "block" forces a continuation. "warn" is surfaced and recorded but never
@@ -530,7 +562,16 @@ function repositoryCandidates(
         : resolvePath(declaredCwd ?? cwd, input.path),
     )
     : null;
-  return [...new Set([declaredCwd, inputPath, existingDirectory(cwd)].filter(
+  const inputPaths = Array.isArray(input.paths)
+    ? input.paths
+      .filter((path): path is string => typeof path === "string")
+      .map((path) => existingDirectory(
+        isAbsolute(path)
+          ? path
+          : resolvePath(declaredCwd ?? cwd, path),
+      ))
+    : [];
+  return [...new Set([declaredCwd, inputPath, ...inputPaths, existingDirectory(cwd)].filter(
     (candidate): candidate is string => candidate !== null,
   ))];
 }
@@ -702,26 +743,149 @@ export function canskipuserquestion(
   return askeduser && changedcount === 0 && !journalrecovery && !missingfrustration;
 }
 
-// the mutation-capable classification, shared by lazy lease acquisition and
-// the conflict block in tool_call. a `task` counts as mutating only when it is
-// not explicitly isolated: isolated work never needs the shared worktree lease.
-function ismutationtool(
-  toolName: string,
-  input: Record<string, unknown> | undefined,
-): boolean {
-  let isolated = input?.isolated === true;
-  if (toolName === "task" && Array.isArray(input?.tasks)) {
-    isolated = input.tasks.length > 0 && input.tasks.every(
-      (item) =>
-        Boolean(item) &&
-        typeof item === "object" &&
-        "isolated" in item &&
-        item.isolated === true,
-    );
-  }
-  return toolName === "write" || toolName === "edit" ||
-    toolName === "bash" || (toolName === "task" && !isolated);
+function absolutePathPreserving(base: string, child: string): string {
+  if (isAbsolute(child)) return child;
+  const parent = isAbsolute(base) ? base : resolvePath(base);
+  return `${parent.replace(/[\/]+$/, "")}/${child}`;
 }
+
+function canonicalPath(path: string): string | null {
+  let candidate = isAbsolute(path) ? path : resolvePath(path);
+  const missing: string[] = [];
+  while (!existsSync(candidate)) {
+    const parent = dirname(candidate);
+    if (parent === candidate) return null;
+    missing.unshift(candidate.slice(parent.length + 1));
+    candidate = parent;
+  }
+  try {
+    return resolvePath(realpathSync(candidate), ...missing);
+  } catch {
+    return null;
+  }
+}
+
+function isInternalUri(value: string): boolean {
+  const trimmed = value.trim();
+  return /^[A-Za-z][A-Za-z0-9+.-]*:/.test(trimmed) &&
+    !/^[A-Za-z]:[\\/]/.test(trimmed);
+}
+
+export function leasescope(
+  event: BeforeToolExecuteEvent,
+  context: ExtensionContext,
+  repoRoot: string | null,
+): LeaseScope | null {
+  if (!repoRoot) return null;
+  const root = canonicalPath(repoRoot);
+  if (!root) return null;
+  const input = event.input ?? {};
+  const toolName = String(event.toolName ?? "");
+  const contextCwd = String(context?.cwd ?? ".");
+
+  if (toolName === "task") return null;
+  if (toolName === "write" || toolName === "edit") {
+    const declaredPaths: unknown[] = toolName === "edit" && Array.isArray(input.paths)
+      ? input.paths
+      : [input.path];
+    if (typeof input.cwd === "string" && isInternalUri(input.cwd)) return null;
+    const declaredCwd = typeof input.cwd === "string"
+      ? absolutePathPreserving(contextCwd, input.cwd)
+      : contextCwd;
+    const insideTargets: string[] = [];
+    for (const declaredPath of declaredPaths) {
+      if (
+        typeof declaredPath !== "string" ||
+        !declaredPath ||
+        isInternalUri(declaredPath) ||
+        /^[A-Za-z]:[\\/]/.test(declaredPath) ||
+        /^\\\\/.test(declaredPath)
+      ) continue;
+      const target = canonicalPath(
+        absolutePathPreserving(declaredCwd, declaredPath),
+      );
+      if (target && isInside(root, target)) insideTargets.push(target);
+    }
+    if (insideTargets.length === 0) return null;
+    return {
+      cwd: root,
+      target: insideTargets.length === 1
+        ? relative(root, insideTargets[0]!) || "."
+        : null,
+    };
+  }
+  if (toolName !== "bash") return null;
+  const declaredCwd = typeof input.cwd === "string" ? input.cwd : contextCwd;
+  if (
+    isInternalUri(declaredCwd) ||
+    /^[A-Za-z]:[\\/]/.test(declaredCwd) ||
+    /^\\\\/.test(declaredCwd)
+  ) return null;
+  const cwd = canonicalPath(absolutePathPreserving(contextCwd, declaredCwd));
+  return cwd && isInside(root, cwd) ? { cwd, target: null } : null;
+}
+export function operationAgentId(sessionFile: string | null | undefined): string | null {
+  if (!sessionFile || !existsSync(sessionFile)) return null;
+  const name = basename(sessionFile);
+  const suffix = name.match(/\.(?:jsonl?|ndjson)$/i)?.[0] ?? "";
+  const stem = suffix ? name.slice(0, -suffix.length) : name;
+  if (!stem) return null;
+  return suffix && existsSync(`${dirname(sessionFile)}${suffix}`) ? stem : "main";
+}
+
+type LeaseRelation = "same" | "parent" | "child" | "sibling" | "unknown";
+
+function materializedSessionFile(value: string | null | undefined): string | null {
+  if (typeof value !== "string" || !value.trim() || !existsSync(value)) return null;
+  try {
+    const resolved = resolvePath(realpathSync(value));
+    return statSync(resolved).isFile() ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+function materializedParentSessionFile(sessionFile: string): string | null {
+  const suffix = basename(sessionFile).match(/\.(?:jsonl?|ndjson)$/i)?.[0];
+  if (!suffix) return null;
+  return materializedSessionFile(`${dirname(sessionFile)}${suffix}`);
+}
+
+function sessionDescendsFrom(child: string, ancestor: string): boolean {
+  let parent = materializedParentSessionFile(child);
+  while (parent) {
+    if (parent === ancestor) return true;
+    parent = materializedParentSessionFile(parent);
+  }
+  return false;
+}
+
+export function resolveLeaseRelation(
+  currentSessionFile: string | null | undefined,
+  holderSessionFile: string | null | undefined,
+): LeaseRelation {
+  const current = materializedSessionFile(currentSessionFile);
+  const holder = materializedSessionFile(holderSessionFile);
+  if (!current || !holder) return "unknown";
+  if (current === holder) return "same";
+  if (sessionDescendsFrom(current, holder)) return "parent";
+  if (sessionDescendsFrom(holder, current)) return "child";
+
+  const currentParent = materializedParentSessionFile(current);
+  const holderParent = materializedParentSessionFile(holder);
+  return currentParent && holderParent && currentParent === holderParent
+    ? "sibling"
+    : "unknown";
+}
+
+function asyncExecutionState(details: unknown): string | null {
+  if (!details || typeof details !== "object") return null;
+  const asyncDetails = (details as Record<string, unknown>).async;
+  if (!asyncDetails || typeof asyncDetails !== "object") return null;
+  const state = (asyncDetails as Record<string, unknown>).state;
+  return typeof state === "string" ? state.trim().toLowerCase() : null;
+}
+
 
 // --- delivery gates (verify + commit), armed by env var ---------------------
 //
@@ -1063,25 +1227,86 @@ export default function gateChecker(pi: ExtensionAPI): void {
   let requestId: string | null = null;
   let journalRecovery: string | null = null;
   const leaseOwnerId = randomUUID();
-  const leaseEnabled = !["0", "false", "off"].includes(
+  let leaseEnabled = !["0", "false", "off"].includes(
     String(process.env.OMP_GATE_MUTATION_LEASE ?? "").trim().toLowerCase(),
   );
-  let activeLease: Record<string, unknown> | null = null;
-  let leaseConflict: Record<string, unknown> | null = null;
+  const activeOperations = new Map<string, ActiveOperation>();
 
-  const ensurelease = (cwd: string): void => {
-    if (!leaseEnabled || !policy.enabled || !requestId || activeLease) return;
-    const result = acquirelease({
-      cwd,
-      owner_id: leaseOwnerId,
-      request_id: requestId,
-    }) as Record<string, unknown>;
-    if (result.acquired) {
-      activeLease = result;
-      leaseConflict = null;
-    } else {
-      leaseConflict = result;
+  const leaseFields = (lease: Record<string, unknown>): Record<string, unknown> => ({
+    path: lease.path,
+    token: lease.token,
+    owner_id: lease.owner_id,
+    request_id: lease.request_id,
+    session_id: lease.session_id,
+    session_file: lease.session_file,
+    agent_id: lease.agent_id,
+    tool_call_id: lease.tool_call_id,
+    tool_name: lease.tool_name,
+    target: lease.target,
+    fence: lease.fence,
+  });
+  const releaseOperation = (toolCallId: string, reason: string): boolean => {
+    const operation = activeOperations.get(toolCallId);
+    if (!operation) return false;
+    activeOperations.delete(toolCallId);
+    clearInterval(operation.timer as unknown as number);
+    let released = false;
+    try {
+      released = Boolean(releaselease(operation.lease));
+    } catch {}
+    ledger.append("lease_released", {
+      ...leaseFields(operation.lease),
+      reason,
+      released,
+    });
+    return released;
+  };
+  const releaseAllOperations = (reason: string): void => {
+    for (const toolCallId of [...activeOperations.keys()]) {
+      releaseOperation(toolCallId, reason);
     }
+  };
+  const releaseOrphanedOperations = (reason: string): void => {
+    for (const [toolCallId, operation] of activeOperations) {
+      if (!operation.backgroundRunning) releaseOperation(toolCallId, reason);
+    }
+  };
+  const releaseStaleSessionLease = (
+    repoRoot: string | null,
+    sessionFile: string | null | undefined,
+    reason: string,
+  ): void => {
+    if (!repoRoot || !sessionFile) return;
+    try {
+      const status = inspectlease({ cwd: repoRoot }) as Record<string, unknown>;
+      const record = status.record;
+      if (
+        status.status !== "held" ||
+        status.stale !== true ||
+        !record ||
+        typeof record !== "object" ||
+        (record as Record<string, unknown>).session_file !== sessionFile
+      ) return;
+      const lease = record as Record<string, unknown>;
+      ledger.append("lease_heartbeat_stale", {
+        ...leaseFields(lease),
+        reason,
+        ts: Date.now(),
+      });
+      const released = Boolean(releasestalelease(lease, { cwd: repoRoot }));
+      ledger.append("lease_released", {
+        ...leaseFields(lease),
+        reason,
+        released,
+      });
+      if (released) {
+        ledger.append("lease_recovered", {
+          ...leaseFields(lease),
+          reason,
+          ts: Date.now(),
+        });
+      }
+    } catch {}
   };
 
   const policyfingerprint = (): string =>
@@ -1097,6 +1322,121 @@ export default function gateChecker(pi: ExtensionAPI): void {
         ts: Date.now(),
       });
     } catch {}
+  };
+  const acquireOperation = async (
+    event: BeforeToolExecuteEvent,
+    ctx: ExtensionContext,
+    scope: LeaseScope,
+  ): Promise<ToolCallResult | void> => {
+    if (!leaseEnabled || !policy.enabled) return;
+    const toolCallId = String(event.toolCallId ?? "");
+    if (!toolCallId || activeOperations.has(toolCallId)) return;
+    const sessionId = String(
+      event.sessionId ?? ctx?.sessionManager?.getSessionId?.() ?? "",
+    );
+    const sessionFile = ctx?.sessionManager?.getSessionFile?.() ?? null;
+    if (!sessionId || !sessionFile) {
+      return {
+        block: true,
+        reason: "mutation lease requires the active session id and session file",
+      };
+    }
+    const operationRequestId = requestId ?? randomUUID();
+    const agentId = operationAgentId(sessionFile);
+    const metadata = {
+      cwd: scope.cwd,
+      owner_id: leaseOwnerId,
+      request_id: operationRequestId,
+      session_id: sessionId,
+      session_file: sessionFile,
+      agent_id: agentId,
+      tool_call_id: toolCallId,
+      tool_name: event.toolName,
+      target: scope.target,
+    };
+    const waitMs = Number(process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS);
+    const acquisitionOptions = Number.isFinite(waitMs)
+      ? { ...metadata, acquisition_wait_ms: Math.max(0, waitMs) }
+      : metadata;
+    ledger.append("lease_wait_started", {
+      ...metadata,
+      ts: Date.now(),
+    });
+    let result: Record<string, unknown>;
+    try {
+      result = await acquireleaseasync(acquisitionOptions) as Record<string, unknown>;
+    } catch (error) {
+      const reason = `mutation lease could not be acquired: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      return { block: true, reason };
+    }
+    if (result.acquired !== true) {
+      let reason = "";
+      try {
+        const conflict = result.conflict;
+        const holderSessionFile =
+          conflict &&
+          typeof conflict === "object" &&
+          !Array.isArray(conflict) &&
+          typeof (conflict as Record<string, unknown>).session_file === "string"
+            ? (conflict as Record<string, unknown>).session_file as string
+            : null;
+        reason = formatleasestatus(result, {
+          waited_ms: Number(result.waited_ms ?? 0),
+          relation: resolveLeaseRelation(sessionFile, holderSessionFile),
+          cwd: scope.cwd,
+        });
+      } catch {}
+      if (!reason) {
+        reason = String(
+          result.error ?? result.diagnostic ?? "mutation lease is unavailable",
+        );
+      }
+      if (result.timed_out === true) {
+        ledger.append("lease_wait_timed_out", { ...metadata, reason, ts: Date.now() });
+      }
+      return { block: true, reason };
+    }
+
+    const timer = setInterval(() => {
+      const operation = activeOperations.get(toolCallId);
+      if (!operation || operation.lease !== result) return;
+      try {
+        if (!heartbeatlease(result)) {
+          let stale = false;
+          try {
+            stale = (inspectlease({ cwd: String(result.repo_root ?? scope.cwd) }) as Record<string, unknown>).stale === true;
+          } catch {}
+          if (stale) {
+            ledger.append("lease_heartbeat_stale", {
+              ...leaseFields(result),
+              ts: Date.now(),
+            });
+          }
+          releaseOperation(toolCallId, stale ? "heartbeat_stale" : "heartbeat_lost");
+        }
+      } catch {}
+    }, heartbeatintervalms({})) as unknown as HeartbeatTimer;
+    timer.unref?.();
+    activeOperations.set(toolCallId, {
+      lease: result,
+      timer,
+      toolName: event.toolName,
+      target: scope.target,
+      backgroundRunning: false,
+    });
+    ledger.append("lease_acquired", {
+      ...leaseFields(result),
+      recovered: result.recovered,
+      ts: Date.now(),
+    });
+    if (result.recovered === true) {
+      ledger.append("lease_recovered", {
+        ...leaseFields(result),
+        ts: Date.now(),
+      });
+    }
   };
 
   const bindrepository = (
@@ -1152,12 +1492,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
   };
   const restorejournal = (ctx: ExtensionContext): void => {
+    releaseAllOperations("journal_restore");
+    const cwd = String(ctx?.cwd ?? ".");
+    const currentRoot = evidence.repoRoot ?? capturebaseline(cwd).repo_root;
+    releaseStaleSessionLease(
+      currentRoot,
+      ctx?.sessionManager?.getSessionFile?.(),
+      "journal_restore_stale",
+    );
     const branch = ctx.sessionManager?.getBranch?.() ?? [];
     const state = journalfrombranch(branch);
     if (state.status !== "active") {
-      if (activeLease) releaselease(activeLease);
-      activeLease = null;
-      leaseConflict = null;
       requestId = null;
       continuationCount = 0;
       lastBlockingKey = null;
@@ -1171,15 +1516,12 @@ export default function gateChecker(pi: ExtensionAPI): void {
       }
       return;
     }
-    const current = capturebaseline(String(ctx.cwd ?? "."));
+    const current = capturebaseline(cwd);
     if (
       state.policy_fingerprint !== policyfingerprint() ||
       (current.repo_root && current.repo_root !== state.repo_root) ||
       state.baseline_sha === null
     ) {
-      if (activeLease) releaselease(activeLease);
-      activeLease = null;
-      leaseConflict = null;
       requestId = null;
       continuationCount = 0;
       lastBlockingKey = null;
@@ -1207,9 +1549,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     fields: Record<string, unknown> = {},
   ): void => {
     appendjournal("terminal", { outcome, ...fields });
-    if (activeLease) releaselease(activeLease);
-    activeLease = null;
-    leaseConflict = null;
+    releaseOrphanedOperations("terminal_journal");
     requestId = null;
     journalRecovery = null;
   };
@@ -1228,7 +1568,19 @@ export default function gateChecker(pi: ExtensionAPI): void {
     recordprovenance(provenancefromevent(payload) as SubagentEvidence | null);
   });
   events?.on?.("task:subagent:lifecycle", (payload: unknown) => {
-    recordprovenance(provenancefromlifecycle(payload) as SubagentEvidence | null);
+    const record = provenancefromlifecycle(payload) as SubagentEvidence | null;
+    recordprovenance(record);
+    if (
+      record &&
+      ["completed", "failed", "aborted"].includes(record.status) &&
+      record.session_file
+    ) {
+      releaseStaleSessionLease(
+        evidence.repoRoot,
+        record.session_file,
+        "child_lifecycle",
+      );
+    }
   });
 
   const armingStatus = (): string => {
@@ -1244,6 +1596,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // costs anything. every other handler fires per request, so until this existed
   // the status bar stayed empty at startup and there was no way to tell an
   // unarmed session from an armed one except by spending a turn.
+  pi.on("agent_end", (event: unknown) => {
+    const willContinue =
+      event &&
+      typeof event === "object" &&
+      "willContinue" in event &&
+      event.willContinue === true;
+    if (!willContinue) releaseOrphanedOperations("agent_end");
+  });
   pi.on("session_start", (_event: unknown, ctx: ExtensionContext) => {
     restorejournal(ctx);
     const status = requestId
@@ -1262,8 +1622,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     restorejournal(ctx);
   });
   pi.on("session_shutdown", () => {
-    if (activeLease) releaselease(activeLease);
-    activeLease = null;
+    releaseAllOperations("session_shutdown");
   });
   pi.on("ttsr_triggered", (event: unknown) => {
     let rules: unknown;
@@ -1282,6 +1641,138 @@ export default function gateChecker(pi: ExtensionAPI): void {
   // --- commands -------------------------------------------------------------
   // the level takes effect immediately, in this session, and persists to
   // CONFIG_PATH so the next session starts the same way. no restart.
+
+  const leaseStatusReport = (ctx: ExtensionCommandContext): string => {
+    const cwd = evidence.repoRoot ?? String(ctx?.cwd ?? ".");
+    const lines = [
+      `mutation lease enabled: ${leaseEnabled ? "on" : "off"}`,
+      `owned active operations: ${activeOperations.size}`,
+    ];
+    for (const [toolCallId, operation] of activeOperations) {
+      lines.push(
+        `  tool call: ${toolCallId} · tool name: ${operation.toolName} · target: ${operation.target ?? "unknown"}`,
+      );
+    }
+    let status: Record<string, unknown> | null = null;
+    try {
+      status = inspectlease({ cwd }) as Record<string, unknown>;
+    } catch {}
+    if (!status) {
+      lines.push("current holder: unknown");
+      return lines.join("\n");
+    }
+    let formatted = "";
+    try {
+      const record = status.record;
+      const holderSessionFile =
+        record &&
+        typeof record === "object" &&
+        !Array.isArray(record) &&
+        typeof (record as Record<string, unknown>).session_file === "string"
+          ? (record as Record<string, unknown>).session_file as string
+          : null;
+      formatted = formatleasestatus(status, {
+        relation: resolveLeaseRelation(
+          ctx?.sessionManager?.getSessionFile?.() ?? null,
+          holderSessionFile,
+        ),
+        cwd,
+      });
+    } catch {}
+    lines.push(`current holder: ${formatted || String(status.status ?? "unknown")}`);
+    return lines.join("\n");
+  };
+
+  pi.registerCommand("gates-lease", {
+    description: "show or change the mutation lease for this session: status | on | off",
+    getArgumentCompletions: (prefix: string) =>
+      ["status", "on", "off"]
+        .filter((command) => command.startsWith(prefix.trim().toLowerCase()))
+        .map((command) => ({ value: command, label: command })),
+    handler: async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+      const command = parts[0] ?? "";
+      if (parts.length !== 1 || !["status", "on", "off"].includes(command)) {
+        ctx?.ui?.notify?.("usage: /gates-lease status|on|off", "error");
+        return;
+      }
+      if (command === "status") {
+        ctx?.ui?.notify?.(leaseStatusReport(ctx), "info");
+        return;
+      }
+      if (command === "on") {
+        leaseEnabled = true;
+        ctx?.ui?.notify?.(leaseStatusReport(ctx), "info");
+        return;
+      }
+      if (activeOperations.size > 0) {
+        ctx?.ui?.notify?.(
+          `cannot disable mutation lease while ${activeOperations.size} active operation(s) are tracked`,
+          "error",
+        );
+        return;
+      }
+      const cwd = evidence.repoRoot ?? String(ctx?.cwd ?? ".");
+      let releaseError: string | null = null;
+      try {
+        const status = inspectlease({ cwd }) as Record<string, unknown>;
+        const record = status.record;
+        const ownedRecord =
+          !!record &&
+          typeof record === "object" &&
+          !Array.isArray(record) &&
+          (record as Record<string, unknown>).owner_id === leaseOwnerId;
+        if (
+          status.status !== "free" &&
+          ownedRecord &&
+          (status.status !== "held" ||
+            status.kind !== "v2" ||
+            status.valid !== true)
+        ) {
+          releaseError =
+            "cannot disable mutation lease: this instance's lease is not a valid held v2 record and cannot be safely released; retry /gates-lease off or inspect with: nikos-gates lease status --cwd .";
+        } else if (
+          status.status === "held" &&
+          status.kind === "v2" &&
+          status.valid === true &&
+          ownedRecord
+        ) {
+          const lease = record as Record<string, unknown>;
+          let released = false;
+          try {
+            released = Boolean(releaselease(lease, { cwd }));
+          } catch (error) {
+            releaseError = `cannot disable mutation lease: fenced release threw: ${
+              error instanceof Error ? error.message : String(error)
+            }; retry /gates-lease off or inspect with: nikos-gates lease status --cwd .`;
+          }
+          if (!released && !releaseError) {
+            releaseError =
+              "cannot disable mutation lease: this instance's idle lease was not released; retry /gates-lease off or inspect with: nikos-gates lease status --cwd .";
+          }
+          if (released) {
+            ledger.append("lease_manual_release", {
+              ...leaseFields(lease),
+              reason: "gates-lease off",
+              released: true,
+              ts: Date.now(),
+            });
+          }
+        }
+      } catch (error) {
+        releaseError = `cannot disable mutation lease: current lease could not be inspected: ${
+          error instanceof Error ? error.message : String(error)
+        }; retry /gates-lease off or inspect with: nikos-gates lease status --cwd .`;
+      }
+      if (releaseError) {
+        leaseEnabled = true;
+        ctx?.ui?.notify?.(releaseError, "error");
+        return;
+      }
+      leaseEnabled = false;
+      ctx?.ui?.notify?.(leaseStatusReport(ctx), "info");
+    },
+  });
 
   const applyLevel = (
     level: GateLevel,
@@ -1529,13 +2020,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("agent_start", (_event: unknown, ctx: ExtensionContext) => {
     const cwd = String(ctx?.cwd ?? ".");
     if (continuationCount > 0) return;
+    // a new agent turn with no open continuation means any non-background
+    // operation belongs to an abandoned or interrupted request.
+    releaseOrphanedOperations("agent_start");
     if (requestId) {
-      // a new agent turn with no open continuation means the previous request
-      // ended without settling — abandoned or interrupted. that is a completion:
-      // its lease must not outlive it and block every future mutation.
-      if (activeLease) releaselease(activeLease);
-      activeLease = null;
-      leaseConflict = null;
       lastBlockingKey = null;
     }
     evidence = freshEvidence();
@@ -1581,26 +2069,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     bindrepository(input, ctx);
 
     reportrepositorylimit(input, ctx);
-    // lazy lease: acquire here — after repository binding, immediately before
-    // the conflict evaluation, and only for a mutation-capable operation.
-    // read-only discovery never touches the lease, so it never holds the
-    // worktree and never blocks another session's mutation.
-    const mutating = ismutationtool(toolName, input);
-    if (mutating && evidence.repoRoot) ensurelease(evidence.repoRoot);
-    if (leaseConflict && mutating) {
-      let owner = "another gate-aware session";
-      const conflict = leaseConflict.conflict;
-      if (
-        conflict &&
-        typeof conflict === "object" &&
-        "owner_id" in conflict &&
-        typeof conflict.owner_id === "string"
-      ) owner = conflict.owner_id;
-      return {
-        block: true,
-        reason: `mutation lease held by ${owner}; retry after that session releases it`,
-      };
-    }
 
     if (toolName === "ask") evidence.askedUser = true;
 
@@ -1649,9 +2117,29 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return { input: { ...input, task: nudge + task } };
     }
   });
+  pi.on(
+    "before_tool_execute",
+    async (
+      event: BeforeToolExecuteEvent,
+      ctx: ExtensionContext,
+    ): Promise<ToolCallResult | void> => {
+      if (!policy.enabled || !leaseEnabled) return;
+      const scope = leasescope(event, ctx, evidence.repoRoot);
+      if (!scope) return;
+      return acquireOperation(event, ctx, scope);
+    },
+  );
 
   pi.on("tool_result", async (event: ToolResultEvent, ctx: ExtensionContext): Promise<ToolResultEventResult | void> => {
     const { toolName, content, isError, input, details } = event;
+    const toolCallId = String(event.toolCallId ?? "");
+    const operation = activeOperations.get(toolCallId);
+    const asyncRunning = asyncExecutionState(details) === "running";
+    if (operation && asyncRunning) {
+      operation.backgroundRunning = true;
+    } else if (operation) {
+      releaseOperation(toolCallId, isError ? "tool_error" : "tool_result");
+    }
     if (isError) evidence.hadtoolerror = true;
 
     // capture snapshot tags from read/edit results
@@ -1747,6 +2235,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
       }
     }
   });
+  pi.on("tool_execution_update", (event: unknown) => {
+    if (!event || typeof event !== "object") return;
+    const object = event as Record<string, unknown>;
+    const toolCallId = typeof object.toolCallId === "string" ? object.toolCallId : "";
+    if (!toolCallId || !object.partialResult || typeof object.partialResult !== "object") return;
+    const details = (object.partialResult as Record<string, unknown>).details;
+    const state = asyncExecutionState(details);
+    if (state === "completed" || state === "failed" || state === "cancelled") {
+      releaseOperation(toolCallId, `async_${state}`);
+    }
+  });
 
   // run gates before the agent yields — the enforcement point
   const completionDecision = async (event: unknown, ctx: ExtensionContext): Promise<SessionStopResult | void> => {
@@ -1777,15 +2276,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     const failures: GateFailure[] = [];
     const gitCwd = evidence.repoRoot ?? cwd;
-    if (leaseConflict) {
-      failures.push({
-        gate: "lease",
-        rule: "mutation_lease_conflict",
-        detail:
-          "another gate-aware session holds the repository mutation lease. " +
-          "wait for it to finish, then retry without bypassing the native tools.",
-      });
-    }
     if (journalRecovery) {
       failures.push({
         gate: "journal",

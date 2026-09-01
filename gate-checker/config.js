@@ -119,7 +119,6 @@ export const RULE_FAMILY = {
   no_test_run: "verify",
   complexity_failed: "complexity",
   uncommitted_changes: "commit",
-  mutation_lease_conflict: "runtime",
   recovery_required: "runtime",
   scope_unavailable: "runtime",
   missing_frustration_record: "scratchpad",

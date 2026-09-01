@@ -1,6 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import { execSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve as resolvePath } from "node:path";
 import gateChecker, {
@@ -17,6 +17,9 @@ import gateChecker, {
 	processShape,
 	ranTestRunner,
 	reliesOnSubagents,
+	leasescope,
+	operationAgentId,
+	resolveLeaseRelation,
 	rewriteGitCommit,
 	rewriteSmartCommit,
 	runCommitGate,
@@ -566,6 +569,377 @@ test("task inputs and the frustration tool expose the gate contract", async () =
 		"what you deleted entirely. be aggressive",
 		"what you simplified once the unnecessary pieces were gone",
 	]));
+});
+test("lease scope classifies only canonical worktree operations", () => {
+	const root = tempdir("gate-lease-scope-");
+	const outside = tempdir("gate-lease-outside-");
+	mkdirSync(resolvePath(root, "src"), { recursive: true });
+	writeFileSync(resolvePath(root, "src/existing.txt"), "before\n");
+	symlinkSync(outside, resolvePath(root, "escape"));
+	const context = { cwd: root, hasUI: false };
+	const classify = (toolName: string, input: Record<string, unknown>) =>
+		leasescope({ toolName, toolCallId: toolName, input }, context, root);
+	const cases: Array<{
+		toolName: string;
+		input: Record<string, unknown>;
+		expected: { cwd: string; target: string | null } | null;
+	}> = [
+		{ toolName: "task", input: { task: "write files" }, expected: null },
+		{ toolName: "write", input: { path: "src/existing.txt" }, expected: { cwd: root, target: "src/existing.txt" } },
+		{ toolName: "edit", input: { path: "src/new.txt" }, expected: { cwd: root, target: "src/new.txt" } },
+		{ toolName: "edit", input: { paths: ["src/existing.txt"] }, expected: { cwd: root, target: "src/existing.txt" } },
+		{ toolName: "edit", input: { paths: ["src/existing.txt", "src/new.txt"] }, expected: { cwd: root, target: null } },
+		{ toolName: "edit", input: { paths: ["src/existing.txt", resolvePath(outside, "outside.txt")] }, expected: { cwd: root, target: "src/existing.txt" } },
+		{ toolName: "edit", input: { paths: ["local://artifact.txt", "xd://artifact.txt"] }, expected: null },
+		{ toolName: "edit", input: { paths: [resolvePath(outside, "outside.txt"), resolvePath(outside, "other.txt")] }, expected: null },
+		{ toolName: "edit", input: { paths: ["escape/new.txt", "escape/other.txt"] }, expected: null },
+		{ toolName: "write", input: { path: "local://artifact.txt" }, expected: null },
+		{ toolName: "write", input: { path: "xd://artifact.txt" }, expected: null },
+		{ toolName: "write", input: { path: "artifact://artifact.txt" }, expected: null },
+		{ toolName: "write", input: { path: "vault://artifact.txt" }, expected: null },
+		{ toolName: "write", input: { path: resolvePath(outside, "outside.txt") }, expected: null },
+		{ toolName: "write", input: { path: "escape/new.txt" }, expected: null },
+		{ toolName: "bash", input: {}, expected: { cwd: root, target: null } },
+		{ toolName: "bash", input: { cwd: outside }, expected: null },
+		{ toolName: "read", input: { path: "src/existing.txt" }, expected: null },
+		{ toolName: "grep", input: { path: "src" }, expected: null },
+		{ toolName: "glob", input: { path: "src/**" }, expected: null },
+		{ toolName: "ask", input: { question: "continue?" }, expected: null },
+		{ toolName: "hub", input: { op: "list" }, expected: null },
+		{ toolName: "computer", input: { action: "state" }, expected: null },
+	];
+	for (const item of cases) expect(classify(item.toolName, item.input)).toEqual(item.expected);
+});
+test("first multi-edit from outside binds and leases its repository", () => {
+	const dir = tempdir("gate-multi-edit-outside-");
+	const state = tempdir("gate-multi-edit-outside-state-");
+	const repo = tempdir("gate-multi-edit-outside-repo-");
+	const outside = resolvePath(state, "outside");
+	mkdirSync(outside, { recursive: true });
+	const script = `
+const cp = await import("node:child_process");
+const fs = await import("node:fs");
+const path = await import("node:path");
+const root = process.env.PROBE_ROOT!;
+process.env.OMP_GATE_CONFIG = process.env.PROBE_CONFIG!;
+process.env.OMP_GATE_LEDGER = process.env.PROBE_LEDGER!;
+process.env.OMP_GATE_FRUSTRATIONS = process.env.PROBE_FRUSTRATIONS!;
+process.env.OMP_GATES_LEVEL = "medium";
+process.env.OMP_GATE_MUTATION_LEASE = "1";
+process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS = "0";
+const mod = await import(root + "/gate-checker/index.ts");
+const lease = await import(root + "/gate-checker/lease.js");
+const git = (args: string[]) => cp.execFileSync("git", args, { cwd: process.env.PROBE_REPO!, stdio: "pipe" });
+git(["init", "-q", "."]);
+git(["config", "user.email", "gate@example.invalid"]);
+git(["config", "user.name", "gate"]);
+fs.writeFileSync(path.resolve(process.env.PROBE_REPO!, "tracked.txt"), "before\\n");
+git(["add", "-A"]);
+git(["commit", "-q", "-m", "init"]);
+const schema = { describe() { return schema; }, min() { return schema; }, optional() { return schema; } };
+const zod = {
+	object: (_shape: unknown) => schema,
+	string: () => schema,
+	array: (_item: unknown) => schema,
+	union: (_items: unknown[]) => schema,
+	number: () => schema,
+	literal: (_value: string) => schema,
+};
+const handlers: Record<string, (event: unknown, context: unknown) => unknown> = {};
+const sessionFile = path.resolve(process.env.PROBE_STATE!, "multi.jsonl");
+fs.writeFileSync(sessionFile, "");
+const context = {
+	cwd: process.env.PROBE_OUTSIDE!,
+	hasUI: false,
+	sessionManager: {
+		getSessionFile: () => sessionFile,
+		getSessionId: () => "multi-session",
+	},
+	ui: { setStatus: () => {} },
+};
+mod.default({
+	zod,
+	on: (name: string, handler: (event: unknown, context: unknown) => unknown) => { handlers[name] = handler; },
+	registerCommand: () => {},
+	registerTool: () => {},
+	events: { on: () => {} },
+	appendEntry: () => {},
+} as never);
+const input = {
+	paths: [
+		path.resolve(process.env.PROBE_REPO!, "first.txt"),
+		path.resolve(process.env.PROBE_REPO!, "second.txt"),
+	],
+};
+await handlers.agent_start!({}, context);
+await handlers.tool_call!({ toolName: "edit", toolCallId: "multi", input }, context);
+const before = await handlers.before_tool_execute!(
+	{ toolName: "edit", toolCallId: "multi", input, sessionId: "multi-session" },
+	context,
+) as { block?: boolean } | undefined;
+if (before?.block === true) throw new Error("first multi-edit did not acquire");
+const status = lease.inspectlease({ cwd: process.env.PROBE_REPO! });
+if (status.status !== "held" || status.record?.target !== null) throw new Error("first multi-edit did not bind the worktree lease");
+await handlers.tool_result!(
+	{ toolName: "edit", toolCallId: "multi", input, content: [], details: undefined, isError: false },
+	context,
+);
+console.log("@@" + JSON.stringify({ status: status.status, target: status.record.target }));
+`;
+	writeFileSync(resolvePath(dir, "probe.ts"), script);
+	const output = execSync("bun run probe.ts", {
+		cwd: dir,
+		encoding: "utf-8",
+		stdio: "pipe",
+		env: {
+			...process.env,
+			PROBE_ROOT: resolvePath(import.meta.dir, ".."),
+			PROBE_CONFIG: resolvePath(state, "config.json"),
+			PROBE_LEDGER: resolvePath(state, "ledger.jsonl"),
+			PROBE_FRUSTRATIONS: resolvePath(state, "frustrations.jsonl"),
+			PROBE_STATE: state,
+			PROBE_OUTSIDE: outside,
+			PROBE_REPO: repo,
+		},
+	});
+	const line = output.split("\n").find((value) => value.startsWith("@@"));
+	if (!line) throw new Error(`probe produced no result line: ${output}`);
+	expect(JSON.parse(line.slice(2))).toEqual({ status: "held", target: null });
+});
+test("live lease controls report, toggle, isolate owners, and format conflicts", () => {
+	const dir = tempdir("gate-lease-controls-");
+	const state = tempdir("gate-lease-controls-state-");
+	const repo = tempdir("gate-lease-controls-repo-");
+	const script = `
+const cp = await import("node:child_process");
+const fs = await import("node:fs");
+const path = await import("node:path");
+const root = process.env.PROBE_ROOT!;
+process.env.OMP_GATE_CONFIG = process.env.PROBE_CONFIG!;
+process.env.OMP_GATE_LEDGER = process.env.PROBE_LEDGER!;
+process.env.OMP_GATE_FRUSTRATIONS = process.env.PROBE_FRUSTRATIONS!;
+process.env.OMP_GATES_LEVEL = "medium";
+process.env.OMP_GATE_MUTATION_LEASE = "1";
+process.env.OMP_GATE_MUTATION_LEASE_WAIT_MS = "0";
+const mod = await import(root + "/gate-checker/index.ts");
+const lease = await import(root + "/gate-checker/lease.js");
+const git = (args: string[]) => cp.execFileSync("git", args, { cwd: process.env.PROBE_REPO!, stdio: "pipe" });
+git(["init", "-q", "."]);
+git(["config", "user.email", "gate@example.invalid"]);
+git(["config", "user.name", "gate"]);
+fs.writeFileSync(path.resolve(process.env.PROBE_REPO!, "tracked.txt"), "before\\n");
+git(["add", "-A"]);
+git(["commit", "-q", "-m", "init"]);
+const parentSessionFile = path.resolve(process.env.PROBE_STATE!, "parent.jsonl");
+const childDirectory = path.resolve(process.env.PROBE_STATE!, "parent");
+fs.writeFileSync(parentSessionFile, "");
+fs.mkdirSync(childDirectory, { recursive: true });
+const schema = { describe() { return schema; }, min() { return schema; }, optional() { return schema; } };
+const zod = {
+	object: (_shape: unknown) => schema,
+	string: () => schema,
+	array: (_item: unknown) => schema,
+	union: (_items: unknown[]) => schema,
+	number: () => schema,
+	literal: (_value: string) => schema,
+};
+type Gate = {
+	handlers: Record<string, (event: unknown, context: unknown) => unknown>;
+	commands: Record<string, (args: string, context: unknown) => Promise<void>>;
+	context: Record<string, unknown>;
+	notifications: string[];
+};
+const makeGate = (id: string): Gate => {
+	const handlers: Gate["handlers"] = {};
+	const commands: Gate["commands"] = {};
+	const notifications: string[] = [];
+	const sessionFile = path.resolve(childDirectory, id + ".jsonl");
+	fs.writeFileSync(sessionFile, "");
+	const context = {
+		cwd: process.env.PROBE_REPO!,
+		hasUI: false,
+		sessionManager: {
+			getSessionFile: () => sessionFile,
+			getSessionId: () => id + "-session",
+		},
+		ui: {
+			notify: (message: string, type?: string) => notifications.push((type ?? "") + ":" + message),
+			setStatus: () => {},
+		},
+	};
+	mod.default({
+		zod,
+		on: (name: string, handler: (event: unknown, context: unknown) => unknown) => { handlers[name] = handler; },
+		registerCommand: (name: string, spec: { handler: (args: string, context: unknown) => Promise<void> }) => { commands[name] = spec.handler; },
+		registerTool: () => {},
+		events: { on: () => {} },
+		appendEntry: () => {},
+	} as never);
+	return { handlers, commands, context, notifications };
+};
+const start = async (gate: Gate) => {
+	await gate.handlers.agent_start!({}, gate.context);
+};
+const before = async (gate: Gate, toolCallId: string) => {
+	await gate.handlers.tool_call!(
+		{ toolName: "write", toolCallId, input: { path: "tracked.txt" } },
+		gate.context,
+	);
+	return await gate.handlers.before_tool_execute!(
+		{ toolName: "write", toolCallId, input: { path: "tracked.txt" }, sessionId: toolCallId },
+		gate.context,
+	) as { block?: boolean; reason?: string } | undefined;
+};
+const result = async (gate: Gate, toolCallId: string) => {
+	await gate.handlers.tool_result!(
+		{ toolName: "write", toolCallId, input: { path: "tracked.txt" }, content: [], details: undefined, isError: false },
+		gate.context,
+	);
+};
+const last = (gate: Gate) => gate.notifications[gate.notifications.length - 1] ?? "";
+let leasePath: string | null = null;
+const tamperCurrentLease = (suffix: string) => {
+	const status = lease.inspectlease({ cwd: process.env.PROBE_REPO! }) as { record?: Record<string, unknown> };
+	const record = status.record;
+	if (!record) throw new Error("missing lease record to tamper");
+	leasePath ??= String(record.path);
+	fs.writeFileSync(
+		path.resolve(leasePath, "lease.json"),
+		JSON.stringify({ ...record, path: leasePath + suffix }),
+	);
+};
+const holder = makeGate("holder");
+const waiter = makeGate("waiter");
+await start(holder);
+await start(waiter);
+await holder.commands["gates-lease"]!("status", holder.context);
+const initial = last(holder);
+if (!initial.includes("enabled: on") || !initial.includes("owned active operations: 0") || !initial.includes("current holder")) throw new Error("status did not report the initial lease state");
+const first = await before(holder, "holder-call");
+if (first?.block === true) throw new Error("holder could not acquire");
+await holder.commands["gates-lease"]!("off", holder.context);
+if (!last(holder).includes("active operation")) throw new Error("off did not refuse an active operation");
+await result(holder, "holder-call");
+await holder.commands["gates-lease"]!("off", holder.context);
+if (!last(holder).includes("enabled: off")) throw new Error("off did not disable later acquisition");
+await holder.commands["gates-lease"]!("on", holder.context);
+if (!last(holder).includes("enabled: on")) throw new Error("on did not enable later acquisition");
+const second = await before(holder, "holder-call-2");
+if (second?.block === true) throw new Error("holder could not reacquire");
+await waiter.commands["gates-lease"]!("off", waiter.context);
+if (lease.inspectlease({ cwd: process.env.PROBE_REPO! }).status !== "held") throw new Error("off released another gate owner's lease");
+await waiter.commands["gates-lease"]!("on", waiter.context);
+const conflict = await before(waiter, "waiter-conflict");
+const reason = conflict?.reason ?? "";
+const statusAction = "nikos-gates lease status --cwd '" + process.env.PROBE_REPO! + "'";
+for (const label of ["agent:", "session:", "request:", "tool call:", "tool name:", "target:", "pid:", "age:", "heartbeat age:", "fence:", "relation: sibling", statusAction]) {
+	if (!reason.includes(label)) throw new Error("conflict omitted " + label);
+}
+await waiter.commands["gates-lease"]!("status", waiter.context);
+if (!last(waiter).includes("relation: sibling") || !last(waiter).includes(statusAction)) throw new Error("status omitted the holder relation or bound cwd");
+tamperCurrentLease("-result");
+await result(holder, "holder-call-2");
+tamperCurrentLease("-off");
+await holder.commands["gates-lease"]!("off", holder.context);
+const releaseFailure = last(holder);
+if (!releaseFailure.includes("cannot disable mutation lease")) throw new Error("off did not refuse a failed fenced release");
+await holder.commands["gates-lease"]!("status", holder.context);
+if (!last(holder).includes("enabled: on")) throw new Error("failed fenced release did not retain enablement");
+const stranded = lease.inspectlease({ cwd: process.env.PROBE_REPO! }).record;
+if (!stranded || !leasePath) throw new Error("missing stranded lease");
+fs.writeFileSync(
+	path.resolve(leasePath, "lease.json"),
+	JSON.stringify({ ...stranded, path: leasePath }),
+);
+const restored = lease.inspectlease({ cwd: process.env.PROBE_REPO! }).record;
+if (!restored || !lease.releaselease(restored, { cwd: process.env.PROBE_REPO! })) throw new Error("failed to clean up the fenced lease");
+await holder.commands["gates-lease"]!("off", holder.context);
+if (!last(holder).includes("enabled: off")) throw new Error("off did not disable after release");
+const retry = await before(waiter, "waiter-retry");
+if (retry?.block === true) throw new Error("successful retry stayed blocked");
+await result(waiter, "waiter-retry");
+delete process.env.OMP_GATE_MUTATION_LEASE;
+const unset = makeGate("unset");
+await start(unset);
+const unsetResult = await before(unset, "unset-call");
+if (unsetResult?.block === true) throw new Error("unset lease default blocked a repository write");
+const unsetStatus = lease.inspectlease({ cwd: process.env.PROBE_REPO! });
+if (unsetStatus.status !== "held") throw new Error("unset lease default did not acquire a repository write lease");
+await result(unset, "unset-call");
+process.env.OMP_GATE_MUTATION_LEASE = "off";
+const explicitOff = makeGate("explicit-off");
+await start(explicitOff);
+const explicitOffResult = await before(explicitOff, "explicit-off-call");
+if (explicitOffResult?.block === true) throw new Error("explicit off blocked a repository write");
+const explicitOffScope = lease.identity(process.env.PROBE_REPO!);
+if (fs.existsSync(path.resolve(explicitOffScope.common_dir, "omp-gates", "leases", explicitOffScope.key))) throw new Error("explicit off acquired a repository write lease");
+console.log("@@" + JSON.stringify({ ok: true }));
+`;
+	writeFileSync(resolvePath(dir, "probe.ts"), script);
+	const output = execSync("bun run probe.ts", {
+		cwd: dir,
+		encoding: "utf-8",
+		stdio: "pipe",
+		env: {
+			...process.env,
+			PROBE_ROOT: resolvePath(import.meta.dir, ".."),
+			PROBE_CONFIG: resolvePath(state, "config.json"),
+			PROBE_LEDGER: resolvePath(state, "ledger.jsonl"),
+			PROBE_FRUSTRATIONS: resolvePath(state, "frustrations.jsonl"),
+			PROBE_STATE: state,
+			PROBE_REPO: repo,
+		},
+	});
+	const line = output.split("\n").find((value) => value.startsWith("@@"));
+	if (!line) throw new Error(`probe produced no result line: ${output}`);
+	expect(JSON.parse(line.slice(2))).toEqual({ ok: true });
+});
+
+
+test("operation agent ids require materialized session provenance", () => {
+	const sessions = tempdir("gate-agent-id-");
+	const rootSession = resolvePath(sessions, "root.jsonl");
+	const childDirectory = resolvePath(sessions, "root");
+	const childSession = resolvePath(childDirectory, "worker.jsonl");
+	writeFileSync(rootSession, "");
+	mkdirSync(childDirectory);
+	writeFileSync(childSession, "");
+
+	expect(operationAgentId(resolvePath(sessions, "missing.jsonl"))).toBeNull();
+	expect(operationAgentId(rootSession)).toBe("main");
+	expect(operationAgentId(childSession)).toBe("worker");
+	for (const suffix of ["json", "ndjson"]) {
+		const parent = resolvePath(sessions, `parent-${suffix}.${suffix}`);
+		const directory = resolvePath(sessions, `parent-${suffix}`);
+		const child = resolvePath(directory, `worker.${suffix}`);
+		writeFileSync(parent, "");
+		mkdirSync(directory);
+		writeFileSync(child, "");
+		expect(operationAgentId(child)).toBe("worker");
+	}
+});
+
+test("lease relation uses materialized session layout and unknown fallback", () => {
+	const sessions = tempdir("gate-lease-relation-");
+	const rootSession = resolvePath(sessions, "root.jsonl");
+	const childDirectory = resolvePath(sessions, "root");
+	const firstChild = resolvePath(childDirectory, "first.jsonl");
+	const secondChild = resolvePath(childDirectory, "second.jsonl");
+	const unrelated = resolvePath(sessions, "unrelated.jsonl");
+	const missing = resolvePath(sessions, "missing.jsonl");
+	writeFileSync(rootSession, "");
+	mkdirSync(childDirectory);
+	writeFileSync(firstChild, "");
+	writeFileSync(secondChild, "");
+	writeFileSync(unrelated, "");
+
+	expect(resolveLeaseRelation(rootSession, rootSession)).toBe("same");
+	expect(resolveLeaseRelation(firstChild, rootSession)).toBe("parent");
+	expect(resolveLeaseRelation(rootSession, firstChild)).toBe("child");
+	expect(resolveLeaseRelation(firstChild, secondChild)).toBe("sibling");
+	expect(resolveLeaseRelation(firstChild, unrelated)).toBe("unknown");
+	expect(resolveLeaseRelation(missing, rootSession)).toBe("unknown");
+	expect(resolveLeaseRelation(missing, missing)).toBe("unknown");
 });
 
 test("a missing main frustration record blocks the request", () => {
@@ -1217,7 +1591,7 @@ test("the dial re-grades every rule family per level", () => {
 // read the rule ids out of the source that emits them, so a rule added later
 // cannot slip past the dial by having no policy entry. a hand-written list here
 // would pass while the real gate blocked at a level that promises not to.
-const RUNTIME_INTEGRITY_RULES = ["mutation_lease_conflict", "recovery_required", "scope_unavailable"];
+const RUNTIME_INTEGRITY_RULES = ["recovery_required", "scope_unavailable"];
 
 function emittedRuleIds(): { graded: string[]; advisory: string[] } {
 	const graded = new Set<string>();
@@ -1248,6 +1622,10 @@ test("every emitted rule has a policy family", () => {
 	for (const rule of emittedRuleIds().graded) {
 		expect(RULE_FAMILY[rule]).toBeDefined();
 	}
+});
+
+test("the removed lease conflict rule has no policy family", () => {
+	expect(RULE_FAMILY.mutation_lease_conflict).toBeUndefined();
 });
 
 test("only the mandatory scratchpad rule blocks at low", () => {

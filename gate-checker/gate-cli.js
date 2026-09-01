@@ -29,11 +29,22 @@ import {
   loadForbiddenMarkers,
   checkAddedLines,
 } from "./predicates.js";
-import { read, summarize, LEDGER_PATH } from "./ledger.js";
+import {
+  append as appendledger,
+  read,
+  summarize,
+  LEDGER_PATH,
+} from "./ledger.js";
 import { FRUSTRATION_PATH, readRecords } from "./frustrations.js";
 import { resolvescope } from "./scope.js";
 import { auditscope } from "./risks.js";
 import { installadvisor } from "../advisor/install.js";
+import {
+  formatleasestatus,
+  inspectlease,
+  releaselease,
+  releasestalelease,
+} from "./lease.js";
 
 /**
  * @param {string[]} argv
@@ -275,6 +286,160 @@ function stats(args) {
 }
 
 
+function hasarg(args, name) {
+  return Object.prototype.hasOwnProperty.call(args, name);
+}
+
+function validarg(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function leasecwd(args) {
+  if (hasarg(args, "cwd") && typeof args.cwd !== "string")
+    throw new Error("lease: --cwd requires a path");
+  return String(args.cwd ?? ".");
+}
+
+function leasefields(record) {
+  return {
+    path: record.path,
+    token: record.token,
+    repo_root: record.repo_root,
+    common_dir: record.common_dir,
+    owner_id: record.owner_id,
+    request_id: record.request_id,
+    session_id: record.session_id,
+    session_file: record.session_file,
+    agent_id: record.agent_id,
+    tool_call_id: record.tool_call_id,
+    tool_name: record.tool_name,
+    target: record.target,
+    fence: record.fence,
+    pid: record.pid,
+    acquired_at: record.acquired_at,
+    heartbeat_at: record.heartbeat_at,
+  };
+}
+
+function appendmanualrelease(record, mode, reason) {
+  appendledger("lease_manual_release", {
+    ...leasefields(record),
+    mode,
+    reason,
+  });
+}
+
+function leaseusage() {
+  console.error("usage: nikos-gates lease status [--cwd <path>] [--json]");
+  console.error("       nikos-gates lease release [--cwd <path>] --stale-only");
+  console.error(
+    "       nikos-gates lease release [--cwd <path>] --force" +
+      " --owner-id <id> --tool-call-id <id> --reason <text>",
+  );
+}
+
+function leasestatus(args) {
+  if (
+    hasarg(args, "stale-only") ||
+    hasarg(args, "force") ||
+    hasarg(args, "owner-id") ||
+    hasarg(args, "tool-call-id") ||
+    hasarg(args, "reason") ||
+    (hasarg(args, "json") && args.json !== true)
+  )
+    return null;
+  const cwd = leasecwd(args);
+  const status = inspectlease({ cwd });
+  if (args.json === true) console.log(JSON.stringify(status, null, 2));
+  else console.log(formatleasestatus(status, { cwd }));
+  return 0;
+}
+
+function leaserelease(args) {
+  const staleonly = args["stale-only"] === true;
+  const force = args.force === true;
+  if (
+    (hasarg(args, "stale-only") && !staleonly) ||
+    (hasarg(args, "force") && !force) ||
+    staleonly === force
+  )
+    return null;
+  if (hasarg(args, "json")) return null;
+  if (
+    staleonly &&
+    (hasarg(args, "owner-id") || hasarg(args, "tool-call-id") || hasarg(args, "reason"))
+  )
+    return null;
+  if (
+    force &&
+    (!validarg(args["owner-id"]) ||
+      !validarg(args["tool-call-id"]) ||
+      !validarg(args.reason))
+  )
+    return null;
+
+  const cwd = leasecwd(args);
+  const status = inspectlease({ cwd });
+  if (status.status !== "held" || status.valid !== true || !status.record) {
+    console.error(`lease release: ${staleonly ? "stale-only" : "force"} refused`);
+    console.error(formatleasestatus(status, { cwd }));
+    return 1;
+  }
+
+  const record = status.record;
+  if (staleonly) {
+    if (status.stale !== true) {
+      console.error("lease release: stale-only refused; heartbeat is fresh");
+      console.error(formatleasestatus(status, { cwd }));
+      return 1;
+    }
+    if (!releasestalelease(record, { cwd })) {
+      console.error("lease release: stale-only refused; holder changed");
+      console.error(formatleasestatus(inspectlease({ cwd }), { cwd }));
+      return 1;
+    }
+    appendmanualrelease(record, "stale-only", "stale heartbeat");
+    console.log("lease release: released stale lease");
+    return 0;
+  }
+
+  if (record.owner_id !== args["owner-id"] || record.tool_call_id !== args["tool-call-id"]) {
+    console.error("lease release: force refused; identity mismatch");
+    console.error(formatleasestatus(status, { cwd }));
+    return 1;
+  }
+  const reason = args.reason.trim();
+  if (!releaselease(record, { cwd })) {
+    console.error("lease release: force refused; holder changed");
+    console.error(formatleasestatus(inspectlease({ cwd }), { cwd }));
+    return 1;
+  }
+  appendmanualrelease(record, "force", reason);
+  console.log("lease release: released lease");
+  return 0;
+}
+
+/** @param {string[]} argv */
+function lease(argv) {
+  const subcommand = argv[0];
+  const args = parseArgs(argv.slice(1));
+  try {
+    if (subcommand === "status") {
+      const result = leasestatus(args);
+      if (result !== null) return result;
+    } else if (subcommand === "release") {
+      const result = leaserelease(args);
+      if (result !== null) return result;
+    }
+  } catch (error) {
+    console.error(`lease ${subcommand ?? ""}: ${String(error)}`);
+    return 2;
+  }
+  leaseusage();
+  return 2;
+}
+
+
 /** @param {string[]} argv */
 function advisor(argv) {
   if (argv[0] !== "install") {
@@ -311,13 +476,21 @@ if (command === "advisor") {
   code = audit(args);
 } else if (command === "stats") {
   code = stats(args);
+} else if (command === "lease") {
+  code = lease(rest);
 } else {
-  console.log("usage: gate-cli.js <advisor|audit|cutover|stats> [options]");
+  console.log("usage: gate-cli.js <advisor|audit|cutover|stats|lease> [options]");
   console.log("  advisor install");
   console.log("  audit   [--kind uncommitted|request|base|commit] [--base <ref>]");
   console.log("          [--commit <ref>] [--folder <path>] [--cwd <dir>] [--json]");
   console.log("  cutover [--base <ref>] [--cwd <dir>] [--markers <file>]");
   console.log("  stats   [--json] [--ledger <path>]");
+  console.log("  lease   status [--cwd <path>] [--json]");
+  console.log("          release [--cwd <path>] --stale-only");
+  console.log(
+    "          release [--cwd <path>] --force --owner-id <id>" +
+      " --tool-call-id <id> --reason <text>",
+  );
   code = command ? 2 : 0;
 }
 process.exit(code);

@@ -156,7 +156,13 @@ engagement levels:
 /gates-engage medium
 /gates-engage high
 /gates-disable
+/gates-lease status
+/gates-lease on
+/gates-lease off
 ```
+
+`/gates-lease` reports or changes only the current session's cooperative worktree operation lease. it needs no restart. `on` enables and `off` disables the lease live for the current session; neither changes startup behavior. `off` refuses while the session tracks an active operation and releases only this instance's idle lease.
+
 
 | level    | behavior                                                                                                                         |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -165,7 +171,7 @@ engagement levels:
 | `high`   | every rule blocks, including the commit gate, subagent manifest, and scratchpad coverage.                                        |
 | `off`    | all checks and recording stop. set with `/gates-disable`.                                                                        |
 
-slash level changes take effect in the running session and persist to `~/.omp/gate-checker/config.json`. direct config edits are loaded only when omp starts: restart omp before using `/gates-engage` after an external edit, or set the relevant `OMP_*` environment before the session. precedence is the config file, then `OMP_GATES_LEVEL`, then the default `medium`. `OMP_VERIFY_CMD` supplies a verification command when the config file has none. `OMP_GATE_CONFIG`, `OMP_GATE_LEDGER`, and `OMP_GATE_FRUSTRATIONS` relocate persisted paths.
+slash level changes take effect in the running session and persist to `~/.omp/gate-checker/config.json`. direct config edits are loaded only when omp starts: restart omp before using `/gates-engage` after an external edit, or set the relevant `OMP_*` environment before the session. precedence is the config file, then `OMP_GATES_LEVEL`, then the default `medium`. `OMP_VERIFY_CMD` supplies a verification command when the config file has none. `OMP_GATE_CONFIG`, `OMP_GATE_LEDGER`, and `OMP_GATE_FRUSTRATIONS` relocate persisted paths. the mutation lease is enabled at startup by default; set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it. unset and all other values enable it. other delivery gates remain independent.
 
 `/gates-engage` accepts no arguments for status or exactly one level, and it preserves the in-memory verification command. set that command with `OMP_VERIFY_CMD` before the session or edit `verifyCmd`, restart omp, then use `/gates-engage`. a live slash call does not reload disk.
 
@@ -181,15 +187,17 @@ fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `d
 
 the extension writes machine-authored scratchpad records for warning and blocking gate outcomes. those records satisfy main-session coverage in the same stop, never a child session. an agent may append its own perspective. a missing active agent session blocks at every enabled level. if an agent files `none` after a failed tool result or a continuation forced by another blocking rule, the extension writes the non-blocking `clean_under_errors` telemetry event. the missing-record continuation itself does not count as friction.
 
-command-line audits use the same predicates as the extension:
+command-line gate commands use the same predicates as the extension:
 
 ```sh
 bun run gate-checker/gate-cli.js audit --kind uncommitted --cwd . --json
 bun run gate-checker/gate-cli.js cutover --base HEAD~1 --cwd .
 bun run gate-checker/gate-cli.js stats --json
+bun run gate-checker/gate-cli.js lease status [--cwd path] [--json]
+bun run gate-checker/gate-cli.js lease release [--cwd path] --stale-only
 ```
 
-`stats` reports frustration counts by type and source (`agent`, `auto`, or `legacy`) and the number of `clean_under_errors` events, in both text and json output.
+`stats` reports frustration counts by type and source (`agent`, `auto`, or `legacy`) and the number of `clean_under_errors` events, in both text and json output. the [gates plugin user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md) documents authorized force release.
 
 audit scopes:
 
@@ -274,8 +282,8 @@ this runs the gate-checker and questionnaire unit tests, the packaged-surface te
 | [`gate-checker/provenance.js`](gate-checker/provenance.js)                                                                                | subagent manifest and claim extraction                                                |
 | [`gate-checker/ledger.js`](gate-checker/ledger.js)                                                                                        | append-only record of every gate fire and outcome                                     |
 | [`gate-checker/journal.js`](gate-checker/journal.js)                                                                                      | request journal and recovery state                                                    |
-| [`gate-checker/lease.js`](gate-checker/lease.js)                                                                                          | repository mutation lease                                                             |
-| [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js)                                                                                    | cutover, audit, telemetry, and advisor setup command-line interface                   |
+| [`gate-checker/lease.js`](gate-checker/lease.js)                                                                                          | cooperative worktree operation lease                                                   |
+| [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js)                                                                                    | cutover, audit, telemetry, advisor setup, and lease recovery command-line interface   |
 | [`gate-checker/wiring-check.ts`](gate-checker/wiring-check.ts)                                                                            | end-to-end probe that the gate fires from `session_stop`                              |
 | [`omnipotence/index.ts`](omnipotence/index.ts)                                                                                            | native omp commands, result tool, session recovery, and hidden-turn scheduling        |
 | [`omnipotence/engine.ts`](omnipotence/engine.ts)                                                                                          | deterministic process replay, effects, subprocesses, modes, and terminal behavior     |
