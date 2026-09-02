@@ -1,141 +1,201 @@
 # terra advisor user guide
 
-> a native passive, read-only omp advisor configured by nikos agent stack.
+`terra` is a native omp advisor configuration. it is not an omp extension. the package `omp.extensions` list contains `gate-checker/index.ts`, `omnipotence/index.ts`, and `ask-questionnaire/index.ts`; `advisor/WATCHDOG.yml` supplies the terra profile. the gate-checker extension registers `/advisor-install`.
+
+source: [package](../package.json), [command registration](../gate-checker/index.ts), [terra profile](../advisor/WATCHDOG.yml)
+
+## prerequisites
+
+for the omp flow, use an omp installation with plugin support and the `omp plugin` command. use bun 1.2.22 or later for this package.
+
+the `nikos-gates` command is optional. the package exposes it as a shell bin, and `gate-checker/gate-cli.js` starts with `#!/usr/bin/env bun`. to use this command, make `bun` and the global bun bin directory available on `PATH`:
+
+```sh
+bun add --global nikos-agent-stack
+export PATH="$(bun pm bin -g):$PATH"
+```
+
+an omp plugin install does not install the `nikos-gates` shell bin.
+
+source: [package](../package.json), [shell command](../gate-checker/gate-cli.js)
 
 ## install and start
 
-run the setup flow in this order:
+### install the published omp plugin
 
 ```sh
 omp plugin install nikos-agent-stack
 ```
 
-start an omp session and run the installed plugin setup command:
+this installs the omp extensions. start an omp session and run the setup command with no arguments:
 
 ```text
 /advisor-install
 ```
 
-restart the session, then use the native advisor commands:
+the command writes terra to the user watchdog configuration. start a new omp session to activate terra. in the new session, enable and inspect the native advisor:
 
 ```text
 /advisor on
 /advisor status
 ```
 
-`/advisor-install` installs or updates terra in the user watchdog configuration. `/advisor on` enables passive monitoring, and `/advisor status` reports native advisor state. for a linked local checkout, run `omp plugin link .`, then use `/advisor-install` in an omp session. `nikos-gates advisor install` remains available for direct package use outside omp.
+`/advisor on` enables native passive monitoring. `/advisor status` reports native advisor state. `/advisor-install` accepts no arguments; trailing text produces an error notification.
 
-source: [package command](../package.json), [advisor setup command](../advisor/install.js), [shell setup command](../gate-checker/gate-cli.js), [watchdog source](../advisor/WATCHDOG.yml)
+for a linked local checkout, use this instead of the published plugin install:
 
-## setup behavior
+```sh
+omp plugin link .
+```
 
-`/advisor-install` and `nikos-gates advisor install` read the existing user `WATCHDOG.yml`, or an existing `WATCHDOG.yaml` when no `.yml` file exists, from the directory named by `PI_CODING_AGENT_DIR`, or from `~/.omp/agent` when that environment variable is unset.
+then start an omp session and run `/advisor-install`.
 
-the setup command:
+### use the direct shell installer
 
-- preserves top-level instructions and every non-terra advisor;
-- normalizes names only to find and drop an existing terra entry, keeps every other advisor name as written, then appends the packaged terra entry;
-- checks before writing for a top-level mapping, a string `instructions`, an `advisors` list, and each advisor's string `name`, optional string `model` and `instructions`, string-list `tools`, and boolean `enabled`;
-- writes atomically to `WATCHDOG.yml`, or to an existing `WATCHDOG.yaml` when no `.yml` file exists; and
-- is idempotent: a repeated setup leaves the same terra configuration.
+after the global shell-bin prerequisite, run:
 
-the user owns this configuration after setup. run `/advisor-install` again after a plugin update when the shipped terra instructions change, then restart omp. use `nikos-gates advisor install` only when invoking the package directly outside omp.
+```sh
+nikos-gates advisor install
+```
 
-source: [advisor setup command](../advisor/install.js), [shell setup command](../gate-checker/gate-cli.js), [watchdog source](../advisor/WATCHDOG.yml)
+the command accepts only `advisor install`. success prints the installed path and tells you to start a new omp session. success returns exit code `0`; failure prints an `advisor install:` error and returns exit code `2`.
 
-## passive advisor behavior
+source: [package](../package.json), [command registration](../gate-checker/index.ts), [shell installer](../gate-checker/gate-cli.js), [installer](../advisor/install.js)
 
-terra is a native passive advisor. after `/advisor on`, omp monitors the session and routes terra notes through the native advisor flow.
+## watchdog configuration
 
-omp owns the native `/advisor on` and `/advisor status` commands, advisor routing, concern and blocker interruption, and the advisor ui. the plugin supplies terra configuration only; it does not replace those native surfaces.
+the installer selects the user watchdog file in this order:
 
-terra has `read`, `grep`, and `glob` only. it cannot edit, write, or run commands. this restriction applies only to terra; it is not an acceptance criterion for `OMP-DEV` operations.
+1. use `PI_CODING_AGENT_DIR` when it is set; otherwise use `~/.omp/agent`.
+2. use `WATCHDOG.yml` when that file exists.
+3. when `WATCHDOG.yml` does not exist but `WATCHDOG.yaml` exists, use `WATCHDOG.yaml`.
+4. when neither file exists, create `WATCHDOG.yml`.
 
-source: [watchdog source](../advisor/WATCHDOG.yml)
+the installer validates an existing file before it writes. the document root must be a yaml mapping. `instructions`, when present, must be a string. `advisors`, when present, must be a list. every advisor must be a mapping with a string `name`; optional `model` and `instructions` values must be strings, `tools` must be a string list, and `enabled` must be a boolean.
+
+the packaged profile passes the same validation and contains exactly one advisor named `terra`.
+
+the merge keeps every existing top-level key. it rebuilds `advisors` by keeping entries whose normalized name is not `terra`, then appending the packaged terra entry. name normalization lowercases a name, replaces each run of non-letter and non-digit characters with `-`, and trims `-` characters. a rerun therefore replaces every normalized terra entry, including a customized terra object or extra terra fields, with the shipped profile. other advisor entries remain in the list.
+
+the installer creates the target directory when needed. it writes the new yaml to a file in a sibling temporary directory named `.watchdog-*`, renames that file over the selected target, and removes the temporary directory. this is the installer’s atomic replacement path.
+
+yaml parse errors, validation errors, packaged-profile errors, directory errors, write errors, and rename errors stop installation. on failure, the commands do not print a success result; temporary-directory cleanup runs after a temporary directory exists. `/advisor-install` reports the error in the omp ui. `nikos-gates advisor install` writes the error to stderr and returns exit code `2`.
+
+source: [installer](../advisor/install.js), [command registration](../gate-checker/index.ts), [shell installer](../gate-checker/gate-cli.js)
+
+## shipped terra profile
+
+the installed profile contains:
+
+- `name: terra`
+- `enabled: true`
+- `model: openai-codex/gpt-5.6-terra:high`
+- `tools: read`, `grep`, and `glob`
+
+terra can inspect source with `read`, `grep`, and `glob`. terra cannot edit files, write files, or run commands. this tool restriction applies only to terra’s own operations; it does not apply to `OMP-DEV`.
+
+source: [terra profile](../advisor/WATCHDOG.yml)
+
+## native omp operation
+
+the installer supplies configuration only. the terra profile defines no polling loop, turn hook, fixed cadence, or review frequency. native omp decides when passive monitoring runs.
+
+native omp owns `/advisor on`, `/advisor status`, advisor routing, concern and blocker interruption, and the advisor ui. terra does not replace these native surfaces.
+
+`OMP-DEV` is the sole writer, integrator, and validator. terra advises from inspected source, but a terra note is not an approval, gate result, or handoff. terra cannot select concern or blocker only to enforce its own tool or authority limits. the separate gate checker owns gate results.
+
+source: [terra profile](../advisor/WATCHDOG.yml), [package](../package.json)
 
 ## advisory standard
 
-terra advises only when inspected source establishes all three links:
+terra advises only when inspected evidence directly establishes all three links at once:
 
 1. a current `OMP-DEV` decision or candidate;
-2. an explicit acceptance criterion or existing observable contract; and
-3. a concrete path by which the candidate violates that criterion or remains materially unverified.
+2. an explicit acceptance criterion or existing observable contract that applies to it; and
+3. a concrete path by which the candidate violates that criterion or leaves it materially unverified.
 
-when a link is hypothetical, unobserved, or supported only by an unrelated source, terra stays silent. each recommendation stays focused on one candidate, its acceptance criteria, relevant existing tests, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen a settled design.
+when any link is hypothetical, unobserved, or supported only by an unrelated source, terra stays silent. each recommendation covers one candidate, its acceptance criteria, relevant existing tests, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen settled design.
 
-when a failed test is involved, terra classifies it before advising:
+when a proposed or speculative test fails, terra classifies the failure before advising:
 
 | class | condition | recommendation |
 |---|---|---|
-| `bug` | inspected evidence proves that current or accepted behavior breaks an explicit criterion or contract | advise a production change |
+| `bug` | inspected evidence proves that current or accepted behavior violates an explicit criterion or contract | advise a production change |
 | `bad_oracle` | the expectation is unsupported or wrong | advise correction or removal of the test |
 | `low_value` | the difference protects no distinct, important, stable observable contract | advise correction or removal of the test |
 
-terra advises a production change only for a `bug`. it advises but never claims approval, gate, or handoff authority.
+terra advises a production change only for `bug`. it advises correction or removal for `bad_oracle` and `low_value`.
 
-source: [watchdog source](../advisor/WATCHDOG.yml)
+source: [terra profile](../advisor/WATCHDOG.yml)
 
 ## evidence in notes
 
-each terra note must identify the current `OMP-DEV` candidate from the session update and include source evidence in its note text:
+each terra note identifies the current `OMP-DEV` candidate from the session update and includes these labels copied from one inspected read result:
 
-- the exact repository-relative `path` to an applicable acceptance criterion or observable contract;
-- the one-indexed `line` that establishes that criterion or contract;
-- a concrete `claim` that explains how the identified candidate violates the cited criterion or leaves it materially unverified; and
-- the read-snapshot `digest`, copied verbatim from the same read result as the cited path and line.
+- `path` for the applicable acceptance criterion or observable contract;
+- `line` that establishes that criterion or contract;
+- `claim` that explains how the candidate violates the cited criterion or leaves it materially unverified; and
+- `digest` from the same read snapshot as the cited `path` and `line`.
 
-terra does not use an unrelated read only to supply a digest, and it never invents or recomputes one. when no inspected source grounds advice, terra emits no note.
+terra never uses an unrelated read only to supply a digest, and never invents or recomputes a digest. when no inspected source grounds advice, terra emits no note.
 
-omp machine-enforces the native `note` and `severity` fields. terra's watchdog instructions require the candidate, `path`, `line`, `claim`, and matching read-snapshot digest inside the note text. concern and blocker remain governed by omp's native advisor semantics; terra never selects either severity solely to enforce its own tool or authority restrictions against `OMP-DEV`. verify cited evidence against a current read result before acting on it.
+omp validates only the native `note` and `severity` fields. the evidence convention remains an instruction inside terra’s profile, not a native schema check. native omp semantics determine concern and blocker impact. verify each cited source result before acting on a note.
 
-source: [watchdog source](../advisor/WATCHDOG.yml)
-
-## authority boundary
-
-- `OMP-DEV` remains the sole writer, integrator, and validator.
-- terra advises from read-only source inspection.
-- native advisor notes are not approvals or gate results.
-- gate results remain the responsibility of the separate gate checker extension.
-
-source: [watchdog source](../advisor/WATCHDOG.yml), [gate checker guide](gates-plugin-user-guide.md)
+source: [terra profile](../advisor/WATCHDOG.yml)
 
 ## uninstall
+
+remove the omp plugin with:
 
 ```sh
 omp plugin uninstall nikos-agent-stack
 ```
 
-plugin uninstall does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file or the terra entry that `/advisor-install` added. `/advisor on` and `/advisor status` only control or report the native advisor; neither removes configuration. to remove terra, delete its entry from the user watchdog configuration while preserving top-level instructions and other advisors, then start a new omp session.
+this command does not remove the user `WATCHDOG.yml` or `WATCHDOG.yaml` file and does not remove the terra entry. if you install the global shell bin only for direct installation, remove that package separately:
 
-source: [advisor setup command](../advisor/install.js)
+```sh
+bun remove --global nikos-agent-stack
+```
+
+to remove terra configuration, edit the selected watchdog file and remove every advisor whose normalized name is `terra`. preserve all other top-level keys and advisors. `/advisor on` and `/advisor status` control or report native state; neither command removes configuration. start a new omp session after removal.
+
+source: [installer](../advisor/install.js), [package](../package.json)
 
 ## troubleshooting
 
-### `/advisor status` does not show terra
+### `/advisor-install` rejects the command
 
-run `/advisor-install`, then start a new omp session before checking status again. confirm that the user watchdog configuration still contains the terra entry and that `PI_CODING_AGENT_DIR` points to the intended agent directory when it is set.
+run `/advisor-install` with no trailing text. the slash command accepts no arguments.
+
+### `nikos-gates` is not found
+
+install the package globally and export the global bun bin directory:
+
+```sh
+bun add --global nikos-agent-stack
+export PATH="$(bun pm bin -g):$PATH"
+```
+
+also confirm that `bun` is available on `PATH`; the shell bin invokes `bun` through its shebang.
+
+### the installer reports an invalid watchdog file
+
+fix the selected file so it follows the mapping, string, list, and boolean rules in [watchdog configuration](#watchdog-configuration). `WATCHDOG.yml` takes precedence over `WATCHDOG.yaml` when both exist. the installer stops before replacement when parsing or validation fails.
+
+### terra does not appear in `/advisor status`
+
+run `/advisor-install`, start a new omp session, run `/advisor on`, and run `/advisor status` again. check the file selected by `PI_CODING_AGENT_DIR`, or by the default `~/.omp/agent` path when the variable is unset. confirm that it contains an enabled `terra` entry.
+
+### a direct shell install fails
+
+use exactly `nikos-gates advisor install`. the direct command rejects another subcommand or extra arguments, prints the failure as `advisor install: ...`, and returns exit code `2`.
 
 ### a terra note has incomplete evidence
 
-the native schema accepts the note because it machine-enforces only `note` and `severity`. treat absent or unverifiable `path`, `line`, `claim`, or read-snapshot digest as an instruction violation and do not act on that note until source inspection supports it.
+native omp can accept the note because it validates only `note` and `severity`. treat missing or unverifiable `path`, `line`, `claim`, or `digest` as a terra instruction violation. do not act on the note until an inspected read result supports it.
 
-### the model is unavailable
+### the terra model is unavailable
 
-terra uses `openai-codex/gpt-5.6-terra:high`. make the model available to omp, then start a new session and enable the advisor again.
+the shipped model is `openai-codex/gpt-5.6-terra:high`. make that model available to the native omp host, start a new omp session, enable the advisor, and check `/advisor status` again.
 
-## limitations
-
-- **user-owned watchdog configuration.** plugin uninstall leaves the user `WATCHDOG.yml` or `WATCHDOG.yaml` file and terra entry in place until the user removes terra manually.
-- **prompt-enforced evidence.** omp validates only `note` and `severity`; it does not machine-enforce the evidence fields inside terra's note text.
-- **native surface ownership.** omp, not this plugin, owns advisor commands, routing, concern and blocker interruption, and the advisor ui.
-- **read-only operation.** terra cannot edit files, run commands, approve work, or produce a gate result.
-
-## source map
-
-| path | purpose |
-|---|---|
-| [`advisor/WATCHDOG.yml`](../advisor/WATCHDOG.yml) | terra model, tools, native passive advisor configuration, and source-backed note instructions |
-| [`advisor/install.js`](../advisor/install.js) | `/advisor-install` setup and atomic watchdog merge behavior |
-| [`gate-checker/gate-cli.js`](../gate-checker/gate-cli.js) | `nikos-gates advisor install` shell setup command |
-| [`package.json`](../package.json) | plugin package, native setup extension, and `nikos-gates` command registration |
-| [`docs/gates-plugin-user-guide.md`](gates-plugin-user-guide.md) | separate gate checker behavior and authority |
+source: [terra profile](../advisor/WATCHDOG.yml), [installer](../advisor/install.js), [shell installer](../gate-checker/gate-cli.js), [command registration](../gate-checker/index.ts)

@@ -10,19 +10,22 @@
 - [engagement levels](#engagement-levels)
 - [automatic extension behavior](#automatic-extension-behavior)
   - [interrogate tool](#interrogate-tool)
+  - [request journal](#request-journal)
   - [session-stop decision order](#session-stop-decision-order)
 - [gate rule reference](#gate-rule-reference)
+- [advisory risk rules](#advisory-risk-rules)
 - [configuration](#configuration)
 - [custom forbidden markers](#custom-forbidden-markers)
 - [git and no-git behavior](#git-and-no-git-behavior)
+- [verification command behavior](#verification-command-behavior)
+- [complexity command behavior](#complexity-command-behavior)
 - [commit routing](#commit-routing)
 - [subagent contract](#subagent-contract)
 - [scratchpad records](#scratchpad-records)
 - [command-line tools](#command-line-tools)
+- [repository scopes and audit](#repository-scopes-and-audit)
 - [telemetry and tuning](#telemetry-and-tuning)
 - [troubleshooting](#troubleshooting)
-- [verification and development](#verification-and-development)
-- [source map](#source-map)
 
 ## what the plugin does
 
@@ -68,10 +71,7 @@ omp plugin list
 omp plugin doctor
 ```
 
-`list` shows the plugin, its version, and its enabled state. `doctor` reports
-discovery and load problems, and `doctor --fix` repairs the ones it can. from a
-repository checkout, `bun run test` checks the package surface and the runtime.
-see [verification and development](#verification-and-development).
+`list` shows the plugin, its version, and its enabled state. `doctor` reports discovery and load problems, and `doctor --fix` repairs the ones it can. restart omp after installation or repair because extension discovery occurs at startup.
 
 ### update
 
@@ -128,7 +128,7 @@ with no argument, this command prints the active level, the marker, claim, manif
 /gates-engage medium
 ```
 
-medium blocks unfinished added lines, unsupported file or test claims, contradicted subagent reports, a failing configured verification command, and missing scratchpad coverage. it does not require a commit.
+medium blocks unfinished added lines, absolute home paths, unsupported file or test claims, contradicted subagent reports, missing interrogation, missing test evidence, failing verification, runtime or scope recovery failures, and missing scratchpad coverage. it does not require a commit.
 
 ### use strict delivery checks
 
@@ -175,7 +175,7 @@ source: [command registration and live policy updates](../gate-checker/index.ts)
 |---|---:|---:|---:|---:|
 | inline marker notice after `write` or `edit` | off | on | on | on |
 | forbidden markers in added lines | off | warn | block | block |
-| absolute home path in an added line (`no-absolute-home-path`) | off | warn | block | block |
+| absolute home path left in an added line after a `no-absolute-home-path` interruption | off | warn | block | block |
 | missing interrogate call for a changed generation (`missing_interrogation`) | off | warn | block | block |
 | parent file and test claims | off | warn | block | block |
 | snapshot tag references | off | off | warn | block |
@@ -185,11 +185,11 @@ source: [command registration and live policy updates](../gate-checker/index.ts)
 | configured complexity command on changed paths (`complexity_failed`) | off | warn | warn | warn |
 | clean tracked working tree | off | off | off | block |
 | scratchpad record for every active identity | off | block | block | block |
-| gate integrity (lease conflict, journal recovery, unreadable scope) | off | warn | block | block |
+| session-stop runtime findings, such as journal recovery or an unreadable scope | off | warn | block | block |
 | telemetry | off | on | on | on |
-| stalemate release and continuation cap | on | on | on | on |
+| stalemate release and continuation cap | not applicable | on | on | on |
 
-medium and high emit blocking `no_test_run` when files changed, no verification command is configured, and no passing test runner was observed. scope risk findings (`risk.*`) stay warning-level at every enabled level.
+medium and high emit blocking `no_test_run` when files changed, no verification command is configured, and no passing test runner was observed. scope risk findings (`risk.*`) stay advisory at every enabled level. the cooperative mutation lease acts before a mutation-capable operation, not at session stop: a live lease conflict blocks that operation at every enabled level, independent of this warning and block matrix.
 
 `auto` means:
 
@@ -272,6 +272,14 @@ verification and commit checks also require at least one observed changed file. 
 
 source: [session-stop early returns and change gate](../gate-checker/index.ts)
 
+### request journal
+
+the extension writes `omp.gate-checker.journal` custom session entries for request start, repository binding, verification, continuation, and terminal outcome. it reconstructs active request state after session start, branch, and tree navigation. a malformed, overlapping, stale, or policy-incompatible journal closes as `recovery_required` instead of guessing the request state.
+
+terminal outcomes are `passed`, `passed_with_warnings`, or `released_with_failures`. an unresolved release carries `stalemate` or `continuation_cap`; disabled and non-work-bearing requests carry an explicit skip reason. a release with unresolved findings is never reported as a pass. request start and terminal bookkeeping still close the request when the engagement level is off, although delivery checks and gate telemetry are disabled.
+
+source: [journal reducer](../gate-checker/journal.js), [journal lifecycle](../gate-checker/index.ts)
+
 ## gate rule reference
 
 | rule id | condition | resolution |
@@ -299,6 +307,14 @@ advisory `risk.*` ids — `risk.auth_permissions`, `risk.dependencies`, `risk.mi
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 
 sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](../gate-checker/index.ts), [marker predicate](../gate-checker/predicates.js), [scratchpad validation](../gate-checker/frustrations.js)
+
+## advisory risk rules
+
+the request audit reports advisory findings when changed paths match authentication or permissions, dependency manifests or lockfiles, migrations or schemas, or public contract surfaces. it also reports tracked deletion, rename, mode change, binary content, submodule changes, and added destructive commands such as `drop table`, `truncate table`, `delete from`, or `rm -rf`.
+
+these findings use stable `risk.*` ids and remain advisory at every enabled engagement level. no finding means that no deterministic rule matched; it does not prove that the change is safe.
+
+source: [advisory risk rules](../gate-checker/risks.js), [risk integration](../gate-checker/index.ts)
 
 ## configuration
 
@@ -346,6 +362,7 @@ set `complexityCmd` to the project complexity command. when a request changed fi
 | `OMP_GATE_LEDGER` | redirects the telemetry ledger |
 | `OMP_GATE_FRUSTRATIONS` | redirects the scratchpad record file |
 | `OMP_GATE_MUTATION_LEASE` | enables the mutation lease at startup by default; set it to `0`, `false`, or `off` to disable it at startup |
+| `OMP_GATE_MUTATION_LEASE_WAIT_MS` | sets how long a mutation-capable tool waits for a cooperative lease; the default is 5000 ms and negative values become zero |
 
 shell examples:
 
@@ -397,7 +414,7 @@ an added marker in markdown, html, or any other path produces no completion find
   <li><code># stu&#98;</code></li>
   <li><code>/* stu&#98;</code></li>
   <li><code>def stu&#98;(</code></li>
-  <li><code>pass&nbsp;&nbsp;#</code></li>
+  <li><code>pass&nbsp;#</code></li>
   <li><code>unimplem&#101;nted!()</code></li>
   <li><code>notimplem&#101;ntederror</code></li>
   <li><code>raise notimplem&#101;ntederror</code></li>
@@ -412,6 +429,14 @@ an added marker in markdown, html, or any other path produces no completion find
 broad words such as bare `stub`, `placeholder`, `noop`, and `fixme` are not defaults because they can occur in legitimate identifiers or calls.
 
 source: [marker list and loading](../gate-checker/predicates.js)
+
+### absolute home-path rule
+
+the extension reads path conditions from `<agent-dir>/rules/no-absolute-home-path.md`, where `<agent-dir>` is `PI_CODING_AGENT_DIR` when set and `~/.omp/agent` otherwise. it reads the `condition` list from yaml front matter. when that file is absent, malformed, or has no usable condition, the built-in conditions match user-specific linux `/home/...`, macos `/Users/...`, and windows `Users` paths.
+
+when native TTSR reports the `no-absolute-home-path` rule during the request, the final check applies these conditions to added lines. a remaining match warns at low and blocks at medium and high. use a relative path, an environment variable, or configuration instead of writing a machine-specific home path into source.
+
+source: [home-path conditions and matching](../gate-checker/predicates.js), [rule application](../gate-checker/index.ts)
 
 ## git and no-git behavior
 
@@ -483,6 +508,14 @@ the plugin does not guess a default extension-level test command. when medium or
 
 source: [verification execution and cache](../gate-checker/index.ts), [level display](../gate-checker/config.js)
 
+## complexity command behavior
+
+when changed files exist and a complexity command is configured, the extension appends every changed path as a shell-quoted argument and runs the command in the repository root, or the current working directory in no-git mode.
+
+the command has the same 15-minute timeout, 32 mib output buffer, and closed standard input as verification. a json array of linter reports is reduced to its messages; other output uses the last 20 lines. reported findings, a nonzero exit, a timeout, or an execution error produce warning-only `complexity_failed`. the complexity command never forces a continuation at any engagement level.
+
+source: [complexity execution and output parsing](../gate-checker/index.ts), [level policy](../gate-checker/config.js)
+
 ## commit routing
 
 the canonical agent directory is `PI_CODING_AGENT_DIR` when set, otherwise
@@ -549,6 +582,8 @@ accepted manifest keys are `changed`, `changedFiles`, `changed_files`, and `mani
 
 subagent adjudication starts only when the parent response refers to delegated or reviewed work. if the parent does not rely on a subagent report, parent claims and the actual diff still receive normal checks. each report is judged once per request, including across forced continuations.
 
+the extension reads native `task` result details and lifecycle events. it records the agent id, task call id, terminal status, duration, model, session file, result artifact, patch, branch metadata, and structured changed-file manifest when the native result provides them. a text manifest remains the fallback. the extension does not register or replace `task`.
+
 source: [subagent injection and citation checks](../gate-checker/index.ts), [manifest parser](../gate-checker/predicates.js)
 
 ## scratchpad records
@@ -574,7 +609,7 @@ set `OMP_GATE_FRUSTRATIONS` before the session to relocate it. call the native `
 | `severity` | one accepted taxonomy severity; type `none` requires `low` |
 | `evidence` | valid `gate`, `snapshot`, or `command` evidence for real friction; may be empty for type `none` |
 
-the server derives `session_file` and `session_id` from each active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and child session files arrive through native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields or `source`. the extension stores tool records with `source: "agent"` and automatic gate records with `source: "auto"`. records created before this field appear as `legacy` in stats.
+the server derives `session_file` and `session_id` from each active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and child session files arrive through native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields or `source`. the extension stores tool records with `source: "agent"` and automatic gate records with `source: "auto"`. stats classify every other source value as `legacy`.
 
 ### taxonomy
 
@@ -712,7 +747,7 @@ nikos-gates stats \
   --ledger /path/to/ledger.jsonl
 ```
 
-stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, process-shape rate, miss reasons, counts by rule, `clean_under_errors`, and frustration counts by type and source (`agent`, `auto`, or `legacy`). the json fields are `no_git_runs`, `clean_under_errors`, and `frustrations`.
+stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, process-shape rate, miss reasons, counts by rule, `clean_under_errors`, and frustration counts by type and source (`agent`, `auto`, or `legacy`). `--json` returns the ledger path, record count, every ledger summary field, `clean_under_errors`, and a nested `frustrations` object with its record count, `byType`, and `bySource` maps.
 
 source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js), [scratchpad reader](../gate-checker/frustrations.js)
 
@@ -736,7 +771,37 @@ nikos-gates lease release [--cwd path] --force \
 
 `--stale-only` uses the heartbeat stale policy and needs no owner or tool-call identity. `--force` requires the exact current owner id, tool-call id, and a reason; it refuses an identity mismatch. an agent must obtain direct user authorization before it uses `--force`. each successful manual release records `lease_manual_release` in the existing ledger.
 
+the extension lease is enabled at startup by default and applies only while gates are enabled. it uses the canonical git common directory plus the worktree root, so linked worktrees do not share one operation slot. after validation and provider or user approval, it acquires the lease immediately before one mutation-capable operation. approval waits, `task`, read-only tools, and targets outside the bound worktree hold no lease.
+
+the default acquisition wait is 5000 ms. polling uses a 50 ms interval with up to 5 ms jitter. the holder writes a heartbeat every 2000 ms, and a heartbeat becomes stale after 30000 ms. dead maintenance claimants become recoverable after a 2000 ms grace. maintenance uses an atomic winner record, exact identity rereads, and a monotonically increasing fence so a stale owner cannot renew or release a successor.
+
+a matching terminal event releases the lease. background bash remains owned until terminal async state, a matching job snapshot, cancellation, or stale recovery. `/gates-lease status`, `/gates-lease on`, and `/gates-lease off` inspect or change only the current session. `off` refuses while this gate instance tracks an active operation and otherwise releases only its idle lease. external editors and processes that do not use gate-aware native tools remain outside this cooperative guarantee.
+
 source: [lease cli](../gate-checker/gate-cli.js), [lease records and recovery](../gate-checker/lease.js), [ledger](../gate-checker/ledger.js)
+
+## repository scopes and audit
+
+the scope engine provides four read-only repository views:
+
+- `request`: committed, staged, unstaged, and non-ignored untracked changes since a captured baseline. unchanged baseline dirt stays out.
+- `uncommitted`: current staged, unstaged, and non-ignored untracked changes.
+- `base`: the merge base of a supplied reference through the current commit.
+- `commit`: one resolved commit against its parent.
+
+every result includes resolved commit identifiers, normalized file states, added lines, and a sha-256 scope digest. file states include additions, modifications, deletions, renames, copies, modes, binaries, and submodules when git reports them.
+
+run an audit without changing the repository:
+
+```sh
+nikos-gates audit --kind uncommitted [--folder path] [--cwd path] [--json]
+nikos-gates audit --kind request --base <baseline> [--folder path] [--json]
+nikos-gates audit --kind base --base <ref> [--folder path] [--json]
+nikos-gates audit --kind commit --commit <ref> [--folder path] [--json]
+```
+
+`uncommitted` is the default kind. `request` and `base` require `--base`; `commit` requires `--commit`. `--folder` limits the immutable scope. audit prints changed files and advisory risks; `--json` returns the complete scope and risk data. audit never fetches, checks out, writes, commits, changes approval, or starts an agent. invalid kinds, missing required references, and scope errors return exit code `2`.
+
+source: [scope resolver](../gate-checker/scope.js), [audit cli](../gate-checker/gate-cli.js), [advisory risks](../gate-checker/risks.js)
 
 ## telemetry and tuning
 
@@ -846,7 +911,7 @@ source: [added-line derivation](../gate-checker/index.ts), [whole-file write han
 inspect the status and ledger. the plugin releases when:
 
 - the exact blocking failure repeats after a forced continuation, which records `stalemate`.
-- the chain exceeds three forced continuations, which records `cap_reached`.
+- changing blocking failures exceed three forced continuations, which records `continuation_cap`.
 
 source: [runaway protection](../gate-checker/index.ts)
 
@@ -870,128 +935,3 @@ with a repository `cwd` or path binds that repository automatically. until then,
 the plugin cannot prove changes made outside watched hooks or enforce commits.
 
 source: [baseline and automatic repository binding](../gate-checker/index.ts)
-
-## working repository upgrade
-
-the working build adds deterministic repository scopes without changing native omp tool ownership.
-
-### canonical scopes
-
-`scope.js` resolves four immutable scopes:
-
-- `request`: committed, staged, unstaged, and new untracked changes since the request baseline. baseline dirt that never changes stays out; a baseline-dirty path returns when its content or existence changes after the request started. tracked deletions and new untracked files are inside the scope.
-- `uncommitted`: current staged, unstaged, and untracked changes.
-- `base`: the merge base of a supplied ref through the current commit.
-- `commit`: one resolved commit against its parent.
-
-each result contains resolved commit identifiers, normalized file states, added lines, and a sha-256 scope digest. records include additions, modifications, deletions, renames, copies, modes, binaries, and submodules when git reports them.
-
-### read-only cli audit
-
-the upgrade does not register a model-facing audit tool. use the cli when an explicit audit is useful:
-
-```sh
-nikos-gates audit --kind uncommitted --json
-nikos-gates audit --kind base --base origin/main --json
-nikos-gates audit --kind commit --commit @ --json
-```
-
-optional `--folder <path>` limits the immutable scope. audit never fetches, checks out, mutates, commits, changes approval, or starts an agent.
-
-### native task provenance
-
-the extension consumes native `task` result details and lifecycle events. it records the native agent id, task call id, terminal status, duration, model, session file, result artifact, patch, branch metadata, and structured changed-file manifest. text manifests remain a compatibility fallback.
-
-the adapter never registers or replaces `task`.
-
-### request journal and terminal outcomes
-
-the extension writes versioned `omp.gate-checker.journal` custom session entries. it reconstructs active request state after session start, branch, and tree navigation. malformed, stale, or policy-incompatible state closes as `recovery_required`.
-
-terminal outcomes distinguish:
-
-- `passed`
-- `passed_with_warnings`
-- `released_with_failures`, with `stalemate` or `continuation_cap`
-- explicit skip reasons for disabled and non-work-bearing requests
-
-a release with unresolved findings is never reported as a pass.
-
-### advisory risk rules
-
-scope audits report stable advisory rule ids for:
-
-- migrations and schema changes
-- dependency manifests and lockfiles
-- authentication and permission paths
-- public contracts
-- destructive operations
-- file deletion and rename
-- mode, binary, and submodule changes
-
-these findings remain advisory. no finding means that no deterministic rule matched; it does not prove safety.
-
-### cooperative mutation lease
-
-the lease is enabled at startup by default. set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it; unset and every other value enable it. other delivery gates remain independent.
-
-this is a cooperative worktree operation lease, not a request lease. after validation and provider or user approval, the extension acquires it immediately before one mutation-capable operation executes. approval waits hold no lease. a matching terminal tool event releases the lease; a background bash operation remains owned until terminal async state, matching job-snapshot completion, cancellation, or stale recovery. `task` coordinates children but does not acquire a lease, and read-only tools and targets outside the bound worktree bypass it.
-
-the holder renews a heartbeat while the operation is active. stale recovery uses heartbeat freshness, not shared process liveness as the primary signal; `--stale-only` refuses a fresh heartbeat. conflicts identify the holder and provide the safe status command rather than becoming a later session-stop failure.
-the heartbeat and acquisition polling are local timers and filesystem operations; they do not call a model or consume tokens. maintenance claims use exact identity rereads and dead-pid recovery; a delayed live initializer must re-prove its initialization token before it can publish a lease.
-
-use `/gates-lease status`, `/gates-lease on`, or `/gates-lease off` to inspect or change the current session without restarting omp. `on` enables and `off` disables the lease live for the current session; neither changes startup behavior. `off` releases only this gate instance's idle lease and refuses while it tracks an active operation.
-
-the lease uses the canonical git common directory and worktree identity, an exclusive directory, a unique owner token, and a monotonically increasing fence. it only coordinates gate-aware native tools in the bound worktree. external editors and arbitrary processes remain outside this guarantee.
-
-source: [lease integration](../gate-checker/index.ts), [lease records and recovery](../gate-checker/lease.js), [lease cli](../gate-checker/gate-cli.js)
-
-## verification and development
-
-the root package manifest, [`package.json`](../package.json), is the single
-source for the public surface. it declares:
-
-| manifest field | contents |
-|---|---|
-| `omp.extensions` | `./gate-checker/index.ts`, `./omnipotence/index.ts`, and `./ask-questionnaire/index.ts`, the entries omp loads |
-| `bin` | `nikos-gates`, mapped to `gate-checker/gate-cli.js`, and `omnipotence` |
-| `exports` | `./gate-cli` and `./omnipotence` |
-| `files` | the runtime file allowlist the plugin manager installs |
-
-run every focused test, the package-contract test, and the end-to-end wiring probe from the repository root:
-
-```sh
-bun run test
-```
-
-the package-contract test asserts the declared extensions, executable, exports,
-and file list, and it loads each declared extension entry. a change to the
-manifest that this guide describes must keep that test passing.
-
-for local development, link the checkout and confirm discovery:
-
-```sh
-omp plugin link .
-omp plugin doctor
-```
-
-use isolated configuration and ledger paths when running `index.ts` directly so persisted user policy does not alter its fixtures.
-
-## source map
-
-| file | responsibility |
-|---|---|
-| [package.json](../package.json) | plugin manifest: declared extension entries, `nikos-gates` executable, module exports, and installed file allowlist |
-| [plugin.test.ts](../plugin.test.ts) | asserts the declared package surface and loads each declared extension entry |
-| [index.ts](../gate-checker/index.ts) | manifest-declared extension, hooks, evidence, enforcement, native task provenance, journal integration, advisory risks, and lease integration |
-| [scope.js](../gate-checker/scope.js) | canonical immutable git scopes and request baseline capture |
-| [provenance.js](../gate-checker/provenance.js) | native task result and lifecycle normalization |
-| [journal.js](../gate-checker/journal.js) | versioned session journal reducer and branch reconstruction |
-| [risks.js](../gate-checker/risks.js) | deterministic advisory diff rules |
-| [lease.js](../gate-checker/lease.js) | cooperative worktree mutation lease |
-| [config.js](../gate-checker/config.js) | engagement levels, rule-family mapping, persistence, precedence, and status text |
-| [predicates.js](../gate-checker/predicates.js) | shared markers, diff parsing, completion checks, path matching, manifests, clean-tree command, and snapshots |
-| [gate-cli.js](../gate-checker/gate-cli.js) | advisor installer, scope audit, cutover, lease recovery, and stats command-line interface |
-| [ledger.js](../gate-checker/ledger.js) | append-only events, explicit release metrics, safe reading, and aggregation |
-| [frustrations.js](../gate-checker/frustrations.js) | scratchpad record validation, taxonomy, server-bound identity coverage, and automatic gate records |
-| [wiring-check.ts](../gate-checker/wiring-check.ts) | isolated end-to-end extension probe |

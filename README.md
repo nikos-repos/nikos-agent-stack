@@ -1,6 +1,6 @@
 # nikos agent stack
 
-an official omp plugin that adds deterministic delivery gates, a native durable orchestration engine, a batched new-project questionnaire, and a passive terra advisor to an omp installation.
+an official omp plugin that adds deterministic delivery gates, a native durable orchestration engine, a policy gate for native questionnaires, and a passive terra advisor to an omp installation.
 
 the plugin ships four parts:
 
@@ -8,7 +8,7 @@ the plugin ships four parts:
 | ----------------- | --------------------- | -------------------------------------------------------------------------------------------------- |
 | gate checker      | omp extension         | deterministic post-turn delivery checks, commands, and a command-line audit surface                |
 | omnipotence       | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery             |
-| ask questionnaire | omp extension         | forces one batched questionnaire through the native `ask` tool when a request starts a new project |
+| ask questionnaire | omp extension         | keeps an explicitly declared questionnaire open until the native `ask` tool returns successfully   |
 | terra advisor     | native omp advisor    | a read-only passive watchdog that sends source-backed notes through omp's advisor system           |
 
 ## requirements
@@ -113,8 +113,6 @@ features:
 - **local blueprints** — hash-verified local packages, side-by-side semantic versions, minimum engine checks, pinned active runs, including forever runs, update, rollback, and guarded removal.
 - **operator surfaces** — omp commands and a standalone cli with human or json output, dry-run support for mutations, process planning, run and effect inspection, session controls, and recovery commands.
 
-schema 8 upgrade note: existing stored `call` runs become `babysit` automatically. historical event output may still show `call`; replay and recovery remain supported.
-
 install a local blueprint, then start one process:
 
 ```sh
@@ -127,9 +125,9 @@ omnipotence blueprint install ./delivery-pack
 /omnipotence-status
 ```
 
-gate-checker remains the first `session_stop` handler. after a gate accepts the turn, omnipotence schedules the next committed effect through omp's hidden next-turn api. active-run failures block once; sessions without an active run receive no omnipotence block.
+gate-checker remains the first `session_stop` handler. after a gate accepts the turn, omnipotence schedules the next committed effect through omp's hidden next-turn api. a blocked active run reports its current block reason at session stop until the condition is resolved; sessions without an active run receive no omnipotence block.
 
-`/omnipotence-forever` starts one unbounded native orchestration run. its policy auto-approves optional process breakpoints but still waits at required breakpoints for `/omnipotence-resume`; normal omp tool approval and point-of-risk confirmation remain. the run ignores, and never extends, its retained finite `maxturns` value; finite modes retain their current budget behavior. `/omnipotence-stop` ends it explicitly. host shutdown pauses durable work and recovery resumes it for the owning session; this is not a daemon and does not automatically restart a process after it returns. recovery schedules requested external work only when both dispatch timestamps are null. acknowledged or unknown outcomes are never resent, remain uncertain, and fail closed until resolved. the standalone cli is one-shot and cannot provide autonomous hidden-turn scheduling. active forever runs pin their blueprint version, and durable replay state grows with each committed cycle.
+`/omnipotence-forever` starts one unbounded native orchestration run. its policy auto-approves optional process breakpoints but still waits at required breakpoints for `/omnipotence-resume`; normal omp tool approval and point-of-risk confirmation remain. the run does not enforce or extend its retained `maxturns` value; finite modes enforce their configured budgets. `/omnipotence-stop` ends it explicitly. host shutdown pauses durable work and recovery resumes it for the owning session; this is not a daemon and does not automatically restart a process after it returns. recovery schedules requested external work only when both dispatch timestamps are null. acknowledged or unknown outcomes are never resent, remain uncertain, and fail closed until resolved. the standalone cli is one-shot and cannot provide autonomous hidden-turn scheduling. active forever runs pin their blueprint version, and durable replay state grows with each committed cycle.
 
 see the [omnipotence user guide](docs/omnipotence-user-guide.md) for process and blueprint authoring, modes, hooks, profiles, commands, state, recovery, and safety.
 
@@ -167,11 +165,11 @@ engagement levels:
 | level    | behavior                                                                                                                         |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `low`    | delivery findings warn, but a missing scratchpad record blocks. for exploration and non-git work.                                |
-| `medium` | default. completion, citation, subagent-claim, verify, gate-integrity, and scratchpad failures block. the commit gate stays off. |
-| `high`   | every rule blocks, including the commit gate, subagent manifest, and scratchpad coverage.                                        |
-| `off`    | all checks and recording stop. set with `/gates-disable`.                                                                        |
+| `medium` | default. completion, citation, subagent-claim, verification, runtime-integrity, interrogation, home-path, and scratchpad failures block. the commit gate stays off. |
+| `high`   | medium policy plus blocking snapshot, manifest, and commit checks. complexity findings remain warnings.                              |
+| `off`    | delivery checks, scratchpad enforcement, and gate outcome telemetry stop. request journal bookkeeping and the no-git diagnostic can still close and describe the active request. set with `/gates-disable`. |
 
-slash level changes take effect in the running session and persist to `~/.omp/gate-checker/config.json`. direct config edits are loaded only when omp starts: restart omp before using `/gates-engage` after an external edit, or set the relevant `OMP_*` environment before the session. precedence is the config file, then `OMP_GATES_LEVEL`, then the default `medium`. `OMP_VERIFY_CMD` supplies a verification command when the config file has none. `OMP_GATE_CONFIG`, `OMP_GATE_LEDGER`, and `OMP_GATE_FRUSTRATIONS` relocate persisted paths. the mutation lease is enabled at startup by default; set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it. unset and all other values enable it. other delivery gates remain independent.
+slash level changes take effect in the running session and persist to `~/.omp/gate-checker/config.json`. direct config edits are loaded only when omp starts: restart omp before using `/gates-engage` after an external edit, or set the relevant `OMP_*` environment before the session. precedence is the config file, then `OMP_GATES_LEVEL`, then the default `medium`. `OMP_VERIFY_CMD` and `OMP_COMPLEXITY_CMD` supply commands when the config file has none. `OMP_GATE_CONFIG`, `OMP_GATE_LEDGER`, and `OMP_GATE_FRUSTRATIONS` relocate persisted paths. the mutation lease is enabled at startup by default; set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it. `OMP_GATE_MUTATION_LEASE_WAIT_MS` sets its acquisition wait. unset and all other lease-enable values enable it. other delivery gates remain independent.
 
 `/gates-engage` accepts no arguments for status or exactly one level, and it preserves the in-memory verification command. set that command with `OMP_VERIFY_CMD` before the session or edit `verifyCmd`, restart omp, then use `/gates-engage`. a live slash call does not reload disk.
 
@@ -214,12 +212,12 @@ the questionnaire extension is a policy around the native omp `ask` tool. omp al
 
 it does four things:
 
-1. detects a direct new-project request in user input, when the native `ask` tool is active.
-2. injects concise batched-questionnaire guidance before the model call.
-3. blocks every non-`ask` tool while the request is pending.
-4. clears the pending request only after a successful, non-error `ask` result, and asks for one continuation turn at session stop while the request is unanswered.
+1. exposes `questionnaire_open` so a skill or workflow can declare one pending questionnaire with an owner and reason.
+2. injects that reason as hidden guidance before each model turn while the questionnaire is pending.
+3. allows repository inspection and the native `ask` tool, but blocks tools outside its fixed allowlist.
+4. clears the pending request only after a successful, non-error `ask` result, and asks for one continuation turn at session stop while the questionnaire is unanswered.
 
-the [ask questionnaire user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) covers detection, policy transitions, and limitations.
+the [ask questionnaire user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) covers declaration, the native ask experience, policy transitions, settings, and limits.
 
 ## terra advisor
 
@@ -248,8 +246,8 @@ gates:
 questionnaire:
 
 - it does not mutate the core tool queue, does not force a tool selection, and does not replace or patch the `ask` ui.
-- detection covers direct new-project phrasing in user input only. input from an extension never arms it, indirect phrasing is not detected, and nothing arms while the `ask` tool is inactive.
-- while pending, non-`ask` tools are blocked; a failed `ask` keeps the request pending.
+- only a successful `questionnaire_open` tool call arms the policy. the extension does not inspect request text or infer that a questionnaire is needed.
+- while pending, `read`, `grep`, `glob`, `lsp`, `ast_grep`, `inspect_image`, `ask`, and `questionnaire_open` remain available. every other tool is blocked, and a failed `ask` keeps the request pending.
 - pending state resets on session start, switch, and branch.
 
 terra advisor:
@@ -258,14 +256,6 @@ terra advisor:
 - terra is read-only. omp routes its passive notes, handles concern and blocker interruption, and renders the advisor ui.
 - evidence fields in a terra note are required by its instructions, not by omp's `note` and `severity` schema.
 - plugin uninstall leaves the user watchdog entry until the user removes it manually.
-
-## development
-
-```sh
-bun run test
-```
-
-this runs the gate-checker and questionnaire unit tests, the packaged-surface test, and the end-to-end wiring probe. the exact command is in [`package.json`](package.json).
 
 ## repository map
 
@@ -292,6 +282,6 @@ this runs the gate-checker and questionnaire unit tests, the packaged-surface te
 | [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts)                                                                                | questionnaire extension around the native `ask` tool                                  |
 | [`advisor/WATCHDOG.yml`](advisor/WATCHDOG.yml)                                                                                            | native terra advisor watchdog configuration and prompt-enforced evidence rules        |
 | [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md)           | complete gate user and operator guide                                                 |
-| [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire detection, policy, and limitations                                      |
+| [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire declaration, native ask behavior, policy, settings, and limits                            |
 | [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md)           | advisor setup, passive behavior, evidence-note rules, and limitations                 |
-| [`docs/omnipotence-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/omnipotence-user-guide.md)             | native process, blueprint, cli, state, recovery, safety, and migration guide          |
+| [`docs/omnipotence-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/omnipotence-user-guide.md)             | native process, blueprint, cli, state, recovery, and safety guide                                    |

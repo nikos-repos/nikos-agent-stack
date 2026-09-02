@@ -4,72 +4,76 @@
 
 ## contents
 
-- [what the extension does](#what-the-extension-does)
+- [purpose and ownership](#purpose-and-ownership)
 - [quick start](#quick-start)
-- [native ask ownership](#native-ask-ownership)
-- [what arms the policy](#what-arms-the-policy)
-- [guidance injection](#guidance-injection)
-- [tool blocking](#tool-blocking)
-- [success and failure transitions](#success-and-failure-transitions)
-- [lifecycle resets](#lifecycle-resets)
-- [stop continuation](#stop-continuation)
-- [installation](#installation)
-- [updates and removal](#updates-and-removal)
-- [focused tests](#focused-tests)
+- [declaration](#declaration)
+- [native ask fields](#native-ask-fields)
+- [native ask ui and answers](#native-ask-ui-and-answers)
+- [pending policy](#pending-policy)
+- [outcomes](#outcomes)
+- [lifecycle and stop continuation](#lifecycle-and-stop-continuation)
+- [configuration](#configuration)
+- [installation and package surface](#installation-and-package-surface)
 - [troubleshooting](#troubleshooting)
-- [limitations](#limitations)
-- [source map](#source-map)
+- [limits and boundaries](#limits-and-boundaries)
 
-## what the extension does
+## purpose and ownership
 
-`ask-questionnaire` is one omp extension file that ships inside the `nikos-agent-stack` plugin. it adds no user interface, no transport, and no omp core change.
+`ask-questionnaire` is one omp extension in the `nikos-agent-stack` plugin. it adds a policy gate around the native `ask` tool. it does not add an ask dialog, transport, prompt queue, or omp core change.
 
-it does not inspect user text. the model opens a pending questionnaire by calling the registered `questionnaire_open` tool with an owner and a reason. while a questionnaire is pending, the extension does four things:
+the extension owns:
 
-1. it injects that reason before each model call.
-2. it allows a fixed read-only tool allowlist plus `ask` and `questionnaire_open`.
-3. it blocks every other tool.
-4. it exposes one continuation decision that gate-checker evaluates at session stop.
+- the explicit `questionnaire_open` declaration.
+- one pending `{ owner, reason }` value.
+- hidden guidance for the model while the value is pending.
+- the closed tool allowlist while the value is pending.
+- one stop continuation decision for gate-checker.
 
-the plugin declares the extension entry in the package manifest, so omp loads it after installation.
+omp owns the native ask contract and ui. native omp handles question validation, option controls, custom input, notes, previews, timeout, notifications, speech, cancellation, and answer results. the extension reads only the native ask tool name and its `isError` result flag.
 
-sources: [scope comment](../ask-questionnaire/index.ts#L1-L15), [tool registration and stop slot](../ask-questionnaire/index.ts#L72-L109), [tool blocking](../ask-questionnaire/index.ts#L125-L143), [`package.json`](../package.json#L37-L43)
+there is no questionnaire bin, package export, slash command, environment trigger, or extension setting. ordinary chat text does not open a questionnaire. only an executed `questionnaire_open` tool call can open one.
+
+sources: [extension source](../ask-questionnaire/index.ts#L1-L143), [package manifest](../package.json#L26-L76), [native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts)
 
 ## quick start
 
-```sh
-omp plugin install nikos-agent-stack
+1. install or link the plugin as described in [installation and package surface](#installation-and-package-surface).
+2. restart omp so it discovers the extension.
+3. let the model call `questionnaire_open` with the required `owner` and `reason` fields. omp marks this tool for `write` approval, so the call can require approval before it executes.
+4. after a successful declaration, the model receives the hidden reason, and the extension blocks tools outside its allowlist.
+5. the model calls native `ask` with one or more questions. answer, use custom input, or use the native chat redirect.
+6. a non-error `ask` result closes the extension gate. omp then allows normal tool use again.
+
+the extension does not start a questionnaire from the user message. it also cannot open the native dialog by itself.
+
+## declaration
+
+the registered tool name is exactly `questionnaire_open`. it requires two string fields:
+
+```json
+{
+  "owner": "factory-discovery",
+  "reason": "settle the project goal and constraints before work starts"
+}
 ```
 
-then start a session. ordinary text arms nothing. a questionnaire opens only when the model calls the registered `questionnaire_open` tool with an owner and a reason and the call executes successfully:
+`owner` identifies the skill or phase that declares the questionnaire. `reason` explains what the interview must settle. the extension has no length bound for either string. it compares owner strings; `owner` is not a separate authentication or permission system.
 
-| step | observable result |
+the call has these results:
+
+| situation | result |
 |---|---|
-| `questionnaire_open` runs with a new owner | the tool returns `questionnaire armed by <owner>` and one questionnaire is pending |
-| `questionnaire_open` runs from a different owner while one is pending | the tool refuses the call and leaves the pending questionnaire unchanged |
-| `questionnaire_open` runs from the same owner while one is pending | the tool returns `already open` and keeps the original owner and reason |
-| the model turn starts | omp adds the reason to model context, not to the transcript |
-| the model calls a tool outside the allowlist | omp blocks the call and returns the declaring reason |
-| the model calls `ask` | the native ask dialog opens |
-| the ask result returns without an error | the extension clears the questionnaire and omp allows every tool again |
+| no questionnaire is pending | `questionnaire armed by <owner>` and one pending value is stored |
+| the same owner calls again | `already open`; the original owner and reason stay unchanged |
+| a different owner calls while pending | an error with `questionnaire already open for <existing-owner>`; the original value stays unchanged |
 
-sources: [tool registration](../ask-questionnaire/index.ts#L79-L103), [declaration tests](../ask-questionnaire/index.test.ts#L103-L155)
+a declaration call that does not execute successfully does not arm the policy.
 
-## native ask ownership
+source: [declaration registration and results](../ask-questionnaire/index.ts#L72-L104)
 
-omp owns the ask tool. this package never renders, times out, or transports a questionnaire.
+## native ask fields
 
-| surface | owner |
-|---|---|
-| ask input schema and validation | omp |
-| questionnaire dialog, tabs, and keyboard controls | omp |
-| custom answer row, notes, previews, and timeouts | omp |
-| remote and collaboration answer routing | omp |
-| questionnaire declaration and tool gating | this extension |
-
-### native ask schema example
-
-the shape below belongs to the native omp ask tool, not to this package. this package neither defines nor validates it, so treat the field set as version-dependent and confirm it against the omp release you run.
+the native `ask` tool receives this shape. this is native omp behavior, not extension input:
 
 ```json
 {
@@ -79,8 +83,15 @@ the shape below belongs to the native omp ask tool, not to this package. this pa
       "question": "which authentication method should this api use?",
       "header": "auth",
       "options": [
-        { "label": "jwt", "description": "bearer tokens for stateless clients." },
-        { "label": "session cookies", "description": "browser-first authentication." }
+        {
+          "label": "jwt",
+          "description": "bearer tokens for stateless clients.",
+          "preview": "**jwt** uses bearer tokens."
+        },
+        {
+          "label": "session cookies",
+          "description": "browser-first authentication."
+        }
       ],
       "multi": false,
       "recommended": 0
@@ -89,209 +100,238 @@ the shape below belongs to the native omp ask tool, not to this package. this pa
 }
 ```
 
-the extension reads only the tool name and the error flag of an ask call. it does not read `questions`, and it does not require any specific question count or field.
+the native schema requires:
 
-sources: native ask tool in omp `@oh-my-pi/pi-coding-agent` 17.2.15, `src/tools/ask.ts` (schema `questions[]` with `id`, `question`, `header?`, `options[].label`, `options[].description?`, `options[].preview?`, `multi?`, `recommended?`); [tool handlers in this package](../ask-questionnaire/index.ts#L127-L138)
+- `questions`: an array with at least one item.
+- each question's `id`, `question`, and `options` fields.
+- each option's `label` field.
 
-## what arms the policy
+the native schema also accepts these optional fields:
 
-the only arming path is a successful `questionnaire_open` call. the extension registers no `input` handler. no chat text, rpc request, or headless request arms it.
+- question `header`: a short display chip in a rich dialog.
+- question `multi`: allow several option selections.
+- question `recommended`: the numeric index of a recommended option.
+- option `description`: explanatory text below the label.
+- option `preview`: rich preview content for a rich dialog.
 
-sources: [tool registration](../ask-questionnaire/index.ts#L72-L104), [no-input-handler test](../ask-questionnaire/index.test.ts#L119-L126)
+do not use these exact option labels because native ask reserves them for controls:
 
-## guidance injection
+- `Other (type your own)`
+- `Chat about this`
+- `Next →`
 
-there is no fixed guidance sentence. the `reason` argument of `questionnaire_open` is the guidance. while a questionnaire is pending, the `before_agent_start` handler returns that exact reason as one message, so it enters the model context and stays out of the transcript:
+the extension does not inspect `questions`, options, or answer content. native omp validates this schema and rejects invalid calls before they can produce a successful result.
+
+source: [pinned native ask schema and result types](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts)
+
+## native ask ui and answers
+
+native ask requires an interactive omp session. when the session has no ui, omp does not create the ask tool. an attempted headless execution aborts with `Ask tool requires interactive mode`.
+
+when the rich ask dialog is available:
+
+- `header`, option `description`, and option `preview` are shown by native omp.
+- `preview` supports rich markdown and fenced code rendering.
+- `multi: true` uses multi-select controls. the dialog adds one global `Submit` tab when the form has more than one question or any question is multi-select, including a one-question multi-select form.
+- submit warns about unanswered questions but still permits submission.
+- tabs, review, scrolling, and keyboard hints are native dialog controls.
+- `Other (type your own)` opens custom text input. empty custom text clears that answer. for a non-multi question, custom text replaces selected options.
+- press `n` to open a note editor for an option or custom answer.
+- `Chat about this` redirects the user to chat instead of returning an answer.
+
+if rich ask ui is not available but omp has its interactive selector/editor fallback, native ask keeps selection, custom input, and notes. the fallback maps option labels and descriptions, but it drops `preview` content.
+
+for a valid `recommended` index, native ask adds the exact suffix `(Recommended)` to that option. on timeout, the rich dialog keeps existing answers. for each unanswered question, it first uses the option referenced by an active option note; otherwise it clamps `recommended` to the available options and defaults to the first option when `recommended` is absent. the result marks the automatic choice with `timedOut: true`.
+
+native result details can contain:
+
+- one-question fields: `question`, `options`, `multi`, `selectedOptions`, optional `customInput`, optional `note`, and optional `timedOut`.
+- multi-question `results`: one item per question, with `id`, `question`, `options`, `multi`, `selectedOptions`, and optional `customInput`, `note`, and `timedOut`.
+- a chat redirect: `chatRedirect: true` and `questions` containing the surfaced question text.
+
+source: [pinned native ask execution](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts)
+
+## pending policy
+
+after a successful declaration, the extension keeps one pending value in memory.
+
+### hidden guidance
+
+before every model turn while pending, the extension returns one hidden message:
 
 | field | value |
 |---|---|
 | `customType` | `nikos-agent-stack.ask-questionnaire.guidance` |
-| `content` | the declaring reason, verbatim |
-| `display` | `false`, so the message stays out of the transcript |
-| `attribution` | not set; omp normalises an absent value to `agent` |
+| `content` | the declaration's `reason`, verbatim |
+| `display` | `false`; the message is not shown in the transcript |
 
-the registered tool description reads "declare that this phase needs a batched questionnaire before it proceeds."
+the message enters model context. it is not a user-visible ask message and does not add an extension-owned ui surface. when no questionnaire is pending, the handler returns nothing.
 
-the handler returns nothing when no questionnaire is pending. omp adds the message on every model turn while the questionnaire stays pending.
+### tool allowlist
 
-sources: [tool description](../ask-questionnaire/index.ts#L79-L87), [before_agent_start handler](../ask-questionnaire/index.ts#L111-L123), [injection test](../ask-questionnaire/index.test.ts#L159-L173)
+while pending, exactly these tools pass without an extension block:
 
-## tool blocking
+`read`, `grep`, `glob`, `lsp`, `ast_grep`, `inspect_image`, `ask`, and `questionnaire_open`.
 
-the `tool_call` handler applies one rule while a questionnaire is pending:
+every other tool receives a block result with the declaration reason:
 
-- these tools pass: `read`, `grep`, `glob`, `lsp`, `ast_grep`, `inspect_image`, `ask`, and `questionnaire_open`. the handler returns nothing for them.
-- every other tool receives `{ block: true, reason: <the declaring reason> }`.
+```json
+{
+  "block": true,
+  "reason": "<the declaring reason>"
+}
+```
 
-the allowlist is closed: a tool that is not listed is blocked. with nothing pending, the handler returns nothing.
+the allowlist is closed. `questionnaire_open` is allowed for retries, but it cannot create a second pending slot. with no pending value, the tool-call handler returns nothing.
 
-sources: [read-only allowlist](../ask-questionnaire/index.ts#L25-L36), [tool_call handler](../ask-questionnaire/index.ts#L125-L131)
+source: [guidance and allowlist handlers](../ask-questionnaire/index.ts#L111-L131)
 
-## success and failure transitions
+## outcomes
 
-the `tool_result` handler clears the open request only for a successful ask result.
+the extension closes its gate only when a native `ask` result has `toolName === "ask"` and `isError === false`.
 
-| result | tool name | `isError` | outcome |
-|---|---|---|---|
-| successful ask | `ask` | `false` | the request closes and every tool is allowed again |
-| failed ask | `ask` | `true` | the request stays open and blocking continues |
-| any other tool | not `ask` | any | the request stays open |
+| outcome | native behavior | extension state |
+|---|---|---|
+| normal answer | native returns selected options and any custom input or notes | pending state clears; all tools pass |
+| timeout | the rich dialog keeps existing answers and fills each unanswered question from its noted option or the clamped `recommended` index, defaulting to the first option; result has `timedOut: true` | the non-error result clears pending state |
+| chat redirect | rich ui returns `chatRedirect: true` and the surfaced `questions`; no answer selection is returned | this is still a non-error result, so pending state clears |
+| schema or native error | native rejects invalid questions, reserved labels, or another invalid call | the ask result is an error; pending state stays open |
+| cancel or abort | esc, an abort signal, or a cancelled native dialog raises a native ask abort error | no successful result clears the gate; pending state stays open |
+| headless execution | native ask is unavailable or aborts with `Ask tool requires interactive mode` | pending state stays open |
+| any non-`ask` result | another tool finishes or fails | pending state stays open |
 
-the extension treats an error-free return as success. it does not inspect answers, selected options, or custom input.
+the extension does not judge whether answers are useful, complete, or high quality. a native non-error result is enough to clear the gate.
 
-sources: [tool_result handler](../ask-questionnaire/index.ts#L133-L138), [transition tests](../ask-questionnaire/index.test.ts#L177-L208)
+source: [extension result handler](../ask-questionnaire/index.ts#L133-L138), [pinned native ask outcomes](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts)
 
-## lifecycle resets
+## lifecycle and stop continuation
 
-three session events clear the pending questionnaire:
+pending state is one in-memory `{ owner, reason }` object per loaded extension instance. these events clear it:
 
 - `session_start`
 - `session_switch`
 - `session_branch`
 
-the state is one in-memory pending object per loaded extension instance, holding the declaring `owner` and `reason`, so a context change or a restart never carries a stale questionnaire forward.
+the value does not persist in a session file, plugin state, or restart. a reload or process restart starts with no pending questionnaire.
 
-sources: [state and reset handlers](../ask-questionnaire/index.ts#L72-L77), [lifecycle registration](../ask-questionnaire/index.ts#L140-L143), [reset tests](../ask-questionnaire/index.test.ts#L237-L265)
+the questionnaire module does not register its own `session_stop` handler. it installs one callback in the questionnaire stop slot and exports `questionnaireStop`. `stop-slot.ts` is write-once per owner: a duplicate install throws, `release()` removes the callback, and `decide()` returns `undefined` when no callback is installed.
 
-## stop continuation
+gate-checker owns the package `session_stop` handler. at [the current stop chain](../gate-checker/index.ts#L1133), it evaluates completion, then questionnaire, then omnipotence. if completion returns nothing and a questionnaire is pending, the questionnaire decision returns:
 
-this module registers no `session_stop` handler. it installs its decision in a write-once slot and exports `questionnaireStop`. gate-checker registers the package's only `session_stop` handler and calls the gate completion decision first, then the questionnaire decision, then the omnipotence decision. the questionnaire continuation therefore runs only when the gate completion decision returns nothing, and its `additionalContext` is the declaring reason. omp treats a continuation return as a request for one continuation turn.
+```json
+{
+  "continue": true,
+  "additionalContext": "<the declaring reason>"
+}
+```
 
-- while a questionnaire is pending, the decision returns `{ continue: true, additionalContext: <the declaring reason> }`.
-- the decision returns nothing after a successful ask result.
-- the decision returns nothing when no questionnaire is pending.
+omp treats this as one continuation turn. after a successful ask, or when no questionnaire is pending, the questionnaire decision returns nothing. if the completion decision returns a continuation first, the questionnaire decision does not replace it for that stop.
 
-sources: [slot installer](../ask-questionnaire/stop-decision.ts#L1-L9), [write-once slot](../stop-slot.ts#L1-L25), [gate-checker stop chain](../gate-checker/index.ts#L2259-L2263)
+sources: [questionnaire stop installer](../ask-questionnaire/stop-decision.ts#L1-L9), [write-once stop slot](../stop-slot.ts#L1-L29), [questionnaire lifecycle handlers](../ask-questionnaire/index.ts#L140-L143)
 
-## installation
+## configuration
 
-install the plugin with the native omp plugin manager:
+the extension has no configuration key. it reads no environment variable, config file, or omp setting.
+
+native omp owns these related settings:
+
+| setting | default | behavior |
+|---|---|---|
+| `ask.timeout` | `0` | timeout is disabled. a positive value is seconds. the settings ui offers disabled, 15, 30, 60, or 120 seconds. plan mode disables the timeout. |
+| `ask.notify` | `"on"` | when on, native ask sends a terminal `Waiting for input` notification. `"off"` disables it. |
+| `speech.enabled` | `false` | when true, native ask speaks the question text before showing the dialog. |
+
+configure these keys through omp's normal settings mechanism. changing them changes native ask only; it does not change declaration, hidden guidance, the allowlist, or lifecycle state.
+
+source: [pinned native settings schema](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/config/settings-schema.ts)
+
+## installation and package surface
+
+install the published plugin with omp:
 
 ```sh
 omp plugin install nikos-agent-stack
 ```
 
-for a local checkout of this repository, link it from the repository root:
+for a local checkout, run this from the repository root:
 
 ```sh
 omp plugin link .
 ```
 
-requirements:
+the package requires bun `>=1.2.22`. restart omp after install or link because omp discovers extension entries at startup.
 
-- install or link the package.
-- restart omp after installation because omp discovers extensions at startup ([gates plugin user guide](gates-plugin-user-guide.md)).
-
-the package manifest declares what omp loads:
-
-| manifest field | effect |
-|---|---|
-| `omp.extensions` | omp loads `./gate-checker/index.ts`, `./omnipotence/index.ts`, and `./ask-questionnaire/index.ts` |
-| `files` | the published package ships the three extension entries, `stop-slot.ts`, `ask-questionnaire/stop-decision.ts`, the gate-checker modules, the omnipotence modules, `docs/omnipotence-user-guide.md`, advisor setup and watchdog files, and the readme |
-
-run `/advisor-install` to configure the native terra advisor; see the [terra advisor user guide](advisor-role-user-guide.md). see the [gates plugin user guide](gates-plugin-user-guide.md) for gate behavior.
-
-sources: [`package.json`](../package.json#L37-L76), [manifest test](../plugin.test.ts)
-
-## updates and removal
+for package lifecycle operations, use:
 
 ```sh
 omp plugin install nikos-agent-stack@latest
 omp plugin uninstall nikos-agent-stack
 ```
 
-notes:
+the manifest exposes this package surface:
 
-- the gate checker, questionnaire policy, and advisor setup use the same installed package version.
-- removal stops the policy at the next start. an open request never survives a restart, because the state is in memory only.
-- omp records the installed version and the enabled state in its own plugin manager state; that record is omp behavior, not package behavior.
-
-sources: [state and reset handlers](../ask-questionnaire/index.ts#L72-L77), [`package.json`](../package.json#L37-L76)
-
-## focused tests
-
-the repository holds two focused test files. `package.json#files` does not publish them, so they stay in the source repository.
-
-| file | coverage |
+| manifest field | current behavior |
 |---|---|
-| [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | explicit declaration, owner conflict and same-owner retry, the read-only allowlist and blocking, reason injection, ask-result transitions, the exported stop decision, and the three lifecycle resets |
-| [`plugin.test.ts`](../plugin.test.ts) | manifest surface, declared extension entries, file allowlist, and a runtime import that proves each declared entry exports a factory function |
+| `omp.extensions` | loads `./gate-checker/index.ts`, `./omnipotence/index.ts`, and `./ask-questionnaire/index.ts` |
+| `files` | publishes `ask-questionnaire/index.ts`, `ask-questionnaire/stop-decision.ts`, and `stop-slot.ts` among the package files |
+| `bin` | provides only `nikos-gates` and `omnipotence` |
+| `exports` | provides only `./gate-cli` and `./omnipotence` |
 
-the questionnaire test file contains no detector or input-source tests. the tests drive the extension through a fake extension api. they observe handler return values only, never internal state.
+`docs/ask-questionnaire-user-guide.md` is repository documentation. it is not in the published `files` list. there is no questionnaire-specific install command or published questionnaire executable.
 
-documented verification commands, for a maintainer to run in a clean checkout:
-
-```sh
-bun test ask-questionnaire/index.test.ts plugin.test.ts
-bun run test
-```
-
-`bun run test` also runs the gate-checker unit tests and the wiring probe.
-
-sources: [test harness](../ask-questionnaire/index.test.ts#L1-L50), [`package.json` scripts](../package.json#L78-L80)
+source: [package manifest](../package.json#L26-L76)
 
 ## troubleshooting
 
-### no questionnaire pressure appears
+### no questionnaire opens
 
-check in this order:
+- confirm the plugin is installed or linked, then restart omp.
+- confirm the model executed `questionnaire_open` and the tool returned `questionnaire armed by <owner>`.
+- approve the `write` tool request if omp asks for declaration approval.
+- confirm the session has interactive ui. headless sessions cannot run native ask.
+- inspect the native `questions` payload for missing required fields or reserved option labels.
 
-1. the plugin is loaded.
-2. the model called `questionnaire_open` and the call returned `questionnaire armed by <owner>`.
+chat text, a request phrase, rpc input, and a headless request do not arm this extension.
 
-no chat phrase and no input event can arm this module.
+### tools are blocked
 
-### every tool is blocked
+this is expected while pending for any tool outside the allowlist in [pending policy](#pending-policy). read-only inspection, `ask`, and declaration retries remain available.
 
-a pending questionnaire blocks only tools outside the allowlist. `read`, `grep`, `glob`, `lsp`, `ast_grep`, `inspect_image`, `ask`, and `questionnaire_open` still work. a successful `ask` result or a session start, switch, or branch clears the pending questionnaire.
+### blocking continues after ask
 
-### blocking never stops
+an ask error or cancellation leaves pending state open. retry native ask with an interactive session and a valid payload. only a non-error ask result or one of the three lifecycle resets clears the gate.
 
-the questionnaire closes only on a successful ask result or a lifecycle reset. inspect one cause:
+### guidance is not visible in the transcript
 
-- each ask call returns an error, which keeps the questionnaire pending by design.
+this is expected. the extension sets `display` to `false`; the reason is hidden model context.
 
-the read-only allowlist stays open while a questionnaire is pending, so an agent can still inspect the repository and retry the ask.
+### timeout or automatic choice is unexpected
 
-### the session keeps continuing at stop
+check `ask.timeout`, the current plan mode, the active option note, and the `recommended` index. the rich dialog keeps existing answers, then uses a noted option or the clamped recommendation for each unanswered question. timeout results include `timedOut: true`.
 
-a pending questionnaire supplies the continuation context and a successful `ask` ends it. gate-checker's completion decision runs first, so a stop can show gate guidance instead of the questionnaire reason when both need a continuation.
+### no waiting notification or speech
 
-### the guidance is missing from the transcript
+check native `ask.notify` and `speech.enabled`. the defaults are `"on"` and `false`. these settings belong to omp, not this extension.
 
-this is expected. the message uses `display: false` and enters model context only.
+### the dialog does not show a preview
 
-### the questionnaire looks different from another guide
+preview content is rendered only by the native rich ask dialog. the native fallback shows option labels and descriptions and drops `preview`.
 
-the dialog belongs to the installed omp version. this package does not render it and cannot change it.
+### the session continues at stop
 
-sources: [handlers](../ask-questionnaire/index.ts#L106-L143), [handler tests](../ask-questionnaire/index.test.ts#L159-L265)
+while pending, the questionnaire stop decision supplies the declaration reason as `additionalContext`. gate-checker's completion decision has precedence at the same stop.
 
-## limitations
+## limits and boundaries
 
-- the package contains no dialog, no preview renderer, no note editor, no timeout, no external editor, and no collaboration transport. every one of those belongs to native omp ask.
-- the package changes no omp core file, controls no prompt queue, and forces no tool choice.
-- one in-memory `{ owner, reason }` object holds the state and does not survive a reload.
-- there is no text detector: only an explicit `questionnaire_open` call arms the policy.
-- blocking exempts a fixed read-only allowlist plus `ask` and declaration retries.
-- success means an ask result without an error. the extension does not check answer quality or answer count.
-- the state is in memory. it does not persist across restarts, and the lifecycle handlers clear it.
+- the extension has one pending declaration per loaded instance. a second owner cannot replace it, and a same-owner retry cannot replace its reason.
+- pending state is memory only. restart, reload, session start, session switch, and session branch clear it as described above.
+- the allowlist is fixed and closed while pending. new or unlisted tools are blocked by default.
+- native `questions` requires at least one item. the schema declares no maximum question count and no minimum option count.
+- native option labels cannot use `Other (type your own)`, `Chat about this`, or `Next →` because native ui reserves them.
+- native ask is exclusive. omp does not safely queue concurrent ask calls on the shared interactive surface.
+- the extension does not validate answer quality, answer count, selected options, custom input, notes, timeout status, or chat redirect details.
+- the extension owns no dialog, editor, preview renderer, timeout, notification, speech, transport, or collaboration answer route. those are native omp surfaces.
+- rich native ui can render `preview`; the native fallback drops it.
+- no text detector, request-text trigger, rpc trigger, headless trigger, questionnaire setting, questionnaire slash command, questionnaire bin, or questionnaire export exists in this package.
 
-sources: [extension scope comment](../ask-questionnaire/index.ts#L1-L16), [handlers](../ask-questionnaire/index.ts#L72-L143)
-
-## source map
-
-| path | contents |
-|---|---|
-| [`ask-questionnaire/index.ts#L23`](../ask-questionnaire/index.ts#L23) | guidance custom message type |
-| [`ask-questionnaire/index.ts#L25-L36`](../ask-questionnaire/index.ts#L25-L36) | read-only tool allowlist |
-| [`ask-questionnaire/index.ts#L40-L68`](../ask-questionnaire/index.ts#L40-L68) | event payload interfaces |
-| [`ask-questionnaire/index.ts#L79-L104`](../ask-questionnaire/index.ts#L79-L104) | `questionnaire_open` tool registration |
-| [`ask-questionnaire/index.ts#L114-L123`](../ask-questionnaire/index.ts#L114-L123) | reason injection |
-| [`ask-questionnaire/index.ts#L133-L138`](../ask-questionnaire/index.ts#L133-L138) | ask-result clearing |
-| [`ask-questionnaire/index.ts#L140-L143`](../ask-questionnaire/index.ts#L140-L143) | session lifecycle resets |
-| [`ask-questionnaire/index.test.ts`](../ask-questionnaire/index.test.ts) | focused behavior tests |
-| [`package.json`](../package.json) | extension entries, publish allowlist, and test script |
-| [`plugin.test.ts`](../plugin.test.ts) | manifest and load-surface tests |
-| [`ask-questionnaire/stop-decision.ts`](../ask-questionnaire/stop-decision.ts) | questionnaire slot installer, release helper, and exported decision |
-| [`stop-slot.ts`](../stop-slot.ts) | independent write-once stop slots and the shared `StopDecision` type that the gate-checker owner calls |
+sources: [extension scope and handlers](../ask-questionnaire/index.ts#L1-L143), [pinned native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts), [pinned native settings](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/config/settings-schema.ts)
