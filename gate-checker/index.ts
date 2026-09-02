@@ -568,13 +568,25 @@ export default function gateChecker(pi: ExtensionAPI): void {
   const agentEndSchema = pi.zod.object({ willContinue: pi.zod.literal(true).optional() });
   const eventSchema = pi.zod.object({});
   const leaseFields = (lease: LeaseRecord) => ({ path: lease.path, token: lease.token, owner_id: lease.owner_id, request_id: lease.request_id, session_id: lease.session_id, session_file: lease.session_file, agent_id: lease.agent_id, tool_call_id: lease.tool_call_id, tool_name: lease.tool_name, target: lease.target, fence: lease.fence });
-  const releaseOperation = (toolCallId: string, reason: string): boolean => { const operation = activeOperations.get(toolCallId); if (!operation) return false; activeOperations.delete(toolCallId); clearInterval(operation.timer); if (operation.pollTimer) clearInterval(operation.pollTimer); const released = Boolean(releaselease(operation.lease)); ledger.append("lease_released", { ...leaseFields(operation.lease), reason, released }); return released; };
+  const releaseOperation = (toolCallId: string, reason: string): boolean => {
+    const operation = activeOperations.get(toolCallId);
+    if (!operation) return false;
+    activeOperations.delete(toolCallId);
+    clearInterval(operation.timer);
+    if (operation.pollTimer) clearInterval(operation.pollTimer);
+    let released = false;
+    try { released = Boolean(releaselease(operation.lease)); } catch {}
+    ledger.append("lease_released", { ...leaseFields(operation.lease), reason, released });
+    return released;
+  };
   const releaseAllOperations = (reason: string): void => { for (const id of activeOperations.keys()) releaseOperation(id, reason); };
   const releaseOrphanedOperations = (reason: string): void => { for (const [id, operation] of activeOperations) if (!operation.backgroundRunning) releaseOperation(id, reason); };
   const pollAsyncOperation = (toolCallId: string, operation: ActiveOperation, context: ExtensionContext): void => {
     if (operation.pollTimer || !context.getAsyncJobSnapshot || !operation.asyncJobId) return;
     const poll = (): void => { if (activeOperations.get(toolCallId) !== operation) return; let snapshot: AsyncJobSnapshot | null = null; try { snapshot = context.getAsyncJobSnapshot() ?? null; } catch { return; } if (!snapshot) return; const running = snapshot.running?.find((job) => job.id === operation.asyncJobId); if (running && (running.status ?? "running").trim().toLowerCase() === "running") return; const recent = snapshot.recent?.find((job) => job.id === operation.asyncJobId); const status = recent?.status?.trim().toLowerCase() ?? ""; releaseOperation(toolCallId, status && status !== "running" ? `async_${status}` : "async_completed"); };
-    operation.pollTimer = setInterval(poll, 50); poll();
+    operation.pollTimer = setInterval(poll, 50);
+    operation.pollTimer.unref?.();
+    poll();
   };
   const releaseStaleSessionLease = (repoRoot: string | null, sessionFile: string | null | undefined, reason: string): void => {
     if (!repoRoot || !sessionFile) return;
@@ -602,6 +614,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return { block: true, reason };
     }
     const timer = setInterval(() => { const operation = activeOperations.get(event.toolCallId); if (!operation || operation.lease !== result) return; try { if (heartbeatlease(result)) return; let stale = false; try { stale = inspectlease({ cwd: result.repo_root ?? scope.cwd }).stale === true; } catch {} if (stale) ledger.append("lease_heartbeat_stale", { ...leaseFields(result), ts: Date.now() }); releaseOperation(event.toolCallId, stale ? "heartbeat_stale" : "heartbeat_lost"); } catch {} }, heartbeatintervalms({}));
+    timer.unref?.();
     activeOperations.set(event.toolCallId, { lease: result, timer, asyncJobId: null, toolName: event.toolName, target: scope.target, backgroundRunning: false });
     ledger.append("lease_acquired", { ...leaseFields(result), recovered: result.recovered, ts: Date.now() });
     if (result.recovered === true) ledger.append("lease_recovered", { ...leaseFields(result), ts: Date.now() });

@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
-  mkdirSync, readFileSync, realpathSync, readdirSync, renameSync, rmSync,
-  statSync, writeFileSync,
+  linkSync, mkdirSync, readFileSync, realpathSync, readdirSync, renameSync,
+  rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { isFunction, isRecord, isText, parseJsonObject } from "./predicates.js";
@@ -241,14 +241,33 @@ function publishInitialization(options, paths, now) {
     throw error;
   }
 }
-function acquireRecord(options, scope, paths, now, token) {
-  const metadata = operationMetadata(options);
-  const fence = nextFence(paths.parent, scope.key, token);
-  const record = { schema: 2, acquired: true, scope: "worktree", repo_root: scope.repo_root, common_dir: scope.common_dir, path: paths.path, token, fence, ...metadata, acquired_at: now, heartbeat_at: now };
-  writeLease(paths.data_path, record, "acquire");
-  rmSync(paths.initialization_path, { force: true });
-  mkdirSync(paths.claims_path, { recursive: true });
-  return record;
+function acquireRecord(options, scope, paths, now, initialization) {
+  const claimed = claimInitialization({ record: initialization }, scope, options);
+  if (!claimed) return null;
+  try {
+    const current = readInitialization(paths.initialization_path);
+    const stored = readRecord(paths.data_path);
+    if (!claimOwned(claimed)
+      || stored.kind !== "missing"
+      || !sameInitialization(current, initialization)) return null;
+    const metadata = operationMetadata(options);
+    const fence = nextFence(paths.parent, scope.key, initialization.token);
+    const record = { schema: 2, acquired: true, scope: "worktree", repo_root: scope.repo_root, common_dir: scope.common_dir, path: paths.path, token: initialization.token, fence, ...metadata, acquired_at: now, heartbeat_at: now };
+    writeLease(paths.data_path, record, "acquire");
+    rmSync(paths.initialization_path, { force: true });
+    return record;
+  } catch (error) {
+    const current = readInitialization(paths.initialization_path);
+    const stored = readRecord(paths.data_path);
+    if (claimOwned(claimed)
+      && stored.kind === "missing"
+      && sameInitialization(current, initialization)) {
+      rmSync(paths.path, { recursive: true, force: true });
+    }
+    throw error;
+  } finally {
+    releaseClaim(claimed);
+  }
 }
 function conflictResult(options, scope, paths, status, waited_ms = 0) {
   const metadata = operationMetadata(options);
@@ -264,12 +283,9 @@ export function tryacquirelease(input = {}) {
   mkdirSync(paths.parent, { recursive: true });
   const initialization = publishInitialization(options, paths, now);
   if (!initialization) return conflictResult(options, scope, paths, inspectlease({ ...options, scope }));
-  try {
-    return { ...acquireRecord(options, scope, paths, now, initialization.token), recovered: false };
-  } catch (error) {
-    try { rmSync(paths.path, { recursive: true, force: true }); } catch {}
-    throw error;
-  }
+  const record = acquireRecord(options, scope, paths, now, initialization);
+  if (record) return { ...record, recovered: false };
+  return conflictResult(options, scope, paths, inspectlease({ ...options, scope }));
 }
 function timeoutResult(result, waited_ms, cwd) {
   const diagnostic = formatleasestatus(result, { waited_ms, cwd });
@@ -318,72 +334,244 @@ export async function acquireleaseasync(input = {}) {
   }
 }
 function readClaim(path) {
-  try { return parseJsonObject(readFileSync(path, "utf8")); }
-  catch { return null; }
-}
-function validClaim(record) { return isRecord(record) && nonempty(record.token) && Number.isSafeInteger(record.pid) && record.pid > 0 && Number.isFinite(record.claimed_at); }
-function reclaimCandidates(path, now, options) {
-  let names;
-  try { names = readdirSync(path).filter((name) => !name.startsWith(".") && !name.endsWith(".tmp")).sort(); }
-  catch (error) { return ["enoent", "enotdir"].includes(String(error?.code ?? "").toLowerCase()); }
-  for (const name of names) {
-    const candidatePath = join(path, name);
-    const candidate = readClaim(candidatePath);
-    if (!validClaim(candidate)) continue;
-    const dead = Math.max(0, now - candidate.claimed_at) >= deadGraceMs(options) && !processAlive(candidate.pid);
-    if (!dead) return false;
-    rmSync(candidatePath, { force: true });
+  try {
+    return parseJsonObject(readFileSync(path, "utf8"));
+  } catch (error) {
+    const code = String(error?.code ?? "").toLowerCase();
+    if (["enoent", "eisdir", "enotdir"].includes(code)) return null;
+    throw error;
   }
+}
+
+function validClaim(record) {
+  return isRecord(record)
+    && nonempty(record.token)
+    && Number.isSafeInteger(record.pid)
+    && record.pid > 0
+    && Number.isFinite(record.claimed_at);
+}
+
+function sameClaim(current, expected) {
+  return validClaim(current)
+    && validClaim(expected)
+    && current.token === expected.token
+    && current.pid === expected.pid
+    && current.claimed_at === expected.claimed_at;
+}
+
+function publishClaim(claimsPath, options, token, claimedAt) {
+  const claimPath = join(claimsPath, token);
+  const temporary = join(claimsPath, `.${token}.${process.pid}.${randomUUID()}.tmp`);
+  const record = {
+    token,
+    pid: Number.isSafeInteger(options.pid) && options.pid > 0 ? options.pid : process.pid,
+    claimed_at: claimedAt,
+  };
+  try {
+    try {
+      mkdirSync(claimsPath);
+    } catch (error) {
+      if (String(error?.code ?? "").toLowerCase() !== "eexist") throw error;
+    }
+    writeFileSync(temporary, `${JSON.stringify(record)}\n`, "utf8");
+    linkSync(temporary, claimPath);
+    return { claimPath, record };
+  } catch (error) {
+    const code = String(error?.code ?? "").toLowerCase();
+    if (code === "eexist") return null;
+    if (["enoent", "enotdir"].includes(code)) return false;
+    throw error;
+  } finally {
+    try { rmSync(temporary, { force: true }); } catch {}
+  }
+}
+
+function candidateFiles(claimsPath) {
+  let names;
+  try {
+    names = readdirSync(claimsPath);
+  } catch (error) {
+    const code = String(error?.code ?? "").toLowerCase();
+    if (["enoent", "enotdir"].includes(code)) return [];
+    throw error;
+  }
+  return names
+    .filter((name) => !name.startsWith(".") && !name.endsWith(".tmp"))
+    .sort()
+    .map((name) => {
+      const claimPath = join(claimsPath, name);
+      return { claimPath, record: readClaim(claimPath) };
+    })
+    .filter((claim) => validClaim(claim.record));
+}
+
+function reclaimableClaim(record, now, options) {
+  if (!validClaim(record)) return false;
+  const age = Math.max(0, now - record.claimed_at);
+  return age >= deadGraceMs(options) && !processAlive(record.pid);
+}
+
+function claimOwned(claim) {
+  return sameClaim(readClaim(claim.claimPath), claim.record);
+}
+
+function releaseClaim(claim) {
+  if (!claimOwned(claim)) return false;
+  rmSync(claim.claimPath, { force: true });
   return true;
 }
-function withGuard(path, action) {
-  const guard = join(path, ".guard");
-  try { mkdirSync(guard); }
-  catch (error) { if (String(error?.code ?? "").toLowerCase() === "eexist") return false; throw error; }
-  let removed = false;
-  try { return action(() => { removed = true; }); }
-  finally { if (!removed) rmSync(guard, { recursive: true, force: true }); }
+
+function reclaimDeadClaim(claim, now, options) {
+  const current = readClaim(claim.claimPath);
+  if (!current) return true;
+  if (!sameClaim(current, claim.record) || !reclaimableClaim(current, now, options)) {
+    return false;
+  }
+  const reread = readClaim(claim.claimPath);
+  if (!reread) return true;
+  if (!sameClaim(reread, current) || !reclaimableClaim(reread, now, options)) {
+    return false;
+  }
+  rmSync(claim.claimPath, { force: true });
+  return true;
 }
-function rereadLease(lease) {
-  const stored = readRecord(join(lease.path, "lease.json"));
-  return stored.kind === "v2" && stored.validation?.ok && sameIdentity(stored.record, lease) ? stored.record : null;
+
+function electClaim(claim, now, options) {
+  for (const contender of candidateFiles(claim.claimsPath)) {
+    if (contender.claimPath === claim.claimPath) continue;
+    if (!reclaimableClaim(contender.record, now, options)) return false;
+    if (!reclaimDeadClaim(contender, now, options)) return false;
+  }
+  return claimOwned(claim);
 }
-function reclaimInitialization(status, scope, options) {
+
+function rereadClaimedLease(claim, expected) {
+  if (!claimOwned(claim)) return null;
+  const stored = readRecord(claim.dataPath);
+  if (stored.kind !== "v2" || !stored.validation?.ok) return null;
+  return sameIdentity(stored.record, expected) ? stored.record : null;
+}
+
+function claimCurrentLease(lease, input = {}) {
+  if (!isRecord(lease) || lease.acquired !== true || !nonempty(lease.path)) return null;
+  const options = optionsOf(input);
+  const dataPath = join(lease.path, "lease.json");
+  const claimsPath = `${dataPath}.claims`;
+  for (;;) {
+    const token = randomUUID();
+    const claimedAt = nowOf(options);
+    const published = publishClaim(claimsPath, options, token, claimedAt);
+    if (published === false) return null;
+    if (published === null) continue;
+    const claim = {
+      dataPath,
+      claimsPath,
+      claimPath: published.claimPath,
+      record: published.record,
+    };
+    try {
+      if (!electClaim(claim, claimedAt, options)) {
+        releaseClaim(claim);
+        return null;
+      }
+      const current = rereadClaimedLease(claim, lease);
+      if (!current) {
+        releaseClaim(claim);
+        return null;
+      }
+      return { ...claim, current };
+    } catch (error) {
+      releaseClaim(claim);
+      throw error;
+    }
+  }
+}
+
+function claimInitialization(status, scope, options) {
   const expected = status.record;
-  if (!validInitialization(expected)) return false;
+  if (!validInitialization(expected)) return null;
   const paths = leasePaths(scope);
-  return withGuard(paths.path, (markRemoved) => {
+  for (;;) {
+    const token = randomUUID();
+    const claimedAt = nowOf(options);
+    const published = publishClaim(paths.claims_path, options, token, claimedAt);
+    if (published === false) return null;
+    if (published === null) continue;
+    const claim = {
+      dataPath: paths.data_path,
+      claimsPath: paths.claims_path,
+      claimPath: published.claimPath,
+      record: published.record,
+    };
+    try {
+      if (!electClaim(claim, claimedAt, options)) {
+        releaseClaim(claim);
+        return null;
+      }
+      const current = readInitialization(paths.initialization_path);
+      const stored = readRecord(paths.data_path);
+      if (stored.kind !== "missing" || !sameInitialization(current, expected)) {
+        releaseClaim(claim);
+        return null;
+      }
+      return { ...claim, current };
+    } catch (error) {
+      releaseClaim(claim);
+      throw error;
+    }
+  }
+}
+
+function reclaimInitialization(status, scope, options) {
+  const claimed = claimInitialization(status, scope, options);
+  if (!claimed) return false;
+  const paths = leasePaths(scope);
+  try {
     const current = readInitialization(paths.initialization_path);
     const stored = readRecord(paths.data_path);
     const now = nowOf(options);
-    if (stored.kind !== "missing" || !sameInitialization(current, expected) || Math.max(0, now - current.claimed_at) < deadGraceMs(options) || processAlive(current.pid)) return false;
+    const age = Math.max(0, now - current.claimed_at);
+    if (!claimOwned(claimed)
+      || stored.kind !== "missing"
+      || !sameInitialization(current, claimed.current)
+      || age < deadGraceMs(options)
+      || processAlive(current.pid)) return false;
     rmSync(paths.path, { recursive: true, force: true });
-    markRemoved();
     return true;
-  });
+  } finally {
+    releaseClaim(claimed);
+  }
 }
+
 export function heartbeatlease(lease, input = {}) {
-  if (!isRecord(lease) || lease.acquired !== true || !nonempty(lease.path)) return false;
   const options = optionsOf(input);
-  return withGuard(lease.path, () => {
-    const current = rereadLease(lease);
+  const claimed = claimCurrentLease(lease, options);
+  if (!claimed) return false;
+  try {
+    const current = rereadClaimedLease(claimed, lease);
     if (!current) return false;
     const heartbeat_at = Math.max(current.heartbeat_at, nowOf(options));
-    writeLease(join(lease.path, "lease.json"), { ...current, heartbeat_at }, "heartbeat");
+    writeLease(claimed.dataPath, { ...current, heartbeat_at }, "heartbeat");
     lease.heartbeat_at = heartbeat_at;
     return true;
-  });
+  } finally {
+    releaseClaim(claimed);
+  }
 }
-export function releaselease(lease, _input = {}) {
-  if (!isRecord(lease) || lease.acquired !== true || !nonempty(lease.path)) return false;
-  return withGuard(lease.path, (markRemoved) => {
-    const current = rereadLease(lease);
+
+export function releaselease(lease, input = {}) {
+  const claimed = claimCurrentLease(lease, optionsOf(input));
+  if (!claimed) return false;
+  try {
+    const current = rereadClaimedLease(claimed, lease);
     if (!current) return false;
     rmSync(current.path, { recursive: true, force: true });
-    markRemoved();
     return true;
-  });
+  } finally {
+    releaseClaim(claimed);
+  }
 }
+
 export function releasestalelease(input = {}, timing = {}) {
   let lease;
   let options;
@@ -396,13 +584,15 @@ export function releasestalelease(input = {}, timing = {}) {
     if (status.status !== "held" || status.stale !== true || !status.record) return false;
     lease = status.record;
   }
-  return withGuard(lease.path, (markRemoved) => {
-    const current = rereadLease(lease);
+  const claimed = claimCurrentLease(lease, options);
+  if (!claimed) return false;
+  try {
+    const current = rereadClaimedLease(claimed, lease);
     if (!current) return false;
     if (Math.max(0, nowOf(options) - current.heartbeat_at) < staleMs(options)) return false;
-    if (!reclaimCandidates(join(current.path, "lease.json.claims"), nowOf(options), options)) return false;
     rmSync(current.path, { recursive: true, force: true });
-    markRemoved();
     return true;
-  });
+  } finally {
+    releaseClaim(claimed);
+  }
 }

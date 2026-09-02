@@ -33,6 +33,7 @@ const gateChecker = (await import("./index.ts")).default;
 const {
   acquirelease,
   heartbeatlease,
+  identity,
   inspectlease,
   releaselease,
   releasestalelease,
@@ -285,7 +286,15 @@ try {
     });
     assert(lease.acquired === true, "mutation lease must acquire");
     assert(inspectlease({ cwd }).status === "held", "mutation lease must be inspectable");
-    assert(heartbeatlease(lease) === true, "mutation lease heartbeat must renew");
+    writeFileSync(join(lease.path, "lease.json.claims", "000-dead"), `${JSON.stringify({
+      token: "dead-claim",
+      pid: 2_147_483_647,
+      claimed_at: lease.heartbeat_at,
+    })}\n`);
+    assert(heartbeatlease(lease, {
+      now: lease.heartbeat_at + 3_000,
+      dead_pid_grace_ms: 2_000,
+    }) === true, "heartbeat must reclaim a dead contender claim");
     assert(releaselease(lease) === true, "mutation lease must release its owner");
     assert(inspectlease({ cwd }).status === "free", "released mutation lease must be free");
     const stale = acquirelease({
@@ -301,11 +310,72 @@ try {
       acquisition_wait_ms: 0,
     });
     assert(stale.pid === process.pid, "stale recovery fixture must keep a live holder pid");
+    mkdirSync(join(stale.path, ".guard"));
     assert(releasestalelease(stale, {
       now: stale.heartbeat_at + 2_000,
       stale_heartbeat_ms: 1_000,
     }) === true, "expired heartbeat must release even while the holder pid remains live");
     assert(inspectlease({ cwd }).status === "free", "stale recovery must clear the held lease");
+    const successor = acquirelease({
+      cwd,
+      owner_id: "owner-3",
+      request_id: "request-3",
+      session_id: "session-3",
+      session_file: join(stateRoot, "successor-session.jsonl"),
+      agent_id: "main",
+      tool_call_id: "write-3",
+      tool_name: "write",
+      target: "src/a.txt",
+      acquisition_wait_ms: 0,
+    });
+    assert(successor.acquired === true, "successor must acquire after stale recovery");
+    assert(releaselease(stale) === false, "stale owner must not release its successor");
+    assert(inspectlease({ cwd }).record.token === successor.token, "successor fencing token must remain current");
+    assert(releaselease(successor) === true, "successor must release its own lease");
+    const scope = identity(cwd);
+    const pausedPath = join(scope.common_dir, "omp-gates", "leases", scope.key);
+    mkdirSync(pausedPath, { recursive: true });
+    writeFileSync(join(pausedPath, "lease.init"), `${JSON.stringify({
+      pid: process.pid,
+      claimed_at: 0,
+      token: "paused-initializer",
+    })}\n`);
+    const paused = acquirelease({
+      cwd,
+      owner_id: "owner-4",
+      request_id: "request-4",
+      session_id: "session-4",
+      session_file: join(stateRoot, "paused-session.jsonl"),
+      agent_id: "main",
+      tool_call_id: "write-4",
+      tool_name: "write",
+      target: "src/a.txt",
+      acquisition_wait_ms: 0,
+      now: 31_000,
+    });
+    assert(paused.acquired === false && paused.status === "initializing", "live initializer must not be reclaimed by age");
+    writeFileSync(join(pausedPath, "lease.init"), `${JSON.stringify({
+      pid: 2_147_483_647,
+      claimed_at: 0,
+      token: "paused-initializer",
+    })}\n`);
+    const recovered = acquirelease({
+      cwd,
+      owner_id: "owner-5",
+      request_id: "request-5",
+      session_id: "session-5",
+      session_file: join(stateRoot, "recovered-session.jsonl"),
+      agent_id: "main",
+      tool_call_id: "write-5",
+      tool_name: "write",
+      target: "src/a.txt",
+      acquisition_wait_ms: 0,
+      now: 31_000,
+      dead_pid_grace_ms: 2_000,
+    });
+    assert(recovered.acquired === true && recovered.recovered === true, "dead initializer must be reclaimed");
+    assert(recovered.token !== "paused-initializer", "recovered initializer must publish a new generation token");
+    assert(releaselease(recovered) === true, "recovered initializer successor must release");
   }
 
   {
