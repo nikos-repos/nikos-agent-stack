@@ -128,7 +128,7 @@ with no argument, this command prints the active level, the marker, claim, manif
 /gates-engage medium
 ```
 
-medium blocks unfinished added lines, absolute home paths, unsupported file or test claims, contradicted subagent reports, missing interrogation, missing test evidence, failing verification, runtime or scope recovery failures, and missing scratchpad coverage. it does not require a commit.
+medium blocks unfinished added lines, home paths left after a `no-absolute-home-path` interruption, unsupported file or test claims, contradicted subagent reports, missing interrogation, missing test evidence, failing verification, runtime or scope recovery failures, and missing scratchpad coverage. it does not require a commit.
 
 ### use strict delivery checks
 
@@ -414,7 +414,7 @@ an added marker in markdown, html, or any other path produces no completion find
   <li><code># stu&#98;</code></li>
   <li><code>/* stu&#98;</code></li>
   <li><code>def stu&#98;(</code></li>
-  <li><code>pass&nbsp;#</code></li>
+  <li><code>pass&nbsp;#&nbsp;</code></li>
   <li><code>unimplem&#101;nted!()</code></li>
   <li><code>notimplem&#101;ntederror</code></li>
   <li><code>raise notimplem&#101;ntederror</code></li>
