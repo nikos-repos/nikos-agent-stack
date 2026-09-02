@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -311,6 +312,14 @@ try {
     });
     assert(stale.pid === process.pid, "stale recovery fixture must keep a live holder pid");
     mkdirSync(join(stale.path, ".guard"));
+    const staleClaims = join(stale.path, "lease.json.claims");
+    const deadWinner = join(staleClaims, "dead-stale-claim");
+    writeFileSync(deadWinner, `${JSON.stringify({
+      token: "dead-stale-claim",
+      pid: 2_147_483_647,
+      claimed_at: stale.heartbeat_at,
+    })}\n`);
+    linkSync(deadWinner, join(staleClaims, ".winner"));
     assert(releasestalelease(stale, {
       now: stale.heartbeat_at + 2_000,
       stale_heartbeat_ms: 1_000,

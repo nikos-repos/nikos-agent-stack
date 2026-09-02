@@ -412,13 +412,22 @@ function reclaimableClaim(record, now, options) {
 }
 
 function claimOwned(claim) {
-  return sameClaim(readClaim(claim.claimPath), claim.record);
+  return claim.won === true
+    && sameClaim(readClaim(claim.claimPath), claim.record)
+    && sameClaim(readClaim(claim.winnerPath), claim.record);
 }
 
 function releaseClaim(claim) {
-  if (!claimOwned(claim)) return false;
-  rmSync(claim.claimPath, { force: true });
-  return true;
+  let released = false;
+  if (claim.won === true && sameClaim(readClaim(claim.winnerPath), claim.record)) {
+    rmSync(claim.winnerPath, { force: true });
+    released = true;
+  }
+  if (sameClaim(readClaim(claim.claimPath), claim.record)) {
+    rmSync(claim.claimPath, { force: true });
+    released = true;
+  }
+  return released;
 }
 
 function reclaimDeadClaim(claim, now, options) {
@@ -436,13 +445,50 @@ function reclaimDeadClaim(claim, now, options) {
   return true;
 }
 
-function electClaim(claim, now, options) {
+function reclaimDeadWinner(claim, winner, now, options) {
+  if (!reclaimableClaim(winner, now, options)) return false;
+  const reread = readClaim(claim.winnerPath);
+  if (!sameClaim(reread, winner) || !reclaimableClaim(reread, now, options)) {
+    return false;
+  }
+  rmSync(claim.winnerPath, { force: true });
+  const candidate = {
+    claimPath: join(claim.claimsPath, winner.token),
+    record: winner,
+  };
+  reclaimDeadClaim(candidate, now, options);
+  return true;
+}
+
+function cleanDeadCandidates(claim, now, options) {
   for (const contender of candidateFiles(claim.claimsPath)) {
     if (contender.claimPath === claim.claimPath) continue;
-    if (!reclaimableClaim(contender.record, now, options)) return false;
-    if (!reclaimDeadClaim(contender, now, options)) return false;
+    if (reclaimableClaim(contender.record, now, options)) {
+      reclaimDeadClaim(contender, now, options);
+    }
   }
-  return claimOwned(claim);
+}
+
+function electClaim(claim, now, options) {
+  claim.winnerPath = join(claim.claimsPath, ".winner");
+  for (;;) {
+    try {
+      linkSync(claim.claimPath, claim.winnerPath);
+      claim.won = true;
+      cleanDeadCandidates(claim, now, options);
+      return claimOwned(claim);
+    } catch (error) {
+      const code = String(error?.code ?? "").toLowerCase();
+      if (["enoent", "enotdir"].includes(code)) return false;
+      if (code !== "eexist") throw error;
+    }
+    const winner = readClaim(claim.winnerPath);
+    if (sameClaim(winner, claim.record)) {
+      claim.won = true;
+      return claimOwned(claim);
+    }
+    if (!winner || !reclaimDeadWinner(claim, winner, now, options)) return false;
+  }
 }
 
 function rereadClaimedLease(claim, expected) {
