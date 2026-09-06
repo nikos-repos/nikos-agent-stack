@@ -1,0 +1,707 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.factory/schemas/tasks.schema.json",
+  "title": "factory task graph",
+  "description": "machine handoff between factory-taskgraph and factory-waves. one entry per task id; one task id per subagent.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "base_ref",
+    "cadence",
+    "waves",
+    "hotspots",
+    "protected_files",
+    "global_non_goals",
+    "dispatch_preview",
+    "tasks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "name",
+        "root",
+        "requirements",
+        "architecture"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1,
+          "description": "absolute path to the project root"
+        },
+        "requirements": {
+          "type": "string",
+          "description": "path to the approved .factory/requirements.md"
+        },
+        "architecture": {
+          "type": "string",
+          "description": "path to the approved .factory/architecture.md"
+        },
+        "remote": {
+          "type": "string",
+          "description": "remote url, written only after gh repo create is approved and run"
+        }
+      }
+    },
+    "base_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the ref every task worktree branches from. wave 0 commits the contract stubs here before wave 1 starts."
+    },
+    "cadence": {
+      "type": "object",
+      "description": "copied verbatim from the architecture document. every task inherits it.",
+      "required": [
+        "runner",
+        "smoke_command"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runner": {
+          "type": "string",
+          "description": "the single test runner for this project"
+        },
+        "smoke_command": {
+          "type": "string",
+          "description": "the real product entry point exercised at the finish gate"
+        },
+        "mocked_at": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "external boundaries permitted a double. anything not listed is exercised for real."
+        },
+        "untested_by_policy": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "categories that get no tests, decided once at phase 2"
+        }
+      }
+    },
+    "waves": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "goal",
+          "contract",
+          "integration_check"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "goal": {
+            "type": "string",
+            "description": "what the wave delivers, in requirement ids"
+          },
+          "contract": {
+            "type": "string",
+            "description": "the verbatim signature block shared by every task in the wave. goes into the task call context under # Contract. an agent may not change this; it escalates instead."
+          },
+          "integration_check": {
+            "type": "string",
+            "description": "the single command run once at wave end by the orchestrator"
+          },
+          "review": {
+            "type": "string",
+            "enum": [
+              "reviewer",
+              "security-reviewer",
+              "both",
+              "none"
+            ],
+            "default": "reviewer",
+            "description": "security-reviewer is mandatory when the wave contains any t4 task, and equally when any task in the wave declares a trust_boundary. either trigger alone is sufficient."
+          },
+          "security_reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "why security-reviewer was selected for this wave: the t4 task ids, the declared trust boundaries, or both. required reading at gate 4; a widened trigger a reviewer cannot check is a trigger nobody checks."
+          }
+        }
+      }
+    },
+    "hotspots": {
+      "type": "array",
+      "description": "files more than one task writes. declared, never serialised.",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "writers",
+          "resolution_owner",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "writers": {
+            "type": "array",
+            "minItems": 2,
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            },
+            "description": "task ids that will each write this file"
+          },
+          "resolution_owner": {
+            "type": "string",
+            "description": "the single integration task id that resolves the final content. exactly one."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "protected_files": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "exact repository-relative paths no task may allowlist in target.files. there is no exemption class: a legitimate shared write is a declared hotspot. empty when none."
+    },
+    "global_non_goals": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "non-goal ids and statements carried verbatim from the approved requirements. carried into every implementer and reviewer dispatch."
+    },
+    "dispatch_preview": {
+      "type": "object",
+      "description": "the gate-4 dispatch values calculated once by factory-taskgraph and presented verbatim by new-project.",
+      "required": [
+        "task_counts",
+        "tier_histogram",
+        "widest_wave",
+        "maxConcurrency",
+        "parallelism_ratio",
+        "queued_serialization",
+        "hotspots",
+        "barrier",
+        "maxRuntimeMs",
+        "softRequestBudget"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "task_counts": {
+          "type": "object",
+          "required": [
+            "total",
+            "per_wave"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "per_wave": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "index",
+                  "count"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "count": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tier_histogram": {
+          "type": "object",
+          "required": [
+            "t1",
+            "t2",
+            "t3",
+            "t4"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "t1": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "t2": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "t3": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "t4": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "widest_wave": {
+          "type": "object",
+          "required": [
+            "index",
+            "count"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "maxConcurrency": {
+          "type": "integer",
+          "minimum": 4
+        },
+        "parallelism_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "queued_serialization": {
+          "type": "object",
+          "required": [
+            "queued_tasks",
+            "semantics"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "queued_tasks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "semantics": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "hotspots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "resolution_owner"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "resolution_owner": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "barrier": {
+          "type": "object",
+          "required": [
+            "wait_for_all_results",
+            "semantics"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "wait_for_all_results": {
+              "type": "boolean"
+            },
+            "semantics": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "maxRuntimeMs": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "softRequestBudget": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": [
+        "id",
+        "wave",
+        "kind",
+        "owns",
+        "target",
+        "acceptance",
+        "test_budget",
+        "cadence",
+        "worktree",
+        "branch",
+        "roles",
+        "route",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[0-9]{2}-[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "stable, never reused. also the subagent name, the worktree dir, the branch, and the probe log filename."
+        },
+        "wave": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "contract",
+            "build",
+            "integration",
+            "review",
+            "release"
+          ],
+          "description": "contract tasks live in wave 0 and write compiling stubs; integration tasks own hotspot resolution"
+        },
+        "module": {
+          "type": "string",
+          "description": "the architecture module this task realises. exactly one, for kind=build."
+        },
+        "split_reason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "required on every task when the architecture module maps to more than one task; omit when the module maps to one task."
+        },
+        "owns": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(fr|nfr|ad|g|sc)-[0-9]+$"
+          },
+          "description": "requirement ids satisfied here. every fr- and nfr- appears in exactly one task across the graph."
+        },
+        "target": {
+          "type": "object",
+          "required": [
+            "files",
+            "non_goals"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string"
+              },
+              "description": "exact paths. not globs, not directories. this is the manifest the acceptance gate checks against."
+            },
+            "non_goals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "neighbouring files owned by another task, each naming that task id"
+            }
+          }
+        },
+        "interface": {
+          "type": "string",
+          "description": "the verbatim signature block the agent implements. fixed before dispatch; the agent never designs it."
+        },
+        "consumes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          },
+          "description": "task ids whose contract this task depends on. contract, not code: after wave 0 a consumer may share a wave with its provider."
+        },
+        "acceptance": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "description": "observable from outside the module, with a concrete input and a concrete expected result"
+          }
+        },
+        "failure_modes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "filtered from the requirements security table to this module. each one costs one test in the budget."
+        },
+        "trust_boundary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "optional. the boundary from the requirements contracts-and-boundaries table that this task's code sits on. absent means the task crosses no declared boundary. presence makes security-reviewer mandatory for the whole wave, independently of tier."
+        },
+        "experiment": {
+          "type": "object",
+          "description": "the falsifying observation, named before any code exists",
+          "required": [
+            "input",
+            "action",
+            "expected",
+            "falsified_by"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "type": "string",
+              "minLength": 1
+            },
+            "action": {
+              "type": "string",
+              "minLength": 1,
+              "description": "the real command or interaction"
+            },
+            "expected": {
+              "type": "string",
+              "minLength": 1
+            },
+            "falsified_by": {
+              "type": "string",
+              "minLength": 1,
+              "description": "the observation that proves the module wrong"
+            }
+          }
+        },
+        "cadence": {
+          "type": "string",
+          "enum": [
+            "experiment-only",
+            "module-complete",
+            "characterize-first",
+            "integration-gate",
+            "release-gate"
+          ],
+          "description": "the module's class from the architecture document. factory-build enforces it; it does not choose it."
+        },
+        "test_budget": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "ceiling on test count. equals len(acceptance) + len(failure_modes). exceeding it requires an escalation naming what the extra test protects."
+        },
+        "worktree": {
+          "type": "string",
+          "pattern": "^\\.worktrees/[0-9]{2}-[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "always .worktrees/<task-id>"
+        },
+        "branch": {
+          "type": "string",
+          "pattern": "^task/[0-9]{2}-[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "always task/<task-id>"
+        },
+        "roles": {
+          "type": "object",
+          "required": [
+            "implementer",
+            "reviewer"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "implementer": {
+              "type": "string",
+              "minLength": 1,
+              "description": "the agent that implements this task. normally the routed factory build agent."
+            },
+            "reviewer": {
+              "const": "factory-gatekeeper",
+              "description": "the sole pinned acceptance-gate agent for every task. must differ from implementer."
+            }
+          }
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "blocked",
+            "accepted",
+            "rejected",
+            "integrated",
+            "removed"
+          ],
+          "default": "pending"
+        },
+        "route": {
+          "$ref": "#/$defs/route"
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "description": "the full routing decision. all three axis scores are required so a reviewer can audit the route and not only the code.",
+      "required": [
+        "shape",
+        "agent",
+        "effort",
+        "fallback_agent",
+        "rationale"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "shape": {
+          "type": "string",
+          "enum": [
+            "research",
+            "library",
+            "build",
+            "ui",
+            "review",
+            "security"
+          ],
+          "description": "dimension 1. only build continues to the score axes."
+        },
+        "tier": {
+          "type": "string",
+          "enum": [
+            "t1",
+            "t2",
+            "t3",
+            "t4"
+          ],
+          "description": "dimension 2. required when shape is build."
+        },
+        "agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "must match the shape and tier binding in routing.md"
+        },
+        "effort": {
+          "type": "string",
+          "enum": [
+            "lo",
+            "med",
+            "hi"
+          ],
+          "description": "per-spawn override. selects the lowest, middle, or highest thinking level the resolved model supports. not the agent file's thinking-level default."
+        },
+        "fallback_agent": {
+          "type": "string",
+          "minLength": 1,
+          "description": "used when the primary agent is not installed on this machine"
+        },
+        "ambiguity": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "blast": {
+          "type": "integer",
+          "enum": [
+            0,
+            1,
+            2
+          ]
+        },
+        "reversibility": {
+          "type": "integer",
+          "enum": [
+            0,
+            1
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "description": "one line tying the scores to the tier rule that fired"
+        },
+        "escalate_to": {
+          "type": "string",
+          "enum": [
+            "t2",
+            "t3",
+            "t4",
+            "human"
+          ],
+          "description": "the route a failed re-dispatch uses. exactly one step up."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "shape": {
+                "const": "build"
+              }
+            },
+            "required": [
+              "shape"
+            ]
+          },
+          "then": {
+            "required": [
+              "tier",
+              "ambiguity",
+              "blast",
+              "reversibility",
+              "escalate_to"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

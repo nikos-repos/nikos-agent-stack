@@ -935,3 +935,7 @@ with a repository `cwd` or path binds that repository automatically. until then,
 the plugin cannot prove changes made outside watched hooks or enforce commits.
 
 source: [baseline and automatic repository binding](../gate-checker/index.ts)
+
+## Proposed control-surface release
+
+For the candidate release, [the maintained OMP-DEV map](../omp-skills-stuffs-prompts-and-more/OMP-DEV-USER-GUIDE.md) distinguishes L1/L2 advice from configured predicates. Gate-checker remains the only session_stop owner, composing delivery, questionnaire and omnipotence. Existing command evidence, lease/fencing, stop release and policy levels keep their implementations. A warning, skipped check or release with failures is not a pass. Factory commands_run remains self-reported; no new command ledger or probe parser is installed by these guide changes. Use the release inventory and effective-loading/retained-run checks before adoption.

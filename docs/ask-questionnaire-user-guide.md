@@ -335,3 +335,7 @@ while pending, the questionnaire stop decision supplies the declaration reason a
 - no text detector, request-text trigger, rpc trigger, headless trigger, questionnaire setting, questionnaire slash command, questionnaire bin, or questionnaire export exists in this package.
 
 sources: [extension scope and handlers](../ask-questionnaire/index.ts#L1-L143), [pinned native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts), [pinned native settings](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/config/settings-schema.ts)
+
+## Proposed workflow release
+
+The proposed skills retain the current native pending-questionnaire allowlist and successful-ask clearing behavior. Transport state, semantic answers, user authority and durable factory breakpoint responses remain distinct. After session reset inspect prior unanswered requirements and explicitly redeclare any still needed. Validated controller effects retain their factory action route; ordinary phase workers cannot ask product gates or write state. See [the maintained control map](../omp-skills-stuffs-prompts-and-more/OMP-DEV-USER-GUIDE.md).

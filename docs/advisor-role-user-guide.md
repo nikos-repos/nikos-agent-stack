@@ -199,3 +199,7 @@ native omp can accept the note because it validates only `note` and `severity`. 
 the shipped model is `openai-codex/gpt-5.6-terra:high`. make that model available to the native omp host, start a new omp session, enable the advisor, and check `/advisor status` again.
 
 source: [terra profile](../advisor/WATCHDOG.yml), [installer](../advisor/install.js), [shell installer](../gate-checker/gate-cli.js), [command registration](../gate-checker/index.ts)
+
+## Proposed advisor guidance release
+
+The candidate preserves Terra's native name, enabled flag, model and read/grep/glob tool list. It preserves every instruction substring pinned by plugin.test.ts and adds current candidate identity, quiet duplicate handling and separate diagnosis/remedy assessment. OMP validates note and severity; path/line/claim/read-snapshot digest remain prompt conventions. Silence is not a passed check, and no transport coalescer or authority is added. The packaged installer preserves peer advisors; verify the merged live file and retained backup before activation. See [the control map](../omp-skills-stuffs-prompts-and-more/OMP-DEV-USER-GUIDE.md).
