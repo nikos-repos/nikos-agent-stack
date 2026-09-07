@@ -535,17 +535,17 @@ the extension resolves this script path once at module load, and rewrites suppor
 ### rewrite behavior
 
 - uses the absolute installed script path.
-- adds `--no-push` when absent.
+- adds `--no-push` as a script argument when absent, before any `--` path separator.
 - preserves a parsed short or long message argument.
 - lets the script create a message when none is supplied.
 - preserves shell commands before and after the commit segment.
-- removes a redundant leading `git add` because the script stages changes.
+- preserves an explicit leading `git add` and its path scope; the script commits already-staged changes.
 - leaves `git commit --amend` unchanged.
 - rewrites a quoted or unquoted token or path that ends in `smart_commit.sh`.
 - leaves a prefixed name such as `my_smart_commit.sh` alone.
 - leaves an already absolute path that already carries `--no-push` unchanged.
 
-routing creates a local commit only. it does not publish or push.
+routing requests no-push mode by default. the script owns explicit push behavior; a rewrite grants no publication authority.
 
 source: [commit routing implementation](../gate-checker/index.ts)
 

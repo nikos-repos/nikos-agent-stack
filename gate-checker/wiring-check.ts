@@ -248,14 +248,30 @@ try {
   {
     const probe = harness(repository(), "medium", "true");
     await start(probe);
+    const commitPath = "src/committed file.txt";
+    writeFileSync(join(probe.cwd, commitPath), "commit selected\n");
+    writeFileSync(join(probe.cwd, "src/unselected.txt"), "leave unstaged\n");
+    writeFileSync(commitScript, "#!/bin/sh\nexec git commit -q -m \"$1\"\n");
     const routed = await probe.handlers.tool_call({
       toolName: "bash",
       toolCallId: "bash-1",
-      input: { command: "git commit -m test" },
+      input: { command: `git add -- '${commitPath}' && git commit -m 'scoped message' && test -f '${commitPath}'` },
     }, probe.context);
-    assert(routed.input.command.includes(commitScript), "commit calls must route through the installed script");
-    assert(routed.input.command.includes("--no-push"), "commit routing must remain local");
-    assert(routed.input.command.includes("'test'"), "commit routing must preserve unquoted messages");
+    execFileSync("sh", ["-c", routed.input.command], { cwd: probe.cwd, stdio: "pipe" });
+    assert(git(probe.cwd, "show", "--format=", "--name-only", "HEAD") === commitPath, "commit routing must preserve explicit staging scope");
+    assert(git(probe.cwd, "log", "-1", "--format=%s") === "scoped message", "commit routing must preserve the message");
+
+    writeFileSync(commitScript, "#!/bin/sh\nwhile [ \"$#\" -gt 0 ] && [ \"$1\" != \"--\" ]; do shift; done\nshift\ngit add -- \"$@\"\n");
+    const selectedPath = "src/selected file.txt";
+    writeFileSync(join(probe.cwd, selectedPath), "selected\n");
+    writeFileSync(join(probe.cwd, "src/unselected.txt"), "leave unstaged\n");
+    const scoped = await probe.handlers.tool_call({
+      toolName: "bash",
+      toolCallId: "bash-scoped",
+      input: { command: `bash '${commitScript}' --stage-only --whole-paths -- '${selectedPath}'` },
+    }, probe.context);
+    execFileSync("sh", ["-c", scoped.input.command], { cwd: probe.cwd, stdio: "pipe" });
+    assert(git(probe.cwd, "diff", "--cached", "--name-only") === selectedPath, "scoped commit routing must stage only the selected path");
   }
 
   {

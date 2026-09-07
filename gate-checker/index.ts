@@ -318,8 +318,8 @@ function rewriteSmartCommit(command: string, scriptPath: string): string | null 
   const match = SMART_COMMIT_RE.exec(command);
   if (!match) return null;
   const safe = scriptPath.replace(/'/g, "'\\''");
-  const out = match[2] === scriptPath ? command : command.replace(match[0], `'${safe}'`);
-  const result = /--no-push\b/.test(out) ? out : `${out} --no-push`;
+  const script = match[2] === scriptPath ? match[0] : `'${safe}'`;
+  const result = command.replace(match[0], () => /--no-push\b/.test(command) ? script : `${script} --no-push`);
   return result === command ? null : result;
 }
 function splitCommitSegment(command: string): { before: string; commitPart: string; after: string } | null {
@@ -341,7 +341,7 @@ function rewriteGitCommit(command: string, scriptPath: string): string | null {
   const safe = (value: string): string => value.replace(/'/g, "'\\''");
   const message = extractCommitMessage(split.commitPart);
   const script = message === null ? `bash '${safe(scriptPath)}' --no-push` : `bash '${safe(scriptPath)}' '${safe(message)}' --no-push`;
-  const parts = split.before && !/^\s*git\s+add\b/.test(split.before) ? [split.before, script] : [script];
+  const parts = split.before ? [split.before, script] : [script];
   if (split.after) parts.push(split.after);
   const result = parts.join(" && ");
   return result === command ? null : result;
