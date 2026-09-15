@@ -2,11 +2,12 @@
 
 an official omp plugin that adds deterministic delivery gates, a native durable orchestration engine, a policy gate for native questionnaires, and a passive terra advisor to an omp installation.
 
-the plugin ships four parts:
+the plugin ships five parts:
 
 | part              | kind                  | what it adds                                                                                       |
 | ----------------- | --------------------- | -------------------------------------------------------------------------------------------------- |
 | gate checker      | omp extension         | deterministic post-turn delivery checks, commands, and a command-line audit surface                |
+| orchestrate prompt | omp extension         | provides an editable prompt for standalone prose orchestration                                    |
 | omnipotence       | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery             |
 | ask questionnaire | omp extension         | keeps an explicitly declared questionnaire open until the native `ask` tool returns successfully   |
 | terra advisor     | native omp advisor    | a read-only passive watchdog that sends source-backed notes through omp's advisor system           |
@@ -14,7 +15,7 @@ the plugin ships four parts:
 ## requirements
 
 - an omp installation with plugin support and the `omp plugin` command.
-- bun `>=1.2.22`. the extensions run as typescript through bun, and the command-line tools use the bun shebang.
+- bun `>=1.3.14`. the extensions run as typescript through bun, and the command-line tools use the bun shebang.
 - git, for full gate coverage. without a repository the gate checker stays active in a reduced mode (see [behavior boundaries](#behavior-boundaries)).
 - no omp source checkout. the plugin uses documented plugin extension points and native advisor configuration only.
 - no babysitter runtime. omnipotence uses omp, bun's built-in sqlite api, and node-compatible standard modules.
@@ -52,6 +53,7 @@ restart the session, then use the native advisor commands:
 local development install, from a clone of this repository:
 
 ```sh
+bun install
 omp plugin link .
 bun link
 PATH="$(bun pm bin -g):$PATH" omnipotence --help
@@ -130,6 +132,10 @@ gate-checker remains the first `session_stop` handler. after a gate accepts the 
 `/omnipotence-forever` starts one unbounded native orchestration run. its policy auto-approves optional process breakpoints but still waits at required breakpoints for `/omnipotence-resume`; normal omp tool approval and point-of-risk confirmation remain. the run does not enforce or extend its retained `maxturns` value; finite modes enforce their configured budgets. `/omnipotence-stop` ends it explicitly. host shutdown pauses durable work and recovery resumes it for the owning session; this is not a daemon and does not automatically restart a process after it returns. recovery schedules requested external work only when both dispatch timestamps are null. acknowledged or unknown outcomes are never resent, remain uncertain, and fail closed until resolved. the standalone cli is one-shot and cannot provide autonomous hidden-turn scheduling. active forever runs pin their blueprint version, and durable replay state grows with each committed cycle.
 
 see the [omnipotence user guide](docs/omnipotence-user-guide.md) for process and blueprint authoring, modes, hooks, profiles, commands, state, recovery, and safety.
+
+## orchestrate prompt
+
+the orchestrate prompt extension provides an editable prompt for standalone prose orchestration. see the [orchestrate prompt user guide](docs/orchestrate-prompt-user-guide.md) for installation, customization, activation, and prompt behavior.
 
 ## gates
 
@@ -281,6 +287,9 @@ terra advisor:
 | [`omnipotence/cli.ts`](omnipotence/cli.ts)                                                                                                | public `omnipotence` command-line interface                                           |
 | [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts)                                                                                | questionnaire extension around the native `ask` tool                                  |
 | [`advisor/WATCHDOG.yml`](advisor/WATCHDOG.yml)                                                                                            | native terra advisor watchdog configuration and prompt-enforced evidence rules        |
+| [`orchestrate-prompt/index.ts`](orchestrate-prompt/index.ts)                                                                                       | standalone prose orchestration prompt extension                                      |
+| [`orchestrate-prompt/prompt.md`](orchestrate-prompt/prompt.md)                                                                                     | bundled editable orchestration prompt template                                      |
+| [`docs/orchestrate-prompt-user-guide.md`](docs/orchestrate-prompt-user-guide.md)                                                           | installation, customization, activation, and prompt behavior guide                  |
 | [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md)           | complete gate user and operator guide                                                 |
 | [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire declaration, native ask behavior, policy, settings, and limits                            |
 | [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md)           | advisor setup, passive behavior, evidence-note rules, and limitations                 |

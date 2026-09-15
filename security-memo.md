@@ -1,5 +1,10 @@
 # security memo
 
+## 2026-09-15 — orchestration component packaging
+
+- isolated packed-plugin smoke caught an undeclared renderer dependency; declaring `@oh-my-pi/pi-utils` fixed clean installation. bundled fallback, custom replacement, edits, ordinary requests, and inline-code exclusions passed through compiled omp with a local capture-only provider.
+- final package gates: 161 existing tests passed and gate wiring passed; the packed archive includes the new user guide. no permanent tests added. typescript language-server diagnostics were unavailable.
+
 deferred verification work identified during review. nothing here is a known live
 vulnerability; each item is an unverified assumption or an accepted scope boundary.
 

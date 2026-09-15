@@ -59,6 +59,7 @@ const expectedFiles = [
 	"ask-questionnaire/stop-decision.ts",
 	"orchestrate-prompt/index.ts",
 	"orchestrate-prompt/prompt.md",
+	"docs/orchestrate-prompt-user-guide.md",
 	"advisor/install.js",
 	"advisor/WATCHDOG.yml",
 	"README.md",
