@@ -19,6 +19,7 @@ const expectedExtensions = [
 	"./gate-checker/index.ts",
 	"./omnipotence/index.ts",
 	"./ask-questionnaire/index.ts",
+	"./orchestrate-prompt/index.ts",
 ];
 
 const expectedExports = {
@@ -56,6 +57,8 @@ const expectedFiles = [
 	"docs/omnipotence-user-guide.md",
 	"ask-questionnaire/index.ts",
 	"ask-questionnaire/stop-decision.ts",
+	"orchestrate-prompt/index.ts",
+	"orchestrate-prompt/prompt.md",
 	"advisor/install.js",
 	"advisor/WATCHDOG.yml",
 	"README.md",
@@ -130,7 +133,7 @@ test("a local bun link exposes the omnipotence cli", () => {
 test("the package exposes only the declared public surface", async () => {
 	expect(pkg.name).toBe("nikos-agent-stack");
 	expect(pkg.version).toBe("2.0.0");
-	expect(pkg.engines).toEqual({ bun: ">=1.2.22" });
+	expect(pkg.engines).toEqual({ bun: ">=1.3.14" });
 	expect(pkg.omp.extensions).toEqual(expectedExtensions);
 	expect(pkg.bin).toEqual({
 		"nikos-gates": "gate-checker/gate-cli.js",
@@ -138,7 +141,7 @@ test("the package exposes only the declared public surface", async () => {
 	});
 	expect(pkg.exports).toEqual(expectedExports);
 	expect(pkg.files).toEqual(expectedFiles);
-	expect(pkg.dependencies).toBeUndefined();
+	expect(pkg.dependencies).toEqual({ "@oh-my-pi/pi-utils": "^17.2.15" });
 
 	for (const artifact of oldArtifacts) {
 		expect(pkg.files).not.toContain(artifact);

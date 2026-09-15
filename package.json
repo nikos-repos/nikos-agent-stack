@@ -1,7 +1,7 @@
 {
   "name": "nikos-agent-stack",
   "version": "2.0.0",
-  "description": "niko's deterministic omp delivery gates, native orchestration engine, advisor, and questionnaire tooling",
+  "description": "niko's deterministic omp delivery gates, native orchestration engine, advisor, questionnaire tooling, and orchestration prompt extension",
   "type": "module",
   "keywords": [
     "omp",
@@ -24,7 +24,10 @@
     "url": "https://github.com/nikos-repos/nikos-agent-stack/issues"
   },
   "engines": {
-    "bun": ">=1.2.22"
+    "bun": ">=1.3.14"
+  },
+  "dependencies": {
+    "@oh-my-pi/pi-utils": "^17.2.15"
   },
   "bin": {
     "nikos-gates": "gate-checker/gate-cli.js",
@@ -38,7 +41,8 @@
     "extensions": [
       "./gate-checker/index.ts",
       "./omnipotence/index.ts",
-      "./ask-questionnaire/index.ts"
+      "./ask-questionnaire/index.ts",
+      "./orchestrate-prompt/index.ts"
     ]
   },
   "files": [
@@ -71,6 +75,8 @@
     "docs/omnipotence-user-guide.md",
     "ask-questionnaire/index.ts",
     "ask-questionnaire/stop-decision.ts",
+    "orchestrate-prompt/index.ts",
+    "orchestrate-prompt/prompt.md",
     "advisor/install.js",
     "advisor/WATCHDOG.yml",
     "README.md"
