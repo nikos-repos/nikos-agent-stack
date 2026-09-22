@@ -1,7 +1,7 @@
 {
   "name": "nikos-agent-stack",
   "version": "2.0.0",
-  "description": "niko's deterministic omp delivery gates, native orchestration engine, advisor, questionnaire tooling, and orchestration prompt extension",
+  "description": "niko's deterministic omp delivery gates, native orchestration engine, advisor, questionnaire tooling, orchestration prompt extension, and the n-code-mode contract checker",
   "type": "module",
   "keywords": [
     "omp",
@@ -13,7 +13,9 @@
     "advisor",
     "agent-orchestration",
     "durable-workflows",
-    "omnipotence"
+    "omnipotence",
+    "n-code-mode",
+    "code-contracts"
   ],
   "homepage": "https://github.com/nikos-repos/nikos-agent-stack#readme",
   "repository": {
@@ -31,7 +33,8 @@
   },
   "bin": {
     "nikos-gates": "gate-checker/gate-cli.js",
-    "omnipotence": "omnipotence/cli.ts"
+    "omnipotence": "omnipotence/cli.ts",
+    "ncm": "n-code-mode/ncm.ts"
   },
   "exports": {
     "./gate-cli": "./gate-checker/gate-cli.js",
@@ -78,11 +81,12 @@
     "orchestrate-prompt/index.ts",
     "orchestrate-prompt/prompt.md",
     "docs/orchestrate-prompt-user-guide.md",
+    "n-code-mode/ncm.ts",
     "advisor/install.js",
     "advisor/WATCHDOG.yml",
     "README.md"
   ],
   "scripts": {
-    "test": "bun test ask-questionnaire/*.test.ts omnipotence/*.test.ts plugin.test.ts && bun run gate-checker/wiring-check.ts"
+    "test": "bun test ask-questionnaire/*.test.ts omnipotence/*.test.ts n-code-mode/*.test.ts plugin.test.ts && bun run gate-checker/wiring-check.ts"
   }
 }

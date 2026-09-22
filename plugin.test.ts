@@ -60,6 +60,7 @@ const expectedFiles = [
 	"orchestrate-prompt/index.ts",
 	"orchestrate-prompt/prompt.md",
 	"docs/orchestrate-prompt-user-guide.md",
+	"n-code-mode/ncm.ts",
 	"advisor/install.js",
 	"advisor/WATCHDOG.yml",
 	"README.md",
@@ -115,6 +116,7 @@ test("a local bun link exposes the omnipotence cli", () => {
 			encoding: "utf8",
 		}).trim();
 		expect(existsSync(resolve(globalbin, "omnipotence"))).toBe(true);
+		expect(existsSync(resolve(globalbin, "ncm"))).toBe(true);
 		const result = spawnSync("omnipotence", ["--help"], {
 			cwd: root,
 			env: {
@@ -139,6 +141,7 @@ test("the package exposes only the declared public surface", async () => {
 	expect(pkg.bin).toEqual({
 		"nikos-gates": "gate-checker/gate-cli.js",
 		omnipotence: "omnipotence/cli.ts",
+		ncm: "n-code-mode/ncm.ts",
 	});
 	expect(pkg.exports).toEqual(expectedExports);
 	expect(pkg.files).toEqual(expectedFiles);
