@@ -98,7 +98,7 @@ function sessionid(context: extensioncontext): string {
 	return id;
 }
 
-// ponytail: a raw newline is never significant inside valid json, so collapsing the
+// a raw newline is never significant inside valid json, so collapsing the
 // line breaks a wrapped terminal paste introduces can only rescue input, never change meaning.
 function commandjson(text: string, path: string): jsonvalue {
 	return parsejson(text.replace(/[\r\n]+/gu, " "), path);

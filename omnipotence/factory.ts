@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 
 export const factoryprocessid = "factory.new-project";
 
-// ponytail: ordered by how strongly the name promises a plan; single-markdown fallback below.
+// ordered by how strongly the name promises a plan; single-markdown fallback below.
 const planfilenames = ["final-plan.md", "plan.md", "spec.md", "requirements.md"];
 
 export interface factoryrequest {
