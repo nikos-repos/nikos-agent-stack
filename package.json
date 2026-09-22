@@ -82,6 +82,11 @@
     "orchestrate-prompt/prompt.md",
     "docs/orchestrate-prompt-user-guide.md",
     "n-code-mode/ncm.ts",
+    "n-code-mode/.claude-plugin/plugin.json",
+    "n-code-mode/.claude-plugin/marketplace.json",
+    "n-code-mode/skills/review/SKILL.md",
+    "n-code-mode/doctrine.md",
+    "n-code-mode/CONTRACTS",
     "advisor/install.js",
     "advisor/WATCHDOG.yml",
     "README.md"

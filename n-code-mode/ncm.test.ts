@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -150,5 +150,14 @@ describe("n-code-mode checker", () => {
 			rmSync(root, { recursive: true, force: true });
 			rmSync(plain, { recursive: true, force: true });
 		}
+	});
+
+	test("the package dogfoods its own contracts and pins one version", () => {
+		const manifest = JSON.parse(readFileSync(resolve(here, ".claude-plugin/plugin.json"), "utf8"));
+		expect(manifest.version).toBe(version);
+		const own = scan(here);
+		expect(own.findings).toEqual([]);
+		expect(own.contracts.length).toBeGreaterThan(0);
+		expect(own.contracts.length).toBeLessThanOrEqual(budget);
 	});
 });

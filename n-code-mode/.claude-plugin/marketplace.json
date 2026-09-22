@@ -1,0 +1,17 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "n-code-mode",
+  "description": "niko's coding doctrine as a claude code plugin: the lazy ladder, @cc contracts, one review skill, and the ncm checker.",
+  "owner": {
+    "name": "nikos-repos",
+    "url": "https://github.com/nikos-repos"
+  },
+  "plugins": [
+    {
+      "name": "n-code-mode",
+      "description": "write less code, and say more about the little you wrote. one review skill plus the ncm contract checker.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
