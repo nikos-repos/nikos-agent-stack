@@ -66,6 +66,7 @@ const expectedFiles = [
 	"n-code-mode/skills/review/SKILL.md",
 	"n-code-mode/doctrine.md",
 	"n-code-mode/CONTRACTS",
+	"docs/n-code-mode-user-guide.md",
 	"advisor/install.js",
 	"advisor/WATCHDOG.yml",
 	"README.md",

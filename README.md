@@ -2,7 +2,7 @@
 
 an official omp plugin that adds deterministic delivery gates, a native durable orchestration engine, a policy gate for native questionnaires, and a passive terra advisor to an omp installation.
 
-the plugin ships five parts:
+the plugin ships six parts:
 
 | part              | kind                  | what it adds                                                                                       |
 | ----------------- | --------------------- | -------------------------------------------------------------------------------------------------- |
@@ -11,6 +11,7 @@ the plugin ships five parts:
 | omnipotence       | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery             |
 | ask questionnaire | omp extension         | keeps an explicitly declared questionnaire open until the native `ask` tool returns successfully   |
 | terra advisor     | native omp advisor    | a read-only passive watchdog that sends source-backed notes through omp's advisor system           |
+| n-code-mode       | claude code plugin and cli | the lazy ladder as doctrine, @cc contracts with deletes: and until: trailers, one review skill, and the ncm checker |
 
 ## requirements
 
@@ -237,6 +238,17 @@ terra is a native passive advisor configured by [`advisor/WATCHDOG.yml`](advisor
 
 the [advisor role user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md) covers setup, passive behavior, evidence notes, and limitations.
 
+## n-code-mode
+
+n-code-mode is a claude code plugin and a command-line checker built on one rule: write less code, and say more about the little you wrote. a contract earns its place when it lets you delete code, never when it narrates code.
+
+- [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md) carries the lazy ladder and the contract rules for `~/.claude/CLAUDE.md`.
+- `ncm check` validates every `@cc` block in a repository: grammar, a `rule` or `ceiling` label, the `deletes:` or `until:` trailer, unique ids, and a twelve-contract budget per `CONTRACTS` file. `ncm ledger` lists the ceilings.
+- `/n-code-mode:review` is one pass over a diff or a path: deletions, contract violations, contracts to kill, and the ledger.
+- the plugin registers no hooks.
+
+the [n-code-mode user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/n-code-mode-user-guide.md) covers install, wiring, the grammar, the checker, and the review pass.
+
 ## behavior boundaries
 
 gates:
@@ -290,6 +302,11 @@ terra advisor:
 | [`orchestrate-prompt/index.ts`](orchestrate-prompt/index.ts)                                                                                       | standalone prose orchestration prompt extension                                      |
 | [`orchestrate-prompt/prompt.md`](orchestrate-prompt/prompt.md)                                                                                     | bundled editable orchestration prompt template                                      |
 | [`docs/orchestrate-prompt-user-guide.md`](docs/orchestrate-prompt-user-guide.md)                                                           | installation, customization, activation, and prompt behavior guide                  |
+| [`n-code-mode/ncm.ts`](n-code-mode/ncm.ts)                                                                                               | `ncm check` and `ncm ledger`: language-agnostic @cc contract checker and ceiling ledger        |
+| [`n-code-mode/skills/review/SKILL.md`](n-code-mode/skills/review/SKILL.md)                                                               | one review pass: deletions, contract violations, contracts to kill, and the ledger             |
+| [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md)                                                                                     | the lazy ladder and contract rules, carried by `~/.claude/CLAUDE.md`                          |
+| [`n-code-mode/CONTRACTS`](n-code-mode/CONTRACTS)                                                                                         | the plugin's own rules, checked by its test                                                    |
+| [`docs/n-code-mode-user-guide.md`](docs/n-code-mode-user-guide.md)                                                                       | install, wiring, grammar, checker, and review guide                                            |
 | [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md)           | complete gate user and operator guide                                                 |
 | [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire declaration, native ask behavior, policy, settings, and limits                            |
 | [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md)           | advisor setup, passive behavior, evidence-note rules, and limitations                 |

@@ -27,5 +27,5 @@ the plugin ships one skill. audit, verification, and the ledger are its scope ar
 deletes: separate audit, debt, and verify skills and their overlapping descriptions.
 
 @cc [label:rule] no-hooks
-the plugin registers no hooks. the doctrine reaches every session and subagent through a CLAUDE.md import of doctrine.md.
+the plugin registers no hooks. the doctrine reaches every session and subagent through `~/.claude/CLAUDE.md`, which carries doctrine.md by paste or by an approved import.
 deletes: SessionStart and SubagentStart injectors and their per-session token cost.
