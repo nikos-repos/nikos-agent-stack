@@ -505,7 +505,7 @@ const GATE_NUDGE = [
   "",
   `Also: (1) do not leave forbidden markers (${"TO" + "DO"}: implement, ${"FIX" + "ME"}:, ${"Not" + "ImplementedError"}, unfinished comments) in lines you add; (2) do not claim test results you did not produce — the bash log is checked; (3) if you commit, use the git-commit skill script, not raw git commit.`,
   "",
-  '(4) optional: call record_frustration with your assigned id and goal to log friction — papercuts count even when nothing failed: confusing docs, dead ends, awkward tool output. use type "none" only when the whole session was friction-free; it requires complaint "none" and severity "low".',
+  '(4) optional: log friction by writing JSON args (your assigned id, goal, complaint, type, severity, evidence) to `xd://record_frustration` — papercuts count even when nothing failed: confusing docs, dead ends, awkward tool output. use type "none" only when the whole session was friction-free; it requires complaint "none" and severity "low".',
   "",
 ].join("\n");
 
@@ -965,7 +965,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         failures.push({
           gate: "completion",
           rule: "missing_interrogation",
-          detail: `changed generation ${generationHash} requires one interrogate call; answer all three first-principles questions before yielding.`,
+          detail: `changed generation ${generationHash} requires one interrogate call (write the three answers as JSON to xd://interrogate); answer all three first-principles questions before yielding.`,
         });
       }
     }
