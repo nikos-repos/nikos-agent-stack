@@ -10,7 +10,7 @@ import { resetQuestionnaireStop } from "./stop-decision.ts";
 // values (block/allow, injected message, continuation), never through the
 // extension's internal closure.
 
-type Handler = (event: unknown, ctx?: unknown) => unknown | Promise<unknown>;
+type Handler = (event: unknown, ctx?: unknown) => unknown;
 
 type RegisteredTool = {
 	name: string;
@@ -122,7 +122,7 @@ test("with no declaration, an ordinary coding turn arms nothing", async () => {
 
 	const write = await callTool(api, "write");
 	expect(write?.block).toBeUndefined();
-	expect(await questionnaireStop({}, {})).toBeUndefined();
+	expect(await questionnaireStop({}, { cwd: "." })).toBeUndefined();
 });
 
 test("a different owner is refused and leaves the pending questionnaire unchanged", async () => {
@@ -134,7 +134,7 @@ test("a different owner is refused and leaves the pending questionnaire unchange
 	expect(refused.isError).toBe(true);
 	expect(refused.content[0].text).toBe("questionnaire already open for factory-discovery");
 
-	const decision = await questionnaireStop({}, {});
+	const decision = await questionnaireStop({}, { cwd: "." });
 	expect(decision).toEqual({ continue: true, additionalContext: reason });
 });
 
@@ -150,7 +150,7 @@ test("a same-owner retry leaves owner and reason byte-identical", async () => {
 	expect(refused.isError).toBe(true);
 	expect(refused.content[0].text).toBe("questionnaire already open for factory-discovery");
 
-	const decision = await questionnaireStop({}, {});
+	const decision = await questionnaireStop({}, { cwd: "." });
 	expect(decision).toEqual({ continue: true, additionalContext: reason });
 });
 
@@ -183,7 +183,8 @@ test("a failed ask keeps the questionnaire pending", async () => {
 
 	const blocked = await callTool(api, "write");
 	expect(blocked?.block).toBe(true);
-	expect((await questionnaireStop({}, {}))?.additionalContext).toBe(reason);
+	const decision = await questionnaireStop({}, { cwd: "." });
+	expect(decision && "continue" in decision ? decision.additionalContext : undefined).toBe(reason);
 });
 
 test("a successful ask clears the questionnaire and unblocks tools", async () => {
@@ -194,7 +195,7 @@ test("a successful ask clears the questionnaire and unblocks tools", async () =>
 
 	const write = await callTool(api, "write");
 	expect(write?.block).toBeUndefined();
-	expect(await questionnaireStop({}, {})).toBeUndefined();
+	expect(await questionnaireStop({}, { cwd: "." })).toBeUndefined();
 });
 
 test("a non-ask tool result never clears the questionnaire", async () => {
@@ -214,7 +215,7 @@ test("questionnaireStop continues with the declaring reason while pending", asyn
 	const reason = "settle the project constraints";
 	await openQuestionnaire(api, "factory-discovery", reason);
 
-	const decision = await questionnaireStop({}, {});
+	const decision = await questionnaireStop({}, { cwd: "." });
 	expect(decision).toEqual({ continue: true, additionalContext: reason });
 });
 
@@ -223,13 +224,13 @@ test("questionnaireStop does not continue after a successful ask", async () => {
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 	await toolResult(api, "ask", false);
 
-	expect(await questionnaireStop({}, {})).toBeUndefined();
+	expect(await questionnaireStop({}, { cwd: "." })).toBeUndefined();
 });
 
 test("questionnaireStop does not continue when nothing was declared", async () => {
-	const api = await harness();
+	await harness();
 
-	expect(await questionnaireStop({}, {})).toBeUndefined();
+	expect(await questionnaireStop({}, { cwd: "." })).toBeUndefined();
 });
 
 // --- lifecycle reset --------------------------------------------------------

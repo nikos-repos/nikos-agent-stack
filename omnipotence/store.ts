@@ -342,6 +342,10 @@ function asserteffectstatus(value: string): asserts value is effectstatus {
 	if (!Object.hasOwn(effectstatuses, value)) throw new Error(`invalid effect status ${value}`);
 }
 
+function assertscope(value: string): asserts value is profilescope {
+	if (!Object.hasOwn(profilescopes, value)) throw new Error(`invalid profile scope ${value}`);
+}
+
 function nullablejson(value: string | null, path: string): jsonvalue | null {
 	return value === null ? null : parsejson(value, path);
 }
@@ -627,7 +631,7 @@ function parsehookdelivery(row: eventrow): hookdeliveryrecord {
 }
 
 function parseprofile(row: profilerow): profilerecord {
-	if (!Object.hasOwn(profilescopes, row.scope)) throw new Error(`invalid profile scope ${row.scope}`);
+	assertscope(row.scope);
 	return {
 		scope: row.scope,
 		projectroot: row.project_root,

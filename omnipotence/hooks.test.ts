@@ -139,9 +139,7 @@ describe("ordered orchestration hooks", () => {
 		});
 		registry.register(hook);
 		expect(() => registry.register(hook)).toThrow("hook audit.result is already registered");
-		await expect(registry.dispatch("run_completed", payload)).rejects.toThrow(
-			"hook audit.result failed during run_completed: hook output: expected plain object",
-		);
+		expect(registry.dispatch("run_completed", payload)).rejects.toThrow("hook audit.result failed during run_completed: hook output: expected plain object");
 	});
 
 	test("inactive blueprint hooks stay addressable without joining lifecycle dispatch", async () => {

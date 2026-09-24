@@ -110,7 +110,9 @@ function stats(args) {
   console.log(`  inline flags     ${summary.inlineFlags}  <- caught early, no retry needed`);
   console.log(`  low: no git runs ${summary.no_git_runs}`);
   console.log(`  clean under errors ${cleanundererrors}`);
-  for (const [title, values] of [["fires by rule:", summary.byRule], ["inline flags by rule:", summary.inlineByRule]]) {
+  /** @type {Array<[string, Record<string, number>]>} */
+  const tallies = [["fires by rule:", summary.byRule], ["inline flags by rule:", summary.inlineByRule]];
+  for (const [title, values] of tallies) {
     const entries = Object.entries(values).sort((left, right) => right[1] - left[1]);
     if (!entries.length) continue;
     console.log(`  ${title}`);

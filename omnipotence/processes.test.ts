@@ -120,9 +120,7 @@ describe("built-in orchestration modes", () => {
 		expect(uncertain.status).toBe("blocked");
 		if (uncertain.status !== "blocked") throw new Error("expected uncertain block");
 		expect(uncertain.reason).toBe(`effect ${uncertaineffect.id} outcome is uncertain`);
-		await expect(engine.resume(uncertainrun.run.id)).rejects.toThrow(
-			"run has an uncertain effect; resolve it explicitly",
-		);
+		expect(engine.resume(uncertainrun.run.id)).rejects.toThrow("run has an uncertain effect; resolve it explicitly");
 		const recovered = await engine.resolveuncertain({
 			rootrunid: uncertainrun.run.id,
 			runid: uncertaineffect.runid,

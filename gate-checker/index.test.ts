@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 // the same zod omp hands extensions as pi.zod: it strips unknown keys and rejects shapes the schemas do not allow.
 import * as zod from "@oh-my-pi/omptype/zod";
 
@@ -11,8 +12,8 @@ import * as zod from "@oh-my-pi/omptype/zod";
 
 const isolatedEnv = ["OMP_GATE_CONFIG", "OMP_GATE_LEDGER", "OMP_GATE_FRUSTRATIONS", "OMP_GATE_MUTATION_LEASE", "PI_CODING_AGENT_DIR"];
 const priorEnv = Object.fromEntries(isolatedEnv.map((key) => [key, process.env[key]]));
-const roots = [];
-const temp = (prefix) => {
+const roots: string[] = [];
+const temp = (prefix: string): string => {
   const path = mkdtempSync(join(tmpdir(), prefix));
   roots.push(path);
   return path;
@@ -54,10 +55,10 @@ afterAll(() => {
     else process.env[key] = value;
 });
 
-const assert = (condition, message) => {
+function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
-};
-const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+const git = (cwd: string, ...args: string[]): string => execFileSync("git", args, { cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 const repository = () => {
   const cwd = temp("gates-test-repo-");
   git(cwd, "init", "-q");
@@ -69,25 +70,32 @@ const repository = () => {
   git(cwd, "commit", "-q", "-m", "initial");
   return cwd;
 };
-const config = (level, verifyCmd = null) => {
-  const value = { level };
+const config = (level: string, verifyCmd: string | null = null): void => {
+  const value: { level: string; verifyCmd?: string } = { level };
   if (verifyCmd) value.verifyCmd = verifyCmd;
-  writeFileSync(process.env.OMP_GATE_CONFIG, `${JSON.stringify(value)}\n`);
+  const path = process.env.OMP_GATE_CONFIG;
+  if (!path) throw new Error("OMP_GATE_CONFIG is not set");
+  writeFileSync(path, `${JSON.stringify(value)}\n`);
 };
 
-
-const harness = (cwd, level, verifyCmd = null, leaseEnabled = false) => {
+const harness = (cwd: string, level: string, verifyCmd: string | null = null, leaseEnabled = false) => {
   process.env.OMP_GATE_MUTATION_LEASE = leaseEnabled ? "on" : "off";
   config(level, verifyCmd);
-  const handlers = {};
-  const commands = {};
-  const tools = {};
-  const events = {};
-  const entries = [];
-  const notices = [];
-  const statuses = [];
+  type HandlerResult = { decision?: string; reason: string; continue?: boolean; additionalContext: string; input: { task: string; agent: string; isolated: boolean }; block?: boolean };
+  type EventHandler = (event: unknown, context: ExtensionContext) => unknown;
+  type ToolResult = { isError?: boolean; additionalContext?: string; content?: Array<{ type: string; text?: string }> };
+  type RegisteredTool = { name: string; execute: (...args: unknown[]) => Promise<ToolResult> | ToolResult };
+  const isHandlerResult = (value: unknown): value is HandlerResult => typeof value === "object" && value !== null;
+  const handlers: Record<string, (event: unknown, context: ExtensionContext) => Promise<HandlerResult | undefined>> = {};
+  const commands: Record<string, (args: string, context: ExtensionContext) => Promise<void> | void> = {};
+  const tools: Record<string, RegisteredTool> = {};
+  const events: Record<string, EventHandler> = {};
+  type EntryData = Record<string, unknown> & { baseline_snapshots: Record<string, { hash?: string; content?: string }> };
+  const entries: Array<{ customType: string; data: EntryData }> = [];
+  const notices: Array<{ message: string; level: string }> = [];
+  const statuses: Array<{ key: string; text: string }> = [];
   const session = {
-    branch: [],
+    branch: [] as Array<Record<string, unknown>>,
     id: `session-${Math.random()}`,
     file: join(stateRoot, `session-${Math.random()}.jsonl`),
   };
@@ -100,30 +108,40 @@ const harness = (cwd, level, verifyCmd = null, leaseEnabled = false) => {
       getSessionFile: () => session.file,
     },
     ui: {
-      notify: (message, levelName) => notices.push({ message, level: levelName }),
-      setStatus: (key, text) => statuses.push({ key, text }),
+      notify: (message: string, levelName: string) => notices.push({ message, level: levelName }),
+      setStatus: (key: string, text: string) => statuses.push({ key, text }),
     },
-  };
+  } as unknown as ExtensionContext;
   gateChecker({
     zod,
-    on: (name, handler) => { handlers[name] = handler; },
-    registerCommand: (name, value) => { commands[name] = value.handler; },
-    registerTool: (tool) => { tools[tool.name] = tool; },
-    events: { on: (name, handler) => { events[name] = handler; } },
-    appendEntry: (customType, data) => entries.push({ customType, data }),
-  });
+    on: (name: string, handler: EventHandler) => {
+      handlers[name] = async (event, handlerContext) => {
+        const result = await handler(event, handlerContext);
+        return isHandlerResult(result) ? result : undefined;
+      };
+    },
+    registerCommand: (name: string, value: { handler: (args: string, context: ExtensionContext) => Promise<void> | void }) => {
+      commands[name] = value.handler;
+    },
+    registerTool: (tool: RegisteredTool) => { tools[tool.name] = tool; },
+    events: { on: (name: string, handler: EventHandler) => { events[name] = handler; return () => { delete events[name]; }; } },
+    appendEntry: (customType: string, data: unknown) => {
+      if (typeof data === "object" && data !== null) entries.push({ customType, data: data as EntryData });
+    },
+  } as unknown as ExtensionAPI);
   return { cwd, handlers, commands, tools, events, entries, notices, statuses, session, context };
 };
+type Probe = ReturnType<typeof harness>;
 
-const start = async (probe) => {
+const start = async (probe: Probe): Promise<void> => {
   await probe.handlers.session_start({}, probe.context);
   await probe.handlers.agent_start({}, probe.context);
 };
-const finish = async (probe, text) => {
+const finish = async (probe: Probe, text: string) => {
   probe.session.branch = [{ type: "message", message: { role: "assistant", content: text } }];
   return probe.handlers.session_stop({}, probe.context);
 };
-const writeChange = async (probe, text, id = "write-1", path = "src/a.txt") => {
+const writeChange = async (probe: Probe, text: string, id = "write-1", path = "src/a.txt") => {
   const input = { path };
   await probe.handlers.tool_call({ toolName: "write", toolCallId: id, input }, probe.context);
   writeFileSync(join(probe.cwd, path), text);
@@ -156,7 +174,7 @@ test("a user question does not bypass journal recovery", async () => {
 
 test("a request left open by a crash does not poison later restores", async () => {
   const probe = harness(repository(), "medium");
-  const entry = (data) => ({ type: "custom", customType: "omp.gate-checker.journal", data: { version: 1, repo_root: probe.cwd, baseline_sha: null, baseline_dirty: [], policy_fingerprint: "old", ...data } });
+  const entry = (data: Record<string, unknown>) => ({ type: "custom", customType: "omp.gate-checker.journal", data: { version: 1, repo_root: probe.cwd, baseline_sha: null, baseline_dirty: [], policy_fingerprint: "old", ...data } });
   probe.session.branch = [entry({ kind: "request_start", request_id: "crashed" }), entry({ kind: "request_start", request_id: "later" }), entry({ kind: "terminal", request_id: "later", outcome: "passed" })];
   await start(probe);
   await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-restored", input: { path: "src/a.txt" } }, probe.context);
@@ -175,8 +193,10 @@ test("record_frustration validates records and binds session identity on the ser
   assert(invalidEvidence.isError === true, "real optional friction must still require valid evidence");
   const accepted = await probe.tools.record_frustration.execute("valid-optional", { ...input, session_file: "forged-child.jsonl", session_id: "forged-child", request_id: "forged-request", source: "auto" }, undefined, undefined, probe.context);
   assert(accepted.isError !== true, "valid optional record should be accepted");
-  const records = readFileSync(process.env.OMP_GATE_FRUSTRATIONS, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  const stored = records.find((record) => record.primary_goal === input.primary_goal);
+  const frustrationPath = process.env.OMP_GATE_FRUSTRATIONS;
+  assert(frustrationPath, "OMP_GATE_FRUSTRATIONS is not set");
+  const records: Array<Record<string, unknown>> = readFileSync(frustrationPath, "utf8").trim().split("\n").map((line: string) => JSON.parse(line) as Record<string, unknown>);
+  const stored = records.find((record: Record<string, unknown>) => record.primary_goal === input.primary_goal);
   assert(stored?.session_file === probe.session.file && stored.session_id === probe.session.id && stored.source === "agent" && stored.request_id !== "forged-request", "optional record caller must not override server-bound session/request/source identity");
 });
 
@@ -217,7 +237,7 @@ test("baseline dirt is journaled as hashes and diffed from the blob store", asyn
   assert(journaled?.hash && !("content" in journaled), "the journal must carry the baseline hash, never the content");
   writeFileSync(join(cwd, "src/b.ts"), `${before}// ${"TO" + "DO"}: implement\n`);
   const result = await finish(probe, "updated the file");
-  assert(result?.additionalContext.includes("src/b.ts` line 3"), "the line added during the request must be judged");
+  assert(result !== undefined && result.additionalContext.includes("src/b.ts` line 3"), "the line added during the request must be judged");
   assert(!result.additionalContext.includes("src/b.ts` line 2"), "baseline dirt must stay out of the request");
 });
 
@@ -256,7 +276,7 @@ test("only a runner at a command boundary counts as a test run", async () => {
   const probe = harness(repository(), "medium");
   await start(probe);
   await writeChange(probe, "two\n");
-  const bash = (command) => probe.handlers.tool_result({ toolName: "bash", toolCallId: command, input: { command }, content: [{ type: "text", text: "" }], isError: false }, probe.context);
+  const bash = (command: string) => probe.handlers.tool_result({ toolName: "bash", toolCallId: command, input: { command }, content: [{ type: "text", text: "" }], isError: false }, probe.context);
   await bash("grep -rn jest package.json");
   assert((await finish(probe, "updated the file"))?.additionalContext.includes("no_test_run"), "an incidental runner name must not count as a test run");
   await bash("cd src && bun test");
@@ -269,8 +289,10 @@ test("low warns instead of blocking and records gate telemetry", async () => {
   await writeChange(probe, "two\n");
   const result = await finish(probe, "updated the file");
   assert(result === undefined, "low must warn instead of blocking failed delivery gates");
-  assert(probe.notices.some((notice) => notice.message.includes("warning")), "low must surface warnings");
-  assert(readFileSync(process.env.OMP_GATE_LEDGER, "utf8").includes("gate_eval"), "warnings must write gate telemetry");
+  assert(probe.notices.some((notice: { message: string }) => notice.message.includes("warning")), "low must surface warnings");
+  const ledgerPath = process.env.OMP_GATE_LEDGER;
+  assert(ledgerPath, "OMP_GATE_LEDGER is not set");
+  assert(readFileSync(ledgerPath, "utf8").includes("gate_eval"), "warnings must write gate telemetry");
 });
 
 test("off skips fabricated-claim enforcement", async () => {
@@ -286,6 +308,7 @@ test("task calls keep native arguments and subagent manifests must match the dif
   await writeChange(probe, "two\n");
   const taskInput = { agent: "reviewer", isolated: true, task: "inspect the change" };
   const routed = await probe.handlers.tool_call({ toolName: "task", toolCallId: "task-1", input: taskInput }, probe.context);
+  assert(routed, "task tool call must return a routing result");
   assert(routed.input.task.includes("changed-files"), "task calls must receive the gate contract");
   assert(routed.input.agent === "reviewer" && routed.input.isolated === true, "the revised task input must keep unmodeled native arguments");
   await probe.handlers.tool_result({
@@ -445,7 +468,7 @@ test("one turn's mutation calls share the lease from the first tool call to the 
   await start(probe);
   const write = { path: "src/a.txt", content: "leased\n" };
   const bash = { command: "cat src/a.txt" };
-  const result = (toolName, toolCallId, input) => probe.handlers.tool_result({
+  const result = (toolName: string, toolCallId: string, input: Record<string, unknown>) => probe.handlers.tool_result({
     toolName,
     toolCallId,
     input,
@@ -464,8 +487,8 @@ test("one turn's mutation calls share the lease from the first tool call to the 
 });
 
 test("stop_hook_active reaches the omnipotence stop decision", async () => {
-  const seen = [];
-  installOmnipotenceStop((event) => {
+  const seen: Array<boolean | undefined> = [];
+  installOmnipotenceStop((event: { stop_hook_active?: boolean }) => {
     seen.push(event.stop_hook_active);
     if (event.stop_hook_active) return;
     return { decision: "block", reason: "pending effect" };
@@ -485,8 +508,8 @@ test("the questionnaire stop decision precedes omnipotence", async () => {
   const probe = harness(repository(), "off");
   await start(probe);
   const questionnaire = await finish(probe, "waiting");
-  assert(questionnaire.additionalContext === "questionnaire", "questionnaire must precede omnipotence");
+  assert(questionnaire?.additionalContext === "questionnaire", "questionnaire must precede omnipotence");
   resetQuestionnaireStop();
   const omnipotence = await finish(probe, "waiting");
-  assert(omnipotence.additionalContext === "omnipotence", "omnipotence must run after questionnaire");
+  assert(omnipotence?.additionalContext === "omnipotence", "omnipotence must run after questionnaire");
 });

@@ -195,7 +195,15 @@ test("the package exposes only the declared public surface", async () => {
 test("terra is a native passive advisor with source-backed notes", () => {
 	const watchdog = Bun.YAML.parse(
 		readFileSync(resolve(root, "advisor/WATCHDOG.yml"), "utf8"),
-	);
+	) as {
+		advisors: Array<{
+			name: string;
+			enabled: boolean;
+			model: string;
+			tools: string[];
+			instructions: string;
+		}>;
+	};
 
 	expect(Object.keys(watchdog)).toEqual(["advisors"]);
 	expect(watchdog.advisors).toHaveLength(1);

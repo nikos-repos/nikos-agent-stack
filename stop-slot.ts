@@ -8,9 +8,9 @@ export type StopContext = { cwd: string };
 type StopFn = (event: StopEvent, context: StopContext) => Promise<StopDecision> | StopDecision;
 
 export interface stopslot {
-  install(fn: StopFn): void;
-  release(): void;
-  decide(event: StopEvent, context: StopContext): Promise<StopDecision>;
+  install: (fn: StopFn) => void;
+  release: () => void;
+  decide: (event: StopEvent, context: StopContext) => Promise<StopDecision>;
 }
 
 export function createstopslot(owner: string): stopslot {

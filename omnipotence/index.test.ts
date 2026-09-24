@@ -199,7 +199,7 @@ describe("omnipotence omp extension", () => {
 		const command = fake.commands.get("omnipotence-forever");
 		if (!command) throw new Error("omnipotence-forever command was not registered");
 		expect(command.description).toBe("start one unbounded native orchestration run");
-		await expect(command.handler("", ctx)).rejects.toThrow("usage: /omnipotence-forever <process-id> [json-input]");
+		expect(command.handler("", ctx)).rejects.toThrow("usage: /omnipotence-forever <process-id> [json-input]");
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 	});
 	test("registers canonical start commands without a call alias", async () => {
@@ -233,7 +233,7 @@ describe("omnipotence omp extension", () => {
 		Reflect.apply(activate, undefined, [fake.api]);
 		expect(fake.handlers.get("session_stop")).toBeUndefined();
 		const ctx = context("session-inactive", root);
-		const result = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
+		const result = await omnipotenceStop({ stop_hook_active: false }, ctx);
 		expect(result).toBeUndefined();
 		expect(fake.messages).toEqual([]);
 		expect(fake.entries).toEqual([]);
@@ -301,20 +301,20 @@ describe("omnipotence omp extension", () => {
 		const active = store.getsessionrun("session-corrupt-controls");
 		if (!active) throw new Error("expected active corrupt-blueprint run");
 
-		await expect(status.handler("", context2)).resolves.toBeUndefined();
+		expect(status.handler("", context2)).resolves.toBeUndefined();
 		expect(String(notifications.at(-1))).toContain("delivery.extension");
 
 		const reason = "operator requested stop";
-		await expect(stop.handler(reason, context2)).resolves.toBeUndefined();
+		expect(stop.handler(reason, context2)).resolves.toBeUndefined();
 		expect(store.getrun(active.id)).toMatchObject({
 			status: "halted",
 			blockedreason: reason,
 		});
 
 		notifications.length = 0;
-		await expect(status.handler("", context2)).resolves.toBeUndefined();
+		expect(status.handler("", context2)).resolves.toBeUndefined();
 		expect(String(notifications.at(-1))).toBe("no active omnipotence run");
-		await expect(start2.handler("delivery.extension {}", context2)).rejects.toThrow(
+		expect(start2.handler("delivery.extension {}", context2)).rejects.toThrow(
 			"blueprint extension-pack@1.0.0 file processes/extension.ts hash mismatch",
 		);
 
@@ -376,19 +376,19 @@ describe("omnipotence omp extension", () => {
 		expect(store.geteffectbykey(run.id, "second")).toBeNull();
 		expect(store.getrun(run.id)?.status).toBe("running");
 
-		const stopresult = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
+		const stopresult = await omnipotenceStop({ stop_hook_active: false }, ctx);
 		expect(stopresult).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		const second = store.listeffects(run.id).find((effect) => effect.key === "second");
 		if (!second) throw new Error("expected second effect");
 		expect(store.geteffect(run.id, second.id)?.dispatchedat).not.toBeNull();
 
-		const missing = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
+		const missing = await omnipotenceStop({ stop_hook_active: false }, ctx);
 		expect(missing).toEqual({
 			decision: "block",
 			reason: `active omnipotence run ${run.id} still needs result for effect ${second.id}`,
 		});
-		const repeated = await omnipotenceStop({ type: "session_stop", stop_hook_active: true }, ctx);
+		const repeated = await omnipotenceStop({ stop_hook_active: true }, ctx);
 		expect(repeated).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
@@ -444,7 +444,7 @@ describe("omnipotence omp extension", () => {
 		expect(fake.messages).toHaveLength(1);
 		expect(store.getrun(run.id)).toMatchObject({ status: "running", turns: 2, maxturns: 1 });
 		expect(
-			await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx),
+			await omnipotenceStop({ stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		const second = store.geteffectbykey(run.id, "second");
@@ -475,7 +475,7 @@ describe("omnipotence omp extension", () => {
 		expect(fake.messages).toHaveLength(2);
 		expect(store.getrun(run.id)).toMatchObject({ status: "running", turns: 3, maxturns: 1 });
 		expect(
-			await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx),
+			await omnipotenceStop({ stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		expect(fake.messages).toHaveLength(2);
 		expect(store.getrun(run.id)).toMatchObject({
@@ -521,12 +521,12 @@ describe("omnipotence omp extension", () => {
 			run: store.getrun(run.id),
 			effect: store.geteffect(run.id, effect.id),
 		};
-		await expect(
+		expect(
 			tool.execute("call-session-b", post, undefined, undefined, context("session-result-other", root)),
 		).rejects.toThrow("this session has no active omnipotence run");
 		expect(store.getrun(run.id)).toEqual(before.run);
 		expect(store.geteffect(run.id, effect.id)).toEqual(before.effect);
-		await expect(tool.execute("call-session-a", post, undefined, undefined, owner)).resolves.toBeDefined();
+		expect(tool.execute("call-session-a", post, undefined, undefined, owner)).resolves.toBeDefined();
 		expect(store.geteffect(run.id, effect.id)?.status).toBe("resolved_ok");
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, owner);
 		store.close();
@@ -545,7 +545,7 @@ describe("omnipotence omp extension", () => {
 		const ctx = context("session-send-failure", root);
 		const command = fake.commands.get("omnipotence");
 		if (!command) throw new Error("omnipotence command was not registered");
-		await expect(command.handler("delivery.extension {}", ctx)).rejects.toThrow("client rejected hidden turn");
+		expect(command.handler("delivery.extension {}", ctx)).rejects.toThrow("client rejected hidden turn");
 		const store = new orchestrationstore(paths.dbpath);
 		const run = store.getsessionrun("session-send-failure");
 		if (!run) throw new Error("expected failed-schedule run");
@@ -584,7 +584,7 @@ describe("omnipotence omp extension", () => {
 		const ctx = context("session-send-terminal-race", root, notifications);
 		const command = fake.commands.get("omnipotence");
 		if (!command) throw new Error("omnipotence command was not registered");
-		await expect(command.handler("delivery.extension {}", ctx)).resolves.toBeUndefined();
+		expect(command.handler("delivery.extension {}", ctx)).resolves.toBeUndefined();
 		expect(fake.messages).toEqual([]);
 		expect(notifications).toEqual([]);
 		const store = new orchestrationstore(paths.dbpath);
@@ -650,7 +650,7 @@ describe("omnipotence omp extension", () => {
 			undefined,
 			ctx,
 		);
-		const stopresult = await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx);
+		const stopresult = await omnipotenceStop({ stop_hook_active: false }, ctx);
 		expect(stopresult).toBeUndefined();
 		expect(sendcount).toBe(2);
 		expect(fake.messages).toHaveLength(1);
@@ -720,7 +720,7 @@ describe("omnipotence omp extension", () => {
 		expect(effect?.kind).toBe("breakpoint");
 		expect(effect?.dispatchedat).toBeNull();
 		expect(
-			await omnipotenceStop({ type: "session_stop", stop_hook_active: false }, ctx),
+			await omnipotenceStop({ stop_hook_active: false }, ctx),
 		).toBeUndefined();
 		await resume.handler('{"approved":true}', ctx);
 		expect(store.getsessionrun("session-breakpoint-extension")).toBeNull();

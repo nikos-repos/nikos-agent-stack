@@ -17,7 +17,6 @@ import {
 	compareversions,
 	errormessage,
 	isterminal,
-	jsonvalueof,
 	objectrecord,
 	parsejson,
 	stablejson,

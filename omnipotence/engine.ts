@@ -81,11 +81,11 @@ class effectpending extends Error {
 	}
 }
 
-interface planentry {
+type planentry = {
 	key: string;
 	kind: effectkind;
 	input: jsonvalue;
-}
+};
 
 class planpending extends Error {
 	readonly requests: planentry[];

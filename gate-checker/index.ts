@@ -396,9 +396,9 @@ function treeStateKey(cwd: string, baselineSha: string | null, touched: Map<stri
     .map((path) => `${path}:${hashContent(readSnapshot(isAbsolute(path) ? path : resolvePath(cwd, path)) ?? "")}`);
   return parts.length ? hashContent(parts.join("\n")) : unknownState();
 }
-// execSync rejects with an Error that carries the child's stdout and stderr.
+// execSync with an encoding rejects with an Error that carries the child's stdout and stderr as strings.
 function commandOutput(error: unknown): string {
-  const failure = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+  const failure = typeof error === "object" && error !== null ? (error as { stdout?: string; stderr?: string; message?: string }) : {};
   return `${failure.stdout ?? ""}${failure.stderr ?? ""}`.trim() || String(failure.message ?? error);
 }
 function runVerifyGate(cwd: string, command: string): GateFailure | null {

@@ -10,5 +10,6 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["gate-checker/index.ts", "gate-checker/mutation-lease.ts", "advisor/index.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "Astra refactor"]
 }

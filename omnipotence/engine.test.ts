@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineprocess, stablejson } from "./contracts.ts";
-import type { jsonschema } from "./contracts.ts";
+import type { jsonschema, jsonvalue } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import type { advanceresult } from "./engine.ts";
 import { definehook } from "./hooks.ts";
@@ -129,10 +128,10 @@ describe("deterministic process engine", () => {
 				},
 			}),
 		);
-		const sparse: unknown[] = [];
+		const sparse: jsonvalue[] = [];
 		sparse.length = 1;
 
-		await expect(
+		expect(
 			engine.start({
 				processid: "delivery.sparse-input",
 				sessionid: "session-sparse-input",
@@ -563,7 +562,7 @@ describe("deterministic process engine", () => {
 		});
 		if (first.status !== "waiting") throw new Error("expected waiting result");
 
-		await expect(
+		expect(
 			engine.start({
 				processid: "delivery.session-reservation",
 				sessionid: "session-reservation",
@@ -1020,7 +1019,7 @@ describe("deterministic process engine", () => {
 		if (!beforework || !beforemalformed) throw new Error("expected pending effects");
 		const fence = root.fence;
 
-		await expect(
+		expect(
 			engine.posteffect({
 				rootrunid: root.id,
 				runid: root.id,
@@ -1095,7 +1094,7 @@ describe("deterministic process engine", () => {
 		if (!beforework || !beforefirst || !beforesecond) throw new Error("expected pending effects");
 		const fence = root.fence;
 
-		await expect(
+		expect(
 			engine.posteffect({
 				rootrunid: root.id,
 				runid: root.id,
@@ -1174,7 +1173,7 @@ describe("deterministic process engine", () => {
 		expect(store.geteffect(started.run.id, rootchild.id)?.fence).toBe(rootchild.fence + 1);
 		expect(store.geteffect(child.id, childnested.id)?.fence).toBe(childnested.fence + 1);
 		expect(store.geteffect(nested.id, leaf.id)?.fence).toBe(leaf.fence + 1);
-		await expect(
+		expect(
 			engine.commiteffect({
 				rootrunid: started.run.id,
 				runid: leaf.runid,
@@ -1637,7 +1636,7 @@ describe("deterministic process engine", () => {
 			throw new Error("expected two waiting runs");
 		}
 		const effect = second.effects[0]!;
-		await expect(
+		expect(
 			engine.commiteffect({
 				rootrunid: first.run.id,
 				runid: second.run.id,
@@ -1704,7 +1703,7 @@ describe("deterministic process engine", () => {
 		external.close();
 		const competing = new orchestrationengine(store);
 		competing.register(process);
-		await expect(competing.advance(started.run.id)).rejects.toThrow(
+		expect(competing.advance(started.run.id)).rejects.toThrow(
 			`run ${started.run.id} is leased by another engine`,
 		);
 		release.resolve();
@@ -1765,7 +1764,7 @@ describe("deterministic process engine", () => {
 		const second = engine.advance(started.run.id);
 		release.resolve();
 
-		await expect(second).rejects.toThrow(`run ${started.run.id} is leased by another engine`);
+		expect(second).rejects.toThrow(`run ${started.run.id} is leased by another engine`);
 		const completed = await first;
 		expect(completed.status).toBe("completed");
 		expect(beforeadvance).toBe(1);
@@ -1940,7 +1939,7 @@ describe("deterministic process engine", () => {
 		const second = engine.resolveuncertain(resolution);
 		releaserecovery.resolve();
 
-		await expect(second).rejects.toThrow(`run ${started.run.id} is leased by another engine`);
+		expect(second).rejects.toThrow(`run ${started.run.id} is leased by another engine`);
 		const completed = await first;
 		expect(completed.status).toBe("completed");
 		expect(recoveryhooks).toBe(1);
@@ -2168,13 +2167,14 @@ describe("deterministic process engine", () => {
 
 		const first = engine.halt(root.id, "operator requested stop");
 		await entered.promise;
-		await expect(engine.advance(child.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
+		expect(engine.advance(child.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
 		expect(beforeadvancehooks).toBe(0);
-		await expect(engine.advance(root.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
+		expect(engine.advance(root.id)).rejects.toThrow(`run ${root.id} is leased by another engine`);
 
 		release.resolve();
 		const halted = await first;
 		expect(halted.status).toBe("halted");
+		if (halted.status !== "halted") throw new Error("expected halted result");
 		expect(halted.reason).toBe("operator requested stop");
 		for (const runid of [root.id, child.id, leaf.id]) {
 			expect(store.getrun(runid)?.status).toBe("halted");
@@ -2201,7 +2201,7 @@ describe("deterministic process engine", () => {
 		expect(leafhalt.id).toBeLessThan(childhalt.id);
 		expect(childhalt.id).toBeLessThan(roothalt.id);
 
-		await expect(
+		expect(
 			engine.commiteffect({
 				rootrunid: root.id,
 				runid: leafeffect.runid,
@@ -2216,6 +2216,7 @@ describe("deterministic process engine", () => {
 		const transitions = store.events(root.id).filter((event) => event.type === "run_status").length;
 		const repeated = await engine.halt(root.id, "different reason");
 		expect(repeated.status).toBe("halted");
+		if (repeated.status !== "halted") throw new Error("expected halted result");
 		expect(repeated.reason).toBe("operator requested stop");
 		expect(store.getrun(root.id)?.blockedreason).toBe("operator requested stop");
 		expect(store.events(root.id).filter((event) => event.type === "run_status")).toHaveLength(transitions);

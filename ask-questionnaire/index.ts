@@ -35,38 +35,6 @@ const QUESTIONNAIRE_READ_TOOLS = new Set([
 	"questionnaire_open",
 ]);
 
-// --- event shapes (documented public payloads only) -------------------------
-
-interface BeforeAgentStartEvent {
-	type: "before_agent_start";
-	prompt: string;
-}
-
-interface BeforeAgentStartResult {
-	message?: {
-		customType: string;
-		content: string;
-		display?: boolean;
-	};
-}
-
-interface ToolCallEvent {
-	toolName: string;
-	toolCallId: string;
-	input: Record<string, unknown>;
-}
-
-interface ToolCallResult {
-	block?: boolean;
-	reason?: string;
-}
-
-interface ToolResultEvent {
-	toolName: string;
-	toolCallId: string;
-	isError: boolean;
-}
-
 // --- extension factory ------------------------------------------------------
 
 export default function askQuestionnaire(pi: ExtensionAPI): void {
@@ -111,7 +79,7 @@ export default function askQuestionnaire(pi: ExtensionAPI): void {
 	// inject the questionnaire guidance before the model call while pending.
 	// display:false keeps it out of the tui transcript while still entering the
 	// model context.
-	pi.on("before_agent_start", (_event: BeforeAgentStartEvent): BeforeAgentStartResult | void => {
+	pi.on("before_agent_start", () => {
 		if (!pending) return;
 		return {
 			message: {
@@ -124,7 +92,7 @@ export default function askQuestionnaire(pi: ExtensionAPI): void {
 
 	// while pending, allow read-only tools, ask, and questionnaire_open retries.
 	// every other tool is blocked with the declaring reason.
-	pi.on("tool_call", (event: ToolCallEvent): ToolCallResult | void => {
+	pi.on("tool_call", (event) => {
 		if (!pending) return;
 		if (QUESTIONNAIRE_READ_TOOLS.has(event.toolName)) return;
 		return { block: true, reason: pending.reason };
@@ -132,7 +100,7 @@ export default function askQuestionnaire(pi: ExtensionAPI): void {
 
 	// clear only after a successful ask result. a failed ask keeps the request
 	// pending so the agent retries the questionnaire on its next turn.
-	pi.on("tool_result", (event: ToolResultEvent) => {
+	pi.on("tool_result", (event) => {
 		if (!pending) return;
 		if (event.toolName === "ask" && !event.isError) pending = null;
 	});

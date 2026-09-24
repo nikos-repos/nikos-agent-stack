@@ -222,6 +222,7 @@ export function reporoot(cwd = ".") {
 }
 
 // only a missing repository or commit means no git; any later failure keeps git mode and reports `error`.
+/** @returns {{ sha: string | null, dirty: Set<string>, snapshots: object, repo_root: string | null, error: string | null }} */
 export function capturebaseline(cwd = ".") {
   const none = { sha: null, dirty: new Set(), snapshots: {}, repo_root: null, error: null };
   const repo_root = reporoot(cwd);

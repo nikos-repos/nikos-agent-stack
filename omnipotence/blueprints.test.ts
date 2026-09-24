@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { blueprintservice } from "./blueprints.ts";
+import type { jsonvalue } from "./contracts.ts";
 import { orchestrationstore } from "./store.ts";
 
 const roots: string[] = [];
@@ -140,7 +141,7 @@ describe("local blueprint lifecycle", () => {
 		const legacy = blueprints.install(fixture(root, "1.0.0"));
 		const active = blueprints.install(fixture(root, "2.0.0"));
 		const manifestpath = join(legacy.installpath, "omnipotence.blueprint.json");
-		const manifest = JSON.parse(readFileSync(manifestpath, "utf8")) as Record<string, unknown>;
+		const manifest = JSON.parse(readFileSync(manifestpath, "utf8")) as Record<string, jsonvalue>;
 		manifest.engine = ">=999.0.0";
 		writeFileSync(manifestpath, JSON.stringify(manifest));
 		store.writeblueprint({ ...legacy, manifest, active: false });

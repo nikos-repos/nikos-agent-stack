@@ -18,7 +18,7 @@ function source(root: string, version: string, engine = ">=1.0.0"): string {
 	const path = join(root, `source-${version}`);
 	mkdirSync(join(path, "processes"), { recursive: true });
 	const contracts = new URL("./contracts.ts", import.meta.url).href;
-	const content = `import { defineprocess } from ${JSON.stringify(contracts)};\nexport default defineprocess({\n  id: \"delivery.pinned\",\n  version: \"1.0.0\",\n  input: { type: \"object\", additionalproperties: true },\n  output: { type: \"object\", additionalproperties: true },\n  async run(ctx) { return ctx.task(\"work\", { blueprintversion: \"${version}\" }); }\n});\n`;
+	const content = `import { defineprocess } from ${JSON.stringify(contracts)};\nexport default defineprocess({\n  id: "delivery.pinned",\n  version: "1.0.0",\n  input: { type: "object", additionalproperties: true },\n  output: { type: "object", additionalproperties: true },\n  async run(ctx) { return ctx.task("work", { blueprintversion: "${version}" }); }\n});\n`;
 	writeFileSync(join(path, "processes/pinned.ts"), content);
 	writeFileSync(
 		join(path, "omnipotence.blueprint.json"),
@@ -66,9 +66,7 @@ test("loader retains inactive blueprint versions pinned by active runs", async (
 	const pinned = blueprints.list("pinned-pack").find((record) => record.version === "1.0.0");
 	if (!pinned) throw new Error("expected pinned blueprint");
 	writeFileSync(join(pinned.installpath, "processes/pinned.ts"), "export default null;\n");
-	await expect(
-		loadactiveblueprints(store, new orchestrationengine(store)),
-	).rejects.toThrow("blueprint pinned-pack@1.0.0 file processes/pinned.ts hash mismatch");
+	expect(loadactiveblueprints(store, new orchestrationengine(store))).rejects.toThrow("blueprint pinned-pack@1.0.0 file processes/pinned.ts hash mismatch");
 	expect(resumed.status).toBe("waiting");
 	store.close();
 });
@@ -92,10 +90,6 @@ test("loader rejects an incompatible legacy active blueprint", async () => {
 		.digest("hex");
 	writeFileSync(manifestpath, JSON.stringify(manifestvalue));
 	store.writeblueprint({ ...installed, contenthash, manifest: manifestvalue, active: true });
-	await expect(
-		loadactiveblueprints(store, new orchestrationengine(store)),
-	).rejects.toThrow(
-		"blueprint pinned-pack@1.0.0 requires engine >=999.0.0, current engine 2.0.0",
-	);
+	expect(loadactiveblueprints(store, new orchestrationengine(store))).rejects.toThrow("blueprint pinned-pack@1.0.0 requires engine >=999.0.0, current engine 2.0.0");
 	store.close();
 });

@@ -1,4 +1,3 @@
-import type { TSchema } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
@@ -62,7 +61,7 @@ const sleepleaseretrydelay = 25;
 export function nextsleepdelay(deadline: number, current = Date.now()): number {
 	return Math.min(maximumtimerdelay, Math.max(0, deadline - current));
 }
-const resultparameters: TSchema = {
+const resultparameters = {
 	type: "object",
 	additionalProperties: false,
 	required: ["rootrunid", "runid", "effectid", "fence", "inputhash", "status"],
@@ -112,8 +111,8 @@ function commandjson(text: string, path: string): jsonvalue {
 	return parsejson(text.replace(/[\r\n]+/gu, " "), path);
 }
 
-function commandinput(args: unknown, command: string): { processid: string; input: jsonvalue } {
-	const text = String(args ?? "").trim();
+function commandinput(args: string, command: string): { processid: string; input: jsonvalue } {
+	const text = args.trim();
 	const separator = text.search(/\s/u);
 	const processid = separator < 0 ? text : text.slice(0, separator);
 	if (!processid) throw new Error(`usage: /${command} <process-id> [json-input]`);
@@ -358,7 +357,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	): void => {
 		try {
 			context.ui?.setStatus?.("omnipotence", run ? `𓂀 ${runsentence(run, effects)}` : "𓂀");
-		} catch {}
+		} catch { }
 	};
 	const say = (context: extensioncontext, text: string): void => {
 		context.ui?.notify?.(text, "info");
@@ -379,7 +378,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	};
 
 	const startcommand =
-		(command: string, mode: orchestrationmode) => async (args: unknown, context: extensioncontext) => {
+		(command: string, mode: orchestrationmode) => async (args: string, context: extensioncontext) => {
 			await ensureloaded();
 			const request = commandinput(args, command);
 			const result = await engine.start(
@@ -406,7 +405,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	});
 	pi.registerCommand("factory", {
 		description: "start or continue the factory workflow for a project",
-		async handler(args: unknown, context: extensioncontext) {
+		async handler(args: string, context: extensioncontext) {
 			await ensureloaded();
 			const { preview, fresh, target } = factoryflags(args);
 			const request = factoryrequestfor(context.cwd, target);
@@ -451,11 +450,11 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	});
 	pi.registerCommand("omnipotence-resume", {
 		description: "resume the active native orchestration run",
-		async handler(args: unknown, context: extensioncontext) {
+		async handler(args: string, context: extensioncontext) {
 			await ensureloaded();
 			const run = store.getsessionrun(sessionid(context));
 			if (!run) throw new Error("this session has no active omnipotence run");
-			const text = String(args ?? "").trim();
+			const text = args.trim();
 			const result = await engine.resume(run.id, text ? commandjson(text, "resume input") : undefined);
 			await schedule(result);
 			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined);
@@ -469,10 +468,10 @@ export default function omnipotence(pi: ExtensionAPI): void {
 	});
 	pi.registerCommand("omnipotence-stop", {
 		description: "halt the active native orchestration run",
-		async handler(args: unknown, context: extensioncontext) {
+		async handler(args: string, context: extensioncontext) {
 			const run = store.getsessionrun(sessionid(context));
 			if (!run) throw new Error("this session has no active omnipotence run");
-			const reason = String(args ?? "").trim() || "halted by user";
+			const reason = args.trim() || "halted by user";
 			const halted = await engine.halt(run.id, reason);
 			pi.appendEntry(stateentry, { runid: halted.run.id, status: halted.run.status });
 			announce(context, halted.run);

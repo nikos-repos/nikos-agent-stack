@@ -67,8 +67,8 @@ export function factoryrequestfor(cwd: string, target: string): factoryrequest |
 	return null;
 }
 
-export function factoryflags(args: unknown): { preview: boolean; fresh: boolean; target: string } {
-	let text = String(args ?? "").replace(/[\r\n]+/gu, " ").trim();
+export function factoryflags(args: string): { preview: boolean; fresh: boolean; target: string } {
+	let text = args.replace(/[\r\n]+/gu, " ").trim();
 	const preview = /(^|\s)--preview(\s|$)/u.test(text);
 	const fresh = /(^|\s)--fresh(\s|$)/u.test(text);
 	text = text.replace(/(^|\s)--(?:preview|fresh)(?=\s|$)/gu, " ").trim();

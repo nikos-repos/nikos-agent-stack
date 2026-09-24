@@ -3,9 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 
-const tag = Object.prototype.toString;
-export const isText = (value) => tag.call(value) === "[object String]";
-export const isRecord = (value) => value !== null && tag.call(value) === "[object Object]";
+export const isText = (value) => Object.prototype.toString.call(value) === "[object String]";
+export const isRecord = (value) => value !== null && Object.prototype.toString.call(value) === "[object Object]";
 export const nonempty = (value) => isText(value) && value.trim().length > 0;
 export const shellQuote = (value) => `'${String(value).replace(/'/g, "'\\''")}'`;
 export function parseJsonObject(source) {
