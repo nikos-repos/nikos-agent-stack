@@ -997,13 +997,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         [...changedFiles].some((path) => evidence.preTouch.get(path) === null) ||
         risk.findings.some((finding) => finding.id === "risk.dependencies");
       watched = new Set([...evidence.preTouch.keys()].map(normalizePath));
-      try {
-        pi.appendEntry("omp.gate-checker.no-git", {
-          reason: "no-git-repo",
-          watched: evidence.preTouch.size,
-          ts: Date.now(),
-        });
-      } catch {}
     }
 
     return {
