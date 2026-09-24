@@ -5,7 +5,7 @@ import {
   rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { isRecord, isText, parseJsonObject } from "./predicates.js";
+import { isRecord, isText, nonempty, parseJsonObject, shellQuote } from "./predicates.js";
 
 const poll_interval_ms = 50;
 const poll_jitter_ms = 5;
@@ -28,7 +28,6 @@ export function identity(cwd = ".") {
 function optionsOf(input) {
   return isRecord(input) ? input : {};
 }
-const nonempty = (value) => isText(value) && value.trim().length > 0;
 function optionNumber(options, name, fallback) {
   return Number.isFinite(options[name]) ? Number(options[name]) : fallback;
 }
@@ -124,7 +123,11 @@ function sameIdentity(current, expected) {
 }
 function displayStatus(value) { return value === null || value === undefined || value === "" ? "unknown" : String(value); }
 function formatAge(value, suffix = "") { return Number.isFinite(value) ? `${Math.max(0, Number(value) / 1_000).toFixed(1)}s${suffix}` : "unknown"; }
-function shellQuote(value) { return `'${String(value).replace(/'/g, "'\\''")}'`; }
+
+// the identity and timing fields every lease ledger event carries.
+export function leasefields(record) {
+  return { path: record.path, token: record.token, repo_root: record.repo_root, common_dir: record.common_dir, owner_id: record.owner_id, request_id: record.request_id, session_id: record.session_id, session_file: record.session_file, agent_id: record.agent_id, tool_call_id: record.tool_call_id, tool_name: record.tool_name, target: record.target, fence: record.fence, pid: record.pid, acquired_at: record.acquired_at, heartbeat_at: record.heartbeat_at };
+}
 
 export function formatleasestatus(status, options = {}) {
   const cwd = options.cwd === undefined ? "." : shellQuote(options.cwd);

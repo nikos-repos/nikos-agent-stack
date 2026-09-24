@@ -19,6 +19,7 @@ import {
   makeClaimMatcher,
   normalizePath,
   parseDiffAdditions,
+  shellQuote,
   readSnapshot,
 } from "./predicates.js";
 import * as ledger from "./ledger.js";
@@ -33,6 +34,7 @@ import {
   heartbeatintervalms,
   heartbeatlease,
   inspectlease,
+  leasefields,
   releaselease,
   releasestalelease,
 } from "./lease.js";
@@ -628,7 +630,6 @@ function runVerifyGate(cwd: string, command: string): GateFailure | null {
     };
   }
 }
-const shellQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
 function complexityOutput(output: string): string | null {
   const text = output.trim();
   if (!text) return null;
@@ -813,19 +814,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   const agentEndSchema = pi.zod.object({ willContinue: pi.zod.literal(true).optional() });
   const eventSchema = pi.zod.object({ stop_hook_active: booleanSchema.optional() });
-  const leaseFields = (lease: LeaseRecord) => ({
-    path: lease.path,
-    token: lease.token,
-    owner_id: lease.owner_id,
-    request_id: lease.request_id,
-    session_id: lease.session_id,
-    session_file: lease.session_file,
-    agent_id: lease.agent_id,
-    tool_call_id: lease.tool_call_id,
-    tool_name: lease.tool_name,
-    target: lease.target,
-    fence: lease.fence,
-  });
   const releaseOperation = (toolCallId: string, reason: string): boolean => {
     const operation = activeOperations.get(toolCallId);
     if (!operation) return false;
@@ -836,7 +824,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     try {
       released = Boolean(releaselease(operation.lease));
     } catch {}
-    ledger.append("lease_released", { ...leaseFields(operation.lease), reason, released });
+    ledger.append("lease_released", { ...leasefields(operation.lease), reason, released });
     return released;
   };
   const releaseAllOperations = (reason: string): void => {
@@ -876,10 +864,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
       const status: LeaseStatus = inspectlease({ cwd: repoRoot });
       const record = status.record;
       if (status.status !== "held" || status.stale !== true || !record || record.session_file !== sessionFile) return;
-      ledger.append("lease_heartbeat_stale", { ...leaseFields(record), reason, ts: Date.now() });
+      ledger.append("lease_heartbeat_stale", { ...leasefields(record), reason, ts: Date.now() });
       const released = Boolean(releasestalelease(record, { cwd: repoRoot }));
-      ledger.append("lease_released", { ...leaseFields(record), reason, released });
-      if (released) ledger.append("lease_recovered", { ...leaseFields(record), reason, ts: Date.now() });
+      ledger.append("lease_released", { ...leasefields(record), reason, released });
+      if (released) ledger.append("lease_recovered", { ...leasefields(record), reason, ts: Date.now() });
     } catch {}
   };
   const policyFingerprint = (): string =>
@@ -954,7 +942,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         try {
           stale = inspectlease({ cwd: result.repo_root ?? scope.cwd }).stale === true;
         } catch {}
-        if (stale) ledger.append("lease_heartbeat_stale", { ...leaseFields(result), ts: Date.now() });
+        if (stale) ledger.append("lease_heartbeat_stale", { ...leasefields(result), ts: Date.now() });
         releaseOperation(event.toolCallId, stale ? "heartbeat_stale" : "heartbeat_lost");
       } catch {}
     }, heartbeatintervalms);
@@ -967,8 +955,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
       target: scope.target,
       backgroundRunning: false,
     });
-    ledger.append("lease_acquired", { ...leaseFields(result), recovered: result.recovered, ts: Date.now() });
-    if (result.recovered === true) ledger.append("lease_recovered", { ...leaseFields(result), ts: Date.now() });
+    ledger.append("lease_acquired", { ...leasefields(result), recovered: result.recovered, ts: Date.now() });
+    if (result.recovered === true) ledger.append("lease_recovered", { ...leasefields(result), ts: Date.now() });
   };
   const registerBuiltinWrappers = (): void => {
     if (builtinWrappersRegistered) return;
@@ -1201,7 +1189,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
             context.ui?.notify?.("cannot disable mutation lease: current lease could not be released", "error");
             return;
           }
-          ledger.append("lease_manual_release", { ...leaseFields(record), mode: "off", ts: Date.now() });
+          ledger.append("lease_manual_release", { ...leasefields(record), mode: "off", ts: Date.now() });
         }
         leaseEnabled = false;
         context.ui?.notify?.(leaseStatusReport(context), "info");

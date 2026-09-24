@@ -2,14 +2,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve as resolvePath } from "node:path";
-import { isRecord, isText, parseJsonObject } from "./predicates.js";
+import { isRecord, isText, nonempty, parseJsonObject } from "./predicates.js";
 
 export const FRUSTRATION_PATH = process.env.OMP_GATE_FRUSTRATIONS ||
   resolvePath(homedir(), ".omp/gate-checker/frustrations.jsonl");
 const FIXED_TYPES = ["tooling", "environment", "requirements", "workflow", "test", "dependency", "performance", "other", "none"];
 const FIXED_SEVERITIES = ["low", "medium", "high", "blocker"];
 
-const nonempty = (value) => isText(value) && value.trim().length > 0;
 const timestamp = (value) => nonempty(value) && Number.isFinite(Date.parse(value));
 
 export function loadTaxonomy(repoRoot) {

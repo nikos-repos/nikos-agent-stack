@@ -21,22 +21,21 @@ function resolve_ref(cwd, ref) {
   if (!/^[a-f0-9]{40,64}$/.test(sha)) throw new Error(`could not resolve git ref: ${ref}`);
   return sha;
 }
-function diff_specs(options, repo_root) {
+function diff_args(options, repo_root) {
   const head = resolve_ref(repo_root, "HEAD");
   const resolved = { head };
   if (options.kind === "request") {
     const base = options.baseline_sha ? resolve_ref(repo_root, options.baseline_sha) : head;
     resolved.base = base;
-    return { specs: [{ args: [base], staged: null, worktree: true }], resolved };
+    return { args: [base], resolved };
   }
-  if (options.kind === "uncommitted")
-    return { specs: [{ args: [head], staged: null, worktree: true }], resolved };
+  if (options.kind === "uncommitted") return { args: [head], resolved };
   if (options.kind === "base") {
     const requested = resolve_ref(repo_root, options.base_ref);
     const base = git(repo_root, ["merge-base", requested, head]).trim();
     if (!base) throw new Error(`could not resolve merge base: ${options.base_ref}`);
     resolved.base = base;
-    return { specs: [{ args: [base, head], staged: null, worktree: false }], resolved };
+    return { args: [base, head], resolved };
   }
   const commit = resolve_ref(repo_root, options.commit_ref);
   const parents = git(repo_root, ["rev-list", "--parents", "-n", "1", commit]).trim().split(/\s+/);
@@ -44,7 +43,7 @@ function diff_specs(options, repo_root) {
   resolved.base = parent;
   resolved.head = commit;
   const base = parent || git(repo_root, ["hash-object", "-t", "tree", "--stdin"], "").trim();
-  return { specs: [{ args: [base, commit], staged: null, worktree: false }], resolved };
+  return { args: [base, commit], resolved };
 }
 function path_args(folder) {
   if (!folder) return [];
@@ -105,13 +104,13 @@ function parse_numstat(raw, out) {
     if (current) current.binary = match[1] === "-" || match[2] === "-";
   }
 }
-function collect_diff(repo_root, spec, folder, records, added) {
+function collect_diff(repo_root, args, folder, records, added) {
   const common = ["diff", "--no-ext-diff", "--no-textconv", "--find-renames"];
   const paths = path_args(folder);
-  parse_name_status(git(repo_root, [...common, "--name-status", "-z", ...spec.args, ...paths]), spec.staged, records);
-  parse_raw(git(repo_root, [...common, "--raw", "-z", ...spec.args, ...paths]), records);
-  parse_numstat(git(repo_root, [...common, "--numstat", "-z", ...spec.args, ...paths]), records);
-  parseDiffAdditions(git(repo_root, [...common, "-U0", "--diff-filter=ACMR", ...spec.args, ...paths]), added);
+  parse_name_status(git(repo_root, [...common, "--name-status", "-z", ...args, ...paths]), null, records);
+  parse_raw(git(repo_root, [...common, "--raw", "-z", ...args, ...paths]), records);
+  parse_numstat(git(repo_root, [...common, "--numstat", "-z", ...args, ...paths]), records);
+  parseDiffAdditions(git(repo_root, [...common, "-U0", "--diff-filter=ACMR", ...args, ...paths]), added);
 }
 function mark_worktree_flags(repo_root, folder, records) {
   const paths = path_args(folder);
@@ -230,14 +229,14 @@ export function resolvescope(options) {
   if (!isRecord(options) || !scope_kinds.has(options.kind)) throw new Error("unknown gate scope");
   const cwd = options.cwd || ".";
   const repo_root = git(cwd, ["rev-parse", "--show-toplevel"]).trim();
-  const { specs, resolved } = diff_specs(options, repo_root);
+  const { args, resolved } = diff_args(options, repo_root);
   const records = new Map();
   const added = new Map();
-  for (const spec of specs) {
-    collect_diff(repo_root, spec, options.folder, records, added);
-    if (spec.worktree) mark_worktree_flags(repo_root, options.folder, records);
+  collect_diff(repo_root, args, options.folder, records, added);
+  if (options.kind === "request" || options.kind === "uncommitted") {
+    mark_worktree_flags(repo_root, options.folder, records);
+    collect_untracked(repo_root, options.folder, records, added);
   }
-  if (options.kind === "request" || options.kind === "uncommitted") collect_untracked(repo_root, options.folder, records, added);
   const excluded = options.baseline_dirty || new Set();
   const snapshots = options.baseline_snapshots || {};
   for (const path of excluded) {

@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { loadForbiddenMarkers, checkAddedLines, isText } from "./predicates.js";
+import { loadForbiddenMarkers, checkAddedLines, isText, nonempty } from "./predicates.js";
 import { append as appendledger, read, summarize, LEDGER_PATH } from "./ledger.js";
 import { FRUSTRATION_PATH, readRecords } from "./frustrations.js";
 import { resolvescope } from "./scope.js";
 import { auditscope } from "./risks.js";
 import { installadvisor } from "../advisor/install.js";
-import { formatleasestatus, inspectlease, releaselease, releasestalelease } from "./lease.js";
+import { formatleasestatus, inspectlease, leasefields, releaselease, releasestalelease } from "./lease.js";
 
 function parseArgs(argv) {
   const out = {};
@@ -121,13 +121,9 @@ function stats(args) {
   return 0;
 }
 function hasarg(args, name) { return Object.prototype.hasOwnProperty.call(args, name); }
-const validarg = (value) => isText(value) && value.trim().length > 0;
 function leasecwd(args) {
   if (hasarg(args, "cwd") && !isText(args.cwd)) throw new Error("lease: --cwd requires a path");
   return String(args.cwd ?? ".");
-}
-function leasefields(record) {
-  return { path: record.path, token: record.token, repo_root: record.repo_root, common_dir: record.common_dir, owner_id: record.owner_id, request_id: record.request_id, session_id: record.session_id, session_file: record.session_file, agent_id: record.agent_id, tool_call_id: record.tool_call_id, tool_name: record.tool_name, target: record.target, fence: record.fence, pid: record.pid, acquired_at: record.acquired_at, heartbeat_at: record.heartbeat_at };
 }
 function appendmanualrelease(record, mode, reason) { appendledger("lease_manual_release", { ...leasefields(record), mode, reason }); }
 function leaseusage() {
@@ -147,7 +143,7 @@ function leaserelease(args) {
   const force = args.force === true;
   if ((hasarg(args, "stale-only") && !staleonly) || (hasarg(args, "force") && !force) || staleonly === force || hasarg(args, "json")) return null;
   if (staleonly && (hasarg(args, "owner-id") || hasarg(args, "tool-call-id") || hasarg(args, "reason"))) return null;
-  if (force && (!validarg(args["owner-id"]) || !validarg(args["tool-call-id"]) || !validarg(args.reason))) return null;
+  if (force && (!nonempty(args["owner-id"]) || !nonempty(args["tool-call-id"]) || !nonempty(args.reason))) return null;
   const cwd = leasecwd(args);
   const status = inspectlease({ cwd });
   if (status.status !== "held" || status.valid !== true || !status.record) {
