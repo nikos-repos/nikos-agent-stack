@@ -47,14 +47,13 @@ export function summarize(records) {
     } else if (record.event === "chain_end") {
       chains++;
       if (record.outcome === "resolved") resolved++;
-      if (["released_with_failures", "cap_reached", "stalemate"].includes(record.outcome)) {
+      if (record.outcome === "released_with_failures") {
         releasedWithFailures++;
-        const reason = String(record.release_reason ??
-          (record.outcome === "cap_reached" ? "continuation_cap" : record.outcome));
+        const reason = String(record.release_reason ?? "unknown");
         increment(releasedByReason, reason);
         if (reason === "continuation_cap") capHits++;
       }
-    } else if (record.event === "no_git" || record.event === "degraded") {
+    } else if (record.event === "no_git") {
       no_git_runs++;
     }
   }
