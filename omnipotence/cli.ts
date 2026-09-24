@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { blueprintservice } from "./blueprints.ts";
-import { assertvalid, jsonvalueof, parsejson } from "./contracts.ts";
+import { jsonvalueof, parsejson } from "./contracts.ts";
 import type { jsonvalue, orchestrationmode } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import type { advanceresult } from "./engine.ts";
@@ -204,39 +204,25 @@ export async function runcli(argv: readonly string[], options: clioptions = {}):
 				const mode = parsemode(pullflag(args, "--mode"));
 				const input = jsonargument(args, "--input", {});
 				const profilepatch = jsonargument(args, "--profile", { schema: 1 });
-				const version = pullflag(args, "--process-version");
+				const processversion = pullflag(args, "--process-version");
 				const sessionid = pullflag(args, "--session") ?? null;
-				const process = engine.resolveprocess(processid, version);
-				assertvalid(process.input, input, "run.input");
-				const profile = profiles.snapshot(
-					cwd,
-					process.profiledefaults ?? { schema: 1 },
-					profilepatch,
+				const start = engine.prepare(
+					{ processid, processversion, sessionid, mode, input, cwd, profilepatch },
+					profiles,
 				);
 				if (dryrun) {
 					emit({
 						action: "start",
 						processid,
-						processversion: process.version,
+						processversion: start.processversion ?? null,
 						mode,
 						input,
-						profile: profile.effective,
+						profile: start.profile ?? null,
 						sessionid,
 					});
 					return 0;
 				}
-				const started = await engine.start({
-					processid,
-					processversion: process.version,
-					blueprintname: process.blueprint?.name,
-					blueprintversion: process.blueprint?.version,
-					sessionid,
-					mode,
-					input,
-					profile: profile.effective,
-					userprofileversion: profile.userprofileversion,
-					projectprofileversion: profile.projectprofileversion,
-				});
+				const started = await engine.start(start);
 				emit(resultvalue(started));
 				return resultcode(started);
 			}
@@ -432,29 +418,12 @@ export async function runcli(argv: readonly string[], options: clioptions = {}):
 			if (action === "plan") {
 				const processid = required(args, 2, "process id");
 				const input = jsonargument(args, "--input", {});
-				const process = engine.resolveprocess(processid);
-				assertvalid(process.input, input, "run.input");
+				const start = engine.prepare({ processid, sessionid: null, mode: "plan", input, cwd }, profiles);
 				if (dryrun) {
 					emit({ action: "process_plan", processid, input });
 					return 0;
 				}
-				const profile = profiles.snapshot(
-					cwd,
-					process.profiledefaults ?? { schema: 1 },
-					{ schema: 1 },
-				);
-				const planned = await engine.start({
-					processid,
-					processversion: process.version,
-					blueprintname: process.blueprint?.name,
-					blueprintversion: process.blueprint?.version,
-					sessionid: null,
-					mode: "plan",
-					input,
-					profile: profile.effective,
-					userprofileversion: profile.userprofileversion,
-					projectprofileversion: profile.projectprofileversion,
-				});
+				const planned = await engine.start(start);
 				emit(resultvalue(planned));
 				return resultcode(planned);
 			}

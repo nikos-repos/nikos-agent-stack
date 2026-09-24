@@ -378,20 +378,9 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		(command: string, mode: orchestrationmode) => async (args: unknown, context: extensioncontext) => {
 			await ensureloaded();
 			const request = commandinput(args, command);
-			const process = engine.resolveprocess(request.processid);
-			const profile = profiles.snapshot(context.cwd, process.profiledefaults ?? { schema: 1 }, { schema: 1 });
-			const result = await engine.start({
-				processid: request.processid,
-				processversion: process.version,
-				blueprintname: process.blueprint?.name,
-				blueprintversion: process.blueprint?.version,
-				sessionid: sessionid(context),
-				mode,
-				input: request.input,
-				profile: profile.effective,
-				userprofileversion: profile.userprofileversion,
-				projectprofileversion: profile.projectprofileversion,
-			});
+			const result = await engine.start(
+				engine.prepare({ ...request, sessionid: sessionid(context), mode, cwd: context.cwd }, profiles),
+			);
 			await schedule(result);
 			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined);
 		};
@@ -437,22 +426,20 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				if (!stale(resumed)) announce(context, resumed.run, waiting(resumed) ? resumed.effects : undefined, "continuing");
 				return;
 			}
-			const process = engine.resolveprocess(factoryprocessid);
-			const profile = profiles.snapshot(context.cwd, process.profiledefaults ?? { schema: 1 }, { schema: 1 });
 			const entry: Record<string, string> = { kind: request.entry.kind };
 			if (request.entry.value !== undefined) entry.value = request.entry.value;
-			const result = await engine.start({
-				processid: factoryprocessid,
-				processversion: process.version,
-				blueprintname: process.blueprint?.name,
-				blueprintversion: process.blueprint?.version,
-				sessionid: sessionid(context),
-				mode: preview ? "plan" : "babysit",
-				input: jsonvalueof({ projectRoot: request.projectroot, entry }, "factory input"),
-				profile: profile.effective,
-				userprofileversion: profile.userprofileversion,
-				projectprofileversion: profile.projectprofileversion,
-			});
+			const result = await engine.start(
+				engine.prepare(
+					{
+						processid: factoryprocessid,
+						sessionid: sessionid(context),
+						mode: preview ? "plan" : "babysit",
+						input: jsonvalueof({ projectRoot: request.projectroot, entry }, "factory input"),
+						cwd: context.cwd,
+					},
+					profiles,
+				),
+			);
 			await schedule(result);
 			const opened = `${request.entry.kind} · ${basename(request.projectroot)}`;
 			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined, opened);

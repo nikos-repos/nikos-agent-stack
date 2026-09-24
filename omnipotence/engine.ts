@@ -19,6 +19,7 @@ import type {
 import { hookdispatcherror, hookregistry } from "./hooks.ts";
 import type { hookphase, hookresult, hookselector } from "./hooks.ts";
 import { modepolicy } from "./processes.ts";
+import type { profileservice } from "./profiles.ts";
 import { childrunprefix, orchestrationstore } from "./store.ts";
 import type { effectpost, effectrecord, hookdeliveryrecord, runrecord, uncertainresolution } from "./store.ts";
 
@@ -34,6 +35,16 @@ export interface startinput {
 	profile?: jsonvalue;
 	userprofileversion?: number | null;
 	projectprofileversion?: number | null;
+}
+
+export interface runrequest {
+	processid: string;
+	processversion?: string;
+	sessionid: string | null;
+	mode: orchestrationmode;
+	input: jsonvalue;
+	cwd: string;
+	profilepatch?: jsonvalue;
 }
 
 export interface enginepost extends effectpost {
@@ -218,13 +229,6 @@ export class orchestrationengine {
 		version?: string,
 		blueprint?: { name: string; version: string },
 	): Readonly<processdefinition> {
-		return this.requireprocess(processid, version, blueprint);
-	}
-	private requireprocess(
-		processid: string,
-		version?: string,
-		blueprint?: { name: string; version: string },
-	): Readonly<processdefinition> {
 		assertprocessid(processid);
 		const candidates = [...this.processes.values()]
 			.filter((process) => process.id === processid)
@@ -336,7 +340,7 @@ export class orchestrationengine {
 	}
 
 	private async create(input: startinput): Promise<runrecord> {
-		const process = this.requireprocess(
+		const process = this.resolveprocess(
 			input.processid,
 			input.processversion,
 			input.blueprintname && input.blueprintversion
@@ -376,6 +380,30 @@ export class orchestrationengine {
 			await this.postsafe(run.id, "run_failed", { runid: run.id, error: message });
 			return failed;
 		}
+	}
+
+	// resolves the process, validates the input, and snapshots the effective profile: everything a
+	// start needs, without starting, so a dry run can show exactly what start would do.
+	prepare(request: runrequest, profiles: profileservice): startinput {
+		const process = this.resolveprocess(request.processid, request.processversion);
+		assertvalid(process.input, request.input, "run.input");
+		const profile = profiles.snapshot(
+			request.cwd,
+			process.profiledefaults ?? { schema: 1 },
+			request.profilepatch ?? { schema: 1 },
+		);
+		return {
+			processid: process.id,
+			processversion: process.version,
+			blueprintname: process.blueprint?.name,
+			blueprintversion: process.blueprint?.version,
+			sessionid: request.sessionid,
+			mode: request.mode,
+			input: request.input,
+			profile: profile.effective,
+			userprofileversion: profile.userprofileversion,
+			projectprofileversion: profile.projectprofileversion,
+		};
 	}
 
 	async start(input: startinput): Promise<advanceresult> {
@@ -462,7 +490,7 @@ export class orchestrationengine {
 		assertprocessid(processid);
 		let childprocess: Readonly<processdefinition>;
 		try {
-			childprocess = this.requireprocess(
+			childprocess = this.resolveprocess(
 				processid,
 				undefined,
 				run.blueprintname && run.blueprintversion
@@ -470,7 +498,7 @@ export class orchestrationengine {
 					: undefined,
 			);
 		} catch {
-			childprocess = this.requireprocess(processid);
+			childprocess = this.resolveprocess(processid);
 		}
 		let parent = this.store.geteffectbykey(run.id, key);
 		let childrunid: string;
@@ -496,7 +524,7 @@ export class orchestrationengine {
 			if (typeof stored.processversion !== "string") throw new Error(`effect ${key} has no child version`);
 			childrunid = stored.childrunid;
 			childversion = stored.processversion;
-			childprocess = this.requireprocess(
+			childprocess = this.resolveprocess(
 				processid,
 				childversion,
 				typeof stored.blueprintname === "string" && typeof stored.blueprintversion === "string"
@@ -724,7 +752,7 @@ export class orchestrationengine {
 			}
 			run = this.store.transitionrun(runid, "running");
 		}
-		const process = this.requireprocess(
+		const process = this.resolveprocess(
 			run.processid,
 			run.processversion,
 			run.blueprintname && run.blueprintversion
