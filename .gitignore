@@ -8,6 +8,9 @@ docs/factory-workflow-anti-mutation-controls-plan-hardened.md
 # maintainer-only docs: local review artifacts, never pushed
 docs/maintainers/
 
+# omp-orca bridge: private until the package is complete, never pushed
+*omp-orca*
+
 # stray dir from a botched shell expansion; holds a live sqlite db
 $D/
 
