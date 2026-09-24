@@ -212,7 +212,7 @@ agent start
 tool call
   -> bind the first repository exposed by cwd or path
   -> record touched files
-  -> route commit commands
+  -> block raw git commit in favor of the git-commit skill script
 tool result
   -> collect read and edit snapshot tags
   -> report newly added forbidden markers
@@ -524,27 +524,13 @@ the canonical agent directory is `PI_CODING_AGENT_DIR` when set, otherwise
 <agent-dir>/skills/git-commit/scripts/smart_commit.sh
 ```
 
-the extension resolves this script path once at module load, and rewrites supported bash commit commands before execution.
+the extension resolves this script path once at module load. while gates are enabled, a bash call that runs a non-amend `git commit` at a shell command boundary is blocked before execution. the block reason names the exact replacement:
 
-### routed forms
+```text
+bash '<agent-dir>/skills/git-commit/scripts/smart_commit.sh' '<type(scope): message>'
+```
 
-- a non-amend `git commit` at a shell command boundary.
-- a direct invocation whose executable name is exactly `smart_commit.sh`.
-
-### rewrite behavior
-
-- uses the absolute installed script path.
-- adds `--no-push` as a script argument when absent, before any `--` path separator.
-- preserves a parsed short or long message argument.
-- lets the script create a message when none is supplied.
-- preserves shell commands before and after the commit segment.
-- preserves an explicit leading `git add` and its path scope; the script commits already-staged changes.
-- leaves `git commit --amend` unchanged.
-- rewrites a quoted or unquoted token or path that ends in `smart_commit.sh`, preserving a single- or double-quoted path containing spaces as one argument.
-- leaves a prefixed name such as `my_smart_commit.sh` alone.
-- leaves an already absolute path that already carries `--no-push` unchanged.
-
-routing requests no-push mode by default. the script owns explicit push behavior; a rewrite grants no publication authority.
+the agent stages the changes for the commit and reruns with that command. the extension never rewrites the shell command, so operators such as `||` and flags such as `-a` or `-F` cannot silently change meaning. `git commit --amend` and direct `smart_commit.sh` invocations pass through unchanged. the script owns push behavior; the block grants no publication authority.
 
 source: [commit routing implementation](../gate-checker/index.ts)
 
@@ -916,9 +902,9 @@ commit all tracked staged and unstaged changes. untracked files do not fail the 
 
 source: [commit policy](../gate-checker/config.js), [clean-tree predicate](../gate-checker/predicates.js)
 
-### commit routing does not occur
+### raw git commit is not blocked
 
-confirm that `smart_commit.sh` exists under `PI_CODING_AGENT_DIR` when set, otherwise under `~/.omp/agent/skills/git-commit/scripts/`. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally not rewritten.
+confirm that `smart_commit.sh` exists under `PI_CODING_AGENT_DIR` when set, otherwise under `~/.omp/agent/skills/git-commit/scripts/`. routing is disabled when the script is absent, and when the active level is off. amend commits are intentionally never blocked.
 
 source: [commit routing activation](../gate-checker/index.ts)
 

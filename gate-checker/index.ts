@@ -285,9 +285,7 @@ const MOD_CLAIM_RE =
   /(?:modif(?:ied|y)|updated?|changed?|edited?|added?\s+to|fixed?\s+in|refactored?|rewrote?|replaced?|removed?\s+(?:from|in)|deleted?\s+(?:from|in))\s+`([a-zA-Z0-9_./~-]+[/][a-zA-Z0-9_./~-]+\.[a-zA-Z]{1,8})`/gi;
 const SUBAGENT_REFERENCE_RE =
   /\b(sub-?agents?|reviewers?|review(?:ed|s)?\s+(?:by|agent)|delegat(?:e|ed|ion)|spawned\s+agents?|per\s+the\s+review|according\s+to\s+the\s+(?:review|agent)|the\s+agent\s+(?:reported|found|said|confirmed)|its?\s+report)\b/i;
-const COMMIT_BOUNDARY_RE = /(?:^|[;&|]\s*|&&\s*)git\s+commit\b(?![-_])/;
-const SMART_COMMIT_RE =
-  /(?<![\w./'"-])(?:'((?:[^']*\/)?smart_commit\.sh)'|"((?:[^"]*\/)?smart_commit\.sh)"|((?:[^\s'";&|]*\/)?smart_commit\.sh))(?![\w./-])/;
+const COMMIT_BOUNDARY_RE = /(?:^|[;&|(])\s*git\s+commit\b(?![-_])/;
 const MAX_CONTINUATIONS = 3;
 const PROCESS_MAX_FILES = 8;
 
@@ -482,62 +480,6 @@ function inlineAdditions(toolName: string, path: string, input: ToolInput, detai
     return input.newText !== undefined ? contentToAdded(path, input.newText) : null;
   }
   return input.content !== undefined ? contentToAdded(path, input.content) : null;
-}
-function extractCommitMessage(command: string): string | null {
-  const separated = command.match(/(?:^|\s)(?:-m|--message)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/);
-  if (separated) return separated[1] ?? separated[2] ?? separated[3] ?? null;
-  const attached = command.match(/(?:^|\s)-m(?:"([^"]*)"|'([^']*)'|([^\s;&|]+))/);
-  return attached ? (attached[1] ?? attached[2] ?? attached[3] ?? null) : null;
-}
-function rewriteSmartCommit(command: string, scriptPath: string): string | null {
-  const match = SMART_COMMIT_RE.exec(command);
-  if (!match) return null;
-  const safe = scriptPath.replace(/'/g, "'\\''");
-  const matchedPath = match[1] ?? match[2] ?? match[3];
-  const script = matchedPath === scriptPath ? match[0] : `'${safe}'`;
-  const result = command.replace(match[0], () => (/--no-push\b/.test(command) ? script : `${script} --no-push`));
-  return result === command ? null : result;
-}
-function splitCommitSegment(command: string): { before: string; commitPart: string; after: string } | null {
-  const index = command.search(/(?:^|[;&|]\s*|&&\s*)git\s+commit\b(?![-_])/);
-  if (index < 0) return null;
-  const boundary = command[index]?.match(/[;&|&]/);
-  const start = boundary ? index + 1 : index;
-  const before = command.slice(0, start).replace(/[;&|&\s]+$/, "");
-  const commitStart = command.indexOf("git", start);
-  let cursor = commitStart + 4;
-  let quote = "";
-  while (cursor < command.length) {
-    const char = command[cursor];
-    if (quote) {
-      if (char === quote) quote = "";
-    } else if (char === '"' || char === "'") quote = char;
-    else if (char === ";" || char === "&" || char === "|") break;
-    cursor++;
-  }
-  return {
-    before,
-    commitPart: command.slice(commitStart, cursor).trim(),
-    after: command
-      .slice(cursor)
-      .replace(/^[;&|&\s]+/, "")
-      .trim(),
-  };
-}
-function rewriteGitCommit(command: string, scriptPath: string): string | null {
-  if (!COMMIT_BOUNDARY_RE.test(command) || /--amend/.test(command)) return null;
-  const split = splitCommitSegment(command);
-  if (!split) return null;
-  const safe = (value: string): string => value.replace(/'/g, "'\\''");
-  const message = extractCommitMessage(split.commitPart);
-  const script =
-    message === null
-      ? `bash '${safe(scriptPath)}' --no-push`
-      : `bash '${safe(scriptPath)}' '${safe(message)}' --no-push`;
-  const parts = split.before ? [split.before, script] : [script];
-  if (split.after) parts.push(split.after);
-  const result = parts.join(" && ");
-  return result === command ? null : result;
 }
 function getLastAssistantText(ctx: ExtensionContext): string | null {
   const branch = ctx.sessionManager?.getBranch?.() ?? [];
@@ -1955,13 +1897,18 @@ export default function gateChecker(pi: ExtensionAPI): void {
         evidence.preTouch.set(evidencePath, readSnapshot(abs));
       evidence.filesTouched.add(parsed.input.path);
     }
-    if (parsed.toolName === "bash") {
-      const rewritten =
-        commitRoutingEnabled &&
-        (rewriteGitCommit(parsed.input.command ?? "", COMMIT_SCRIPT_PATH) ??
-          rewriteSmartCommit(parsed.input.command ?? "", COMMIT_SCRIPT_PATH));
-      if (rewritten) return { input: { ...event.input, command: rewritten } };
-    }
+    // block rather than rewrite: rewriting a shell command changes its meaning (`||`, `-a`, `-F`).
+    const command = parsed.input.command ?? "";
+    if (
+      parsed.toolName === "bash" &&
+      commitRoutingEnabled &&
+      COMMIT_BOUNDARY_RE.test(command) &&
+      !/--amend/.test(command)
+    )
+      return {
+        block: true,
+        reason: `raw git commit bypasses the git-commit skill. stage the changes for this commit, then run: bash ${shellQuote(COMMIT_SCRIPT_PATH)} '<type(scope): message>'`,
+      };
     // a returned input replaces the tool's arguments, and the parsed view is schema-stripped:
     // spread the raw input so fields this extension does not model (agent, isolated, env) survive.
     if (parsed.toolName === "task") {
