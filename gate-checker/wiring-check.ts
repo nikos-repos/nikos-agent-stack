@@ -79,18 +79,22 @@ const schema = {
   optional() { return this; },
   safeParse(value) { return { success: true, data: value }; },
 };
+// strips unknown keys at every depth, like omp's zod.
 const zod = {
-  object: (shape = undefined) => shape ? {
+  object: (shape) => ({
     ...schema,
     safeParse(value) {
       if (!value || typeof value !== "object") return { success: true, data: value };
       const data = {};
-      for (const key of Object.keys(shape)) if (key in value) data[key] = value[key];
+      for (const [key, field] of Object.entries(shape)) if (key in value) data[key] = field.safeParse(value[key]).data;
       return { success: true, data };
     },
-  } : schema,
+  }),
   string: () => schema,
-  array: () => schema,
+  array: (item) => ({
+    ...schema,
+    safeParse(value) { return { success: true, data: Array.isArray(value) ? value.map((entry) => item.safeParse(entry).data) : value }; },
+  }),
   union: () => schema,
   number: () => schema,
   literal: () => schema,
@@ -315,13 +319,14 @@ try {
     const probe = harness(repository(), "medium", "true");
     await start(probe);
     await writeChange(probe, "two\n");
-    const taskInput = { task: "inspect the change" };
+    const taskInput = { agent: "reviewer", isolated: true, task: "inspect the change" };
     const routed = await probe.handlers.tool_call({
       toolName: "task",
       toolCallId: "task-1",
       input: taskInput,
     }, probe.context);
     assert(routed.input.task.includes("changed-files"), "task calls must receive the gate contract");
+    assert(routed.input.agent === "reviewer" && routed.input.isolated === true, "the revised task input must keep unmodeled native arguments");
     await probe.handlers.tool_result({
       toolName: "task",
       toolCallId: "task-1",

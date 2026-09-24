@@ -2020,12 +2020,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
         commitRoutingEnabled &&
         (rewriteGitCommit(parsed.input.command ?? "", COMMIT_SCRIPT_PATH) ??
           rewriteSmartCommit(parsed.input.command ?? "", COMMIT_SCRIPT_PATH));
-      if (rewritten) return { input: { ...parsed.input, command: rewritten } };
+      if (rewritten) return { input: { ...event.input, command: rewritten } };
     }
+    // a returned input replaces the tool's arguments, and the parsed view is schema-stripped:
+    // spread the raw input so fields this extension does not model (agent, isolated, env) survive.
     if (parsed.toolName === "task") {
       if (parsed.input.tasks)
-        return { input: { ...parsed.input, context: `${GATE_NUDGE}${parsed.input.context ?? ""}` } };
-      return { input: { ...parsed.input, task: `${GATE_NUDGE}${parsed.input.task ?? ""}` } };
+        return { input: { ...event.input, context: `${GATE_NUDGE}${parsed.input.context ?? ""}` } };
+      return { input: { ...event.input, task: `${GATE_NUDGE}${parsed.input.task ?? ""}` } };
     }
   });
   pi.on("tool_result", async (event: ToolResultEvent, context: ExtensionContext): Promise<ToolResultPayload | void> => {
