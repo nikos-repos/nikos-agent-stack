@@ -64,7 +64,7 @@ PATH="$(bun pm bin -g):$PATH" omnipotence --help
 
 then start an omp session and run `/advisor-install`.
 
-the setup command merges terra into the user watchdog configuration. no manual file copying and no changes to omp itself are needed. `nikos-gates advisor install` remains available for direct package use outside omp.
+the setup command merges terra into the user watchdog configuration. no manual file copying and no changes to omp itself are needed. `nikos-advisor install` remains available for direct package use outside omp.
 
 ## start the advisor
 
@@ -269,7 +269,7 @@ questionnaire:
 
 terra advisor:
 
-- `/advisor-install` preserves top-level instructions and non-terra advisors, replaces or adds terra by normalized name, validates the native watchdog schema, and writes atomically in `PI_CODING_AGENT_DIR` when set, otherwise `~/.omp/agent`, to `WATCHDOG.yml` or an existing `WATCHDOG.yaml` when no `.yml` file exists. `nikos-gates advisor install` provides the same setup for direct package use.
+- `/advisor-install` preserves top-level instructions and non-terra advisors, replaces or adds terra by normalized name, validates the native watchdog schema, and writes atomically in `PI_CODING_AGENT_DIR` when set, otherwise `~/.omp/agent`, to `WATCHDOG.yml` or an existing `WATCHDOG.yaml` when no `.yml` file exists. `nikos-advisor install` provides the same setup for direct package use.
 - terra is read-only. omp routes its passive notes, handles concern and blocker interruption, and renders the advisor ui.
 - evidence fields in a terra note are required by its instructions, not by omp's `note` and `severity` schema.
 - plugin uninstall leaves the user watchdog entry until the user removes it manually.
@@ -291,7 +291,7 @@ terra advisor:
 | [`gate-checker/journal.js`](gate-checker/journal.js)                                                                                      | request journal and recovery state                                                    |
 | [`gate-checker/lease.js`](gate-checker/lease.js)                                                                                          | cooperative worktree operation lease                                                   |
 | [`gate-checker/mutation-lease.ts`](gate-checker/mutation-lease.ts)                                                                        | which tool calls take the lease, how long they hold it, and `/gates-lease`             |
-| [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js)                                                                                    | cutover, audit, telemetry, advisor setup, and lease recovery command-line interface   |
+| [`gate-checker/gate-cli.js`](gate-checker/gate-cli.js)                                                                                    | cutover, audit, telemetry, and lease recovery command-line interface                  |
 | [`gate-checker/index.test.ts`](gate-checker/index.test.ts)                                                                              | end-to-end probes of the gate handlers; runs in its own `bun test` process            |
 | [`omnipotence/index.ts`](omnipotence/index.ts)                                                                                            | native omp commands, result tool, session recovery, and hidden-turn scheduling        |
 | [`omnipotence/engine.ts`](omnipotence/engine.ts)                                                                                          | deterministic process replay, effects, subprocesses, modes, and terminal behavior     |
@@ -299,6 +299,8 @@ terra advisor:
 | [`omnipotence/cli.ts`](omnipotence/cli.ts)                                                                                                | public `omnipotence` command-line interface                                           |
 | [`ask-questionnaire/index.ts`](ask-questionnaire/index.ts)                                                                                | questionnaire extension around the native `ask` tool                                  |
 | [`advisor/WATCHDOG.yml`](advisor/WATCHDOG.yml)                                                                                            | native terra advisor watchdog configuration and prompt-enforced evidence rules        |
+| [`advisor/index.ts`](advisor/index.ts)                                                                                                    | `/advisor-install` slash command                                                      |
+| [`advisor/cli.js`](advisor/cli.js)                                                                                                        | `nikos-advisor install` command-line installer                                        |
 | [`orchestrate-prompt/index.ts`](orchestrate-prompt/index.ts)                                                                                       | standalone prose orchestration prompt extension                                      |
 | [`orchestrate-prompt/prompt.md`](orchestrate-prompt/prompt.md)                                                                                     | bundled editable orchestration prompt template                                      |
 | [`docs/orchestrate-prompt-user-guide.md`](docs/orchestrate-prompt-user-guide.md)                                                           | installation, customization, activation, and prompt behavior guide                  |

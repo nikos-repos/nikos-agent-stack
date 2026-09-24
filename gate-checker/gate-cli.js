@@ -6,7 +6,6 @@ import { append as appendledger, read, summarize, LEDGER_PATH } from "./ledger.j
 import { FRUSTRATION_PATH, readRecords } from "./frustrations.js";
 import { resolvescope } from "./scope.js";
 import { auditscope } from "./risks.js";
-import { installadvisor } from "../advisor/install.js";
 import { formatleasestatus, inspectlease, leasefields, releaselease, releasestalelease } from "./lease.js";
 
 function parseArgs(argv) {
@@ -177,27 +176,15 @@ function lease(argv) {
   leaseusage();
   return 2;
 }
-function advisor(argv) {
-  if (argv[0] !== "install") { console.error(`advisor: unknown subcommand "${argv[0] ?? ""}"`); console.error("usage: gate-cli.js advisor install"); return 2; }
-  if (argv.length !== 1) { console.error("advisor install: unexpected arguments"); return 2; }
-  try {
-    const file = installadvisor();
-    console.log(`advisor install: installed terra at ${file}`);
-    console.log("start a new omp session to activate terra");
-    return 0;
-  } catch (error) { console.error(`advisor install: ${error instanceof Error ? error.message : String(error)}`); return 2; }
-}
 const [, , command, ...rest] = process.argv;
 const args = parseArgs(rest);
 let code = 0;
-if (command === "advisor") code = advisor(rest);
-else if (command === "cutover") code = cutover(args);
+if (command === "cutover") code = cutover(args);
 else if (command === "audit") code = audit(args);
 else if (command === "stats") code = stats(args);
 else if (command === "lease") code = lease(rest);
 else {
-  console.log("usage: gate-cli.js <advisor|audit|cutover|stats|lease> [options]");
-  console.log("  advisor install");
+  console.log("usage: gate-cli.js <audit|cutover|stats|lease> [options]");
   console.log("  audit   [--kind uncommitted|request|base|commit] [--base <ref>]");
   console.log("          [--commit <ref>] [--folder <path>] [--cwd <dir>] [--json]");
   console.log("  cutover [--base <ref>] [--cwd <dir>] [--markers <file>]");

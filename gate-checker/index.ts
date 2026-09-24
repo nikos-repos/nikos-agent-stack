@@ -31,7 +31,6 @@ import { journal_type, journal_version, journalfrombranch } from "./journal.js";
 import { auditscope } from "./risks.js";
 import { createMutationLease } from "./mutation-lease.ts";
 import { appendRecord as appendFrustration, validateRecord as validateFrustration } from "./frustrations.js";
-import { installadvisor } from "../advisor/install.js";
 import { questionnaireStop } from "../ask-questionnaire/stop-decision.ts";
 import { omnipotenceStop } from "../omnipotence/stop-decision.ts";
 
@@ -770,24 +769,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.registerCommand("gates-disable", {
     description: "turn every gate off",
     handler: async (_args, context) => applyLevel("off", context),
-  });
-  pi.registerCommand("advisor-install", {
-    description: "install or update the bundled terra advisor",
-    handler: async (args, context) => {
-      if (args.trim()) {
-        context.ui?.notify?.("/advisor-install accepts no arguments", "error");
-        return;
-      }
-      try {
-        const file = installadvisor();
-        context.ui?.notify?.(
-          `advisor install: installed terra at ${file}\nstart a new omp session to activate terra`,
-          "info",
-        );
-      } catch (error) {
-        context.ui?.notify?.(`advisor install: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
   });
   const frustrationSchema = pi.zod.object({
     agent_id: pi.zod.string().describe('your assigned id (e.g. "main" or the subagent id)'),

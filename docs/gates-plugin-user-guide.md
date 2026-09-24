@@ -664,9 +664,9 @@ nikos-gates <command>
 omnipotence --help
 ```
 
-supported `nikos-gates` commands are `advisor install`, `audit`, `cutover`, `lease`, and `stats`. an
-unknown command prints the usage summary. the extension also registers the `/advisor-install`
-slash command, which takes no arguments. see the [advisor role user guide](advisor-role-user-guide.md)
+supported `nikos-gates` commands are `audit`, `cutover`, `lease`, and `stats`. an
+unknown command prints the usage summary. terra advisor setup is separate: the `nikos-advisor install`
+command and the `/advisor-install` slash command. see the [advisor role user guide](advisor-role-user-guide.md)
 for what terra does.
 
 from a repository checkout, `bun run gate-checker/gate-cli.js <command>` runs

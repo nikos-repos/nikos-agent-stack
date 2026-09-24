@@ -20,6 +20,7 @@ const expectedExtensions = [
 	"./omnipotence/index.ts",
 	"./ask-questionnaire/index.ts",
 	"./orchestrate-prompt/index.ts",
+	"./advisor/index.ts",
 ];
 
 const expectedExports = {
@@ -68,6 +69,8 @@ const expectedFiles = [
 	"n-code-mode/doctrine.md",
 	"n-code-mode/CONTRACTS",
 	"docs/n-code-mode-user-guide.md",
+	"advisor/index.ts",
+	"advisor/cli.js",
 	"advisor/install.js",
 	"advisor/WATCHDOG.yml",
 	"README.md",
@@ -149,6 +152,7 @@ test("the package exposes only the declared public surface", async () => {
 		"nikos-gates": "gate-checker/gate-cli.js",
 		omnipotence: "omnipotence/cli.ts",
 		ncm: "n-code-mode/ncm.ts",
+		"nikos-advisor": "advisor/cli.js",
 	});
 	expect(pkg.exports).toEqual(expectedExports);
 	expect(pkg.files).toEqual(expectedFiles);

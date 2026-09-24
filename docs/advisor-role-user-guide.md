@@ -1,23 +1,23 @@
 # terra advisor user guide
 
-`terra` is a native omp advisor configuration. it is not an omp extension. the package `omp.extensions` list contains `gate-checker/index.ts`, `omnipotence/index.ts`, and `ask-questionnaire/index.ts`; `advisor/WATCHDOG.yml` supplies the terra profile. the gate-checker extension registers `/advisor-install`.
+`terra` is a native omp advisor configuration. it is not an omp extension. `advisor/WATCHDOG.yml` supplies the terra profile, and the package extension `advisor/index.ts` registers `/advisor-install`.
 
-source: [package](../package.json), [command registration](../gate-checker/index.ts), [terra profile](../advisor/WATCHDOG.yml)
+source: [package](../package.json), [command registration](../advisor/index.ts), [terra profile](../advisor/WATCHDOG.yml)
 
 ## prerequisites
 
 for the omp flow, use an omp installation with plugin support and the `omp plugin` command. use bun 1.3.14 or later for this package.
 
-the `nikos-gates` command is optional. the package exposes it as a shell bin, and `gate-checker/gate-cli.js` starts with `#!/usr/bin/env bun`. to use this command, make `bun` and the global bun bin directory available on `PATH`:
+the `nikos-advisor` command is optional. the package exposes it as a shell bin, and `advisor/cli.js` starts with `#!/usr/bin/env bun`. to use this command, make `bun` and the global bun bin directory available on `PATH`:
 
 ```sh
 bun add --global nikos-agent-stack
 export PATH="$(bun pm bin -g):$PATH"
 ```
 
-an omp plugin install does not install the `nikos-gates` shell bin.
+an omp plugin install does not install the `nikos-advisor` shell bin.
 
-source: [package](../package.json), [shell command](../gate-checker/gate-cli.js)
+source: [package](../package.json), [shell command](../advisor/cli.js)
 
 ## install and start
 
@@ -55,12 +55,12 @@ then start an omp session and run `/advisor-install`.
 after the global shell-bin prerequisite, run:
 
 ```sh
-nikos-gates advisor install
+nikos-advisor install
 ```
 
-the command accepts only `advisor install`. success prints the installed path and tells you to start a new omp session. success returns exit code `0`; failure prints an `advisor install:` error and returns exit code `2`.
+the command accepts only `install`. success prints the installed path and tells you to start a new omp session. success returns exit code `0`; failure prints an `advisor install:` error and returns exit code `2`.
 
-source: [package](../package.json), [command registration](../gate-checker/index.ts), [shell installer](../gate-checker/gate-cli.js), [installer](../advisor/install.js)
+source: [package](../package.json), [command registration](../advisor/index.ts), [shell installer](../advisor/cli.js), [installer](../advisor/install.js)
 
 ## watchdog configuration
 
@@ -79,9 +79,9 @@ the merge keeps every existing top-level key. it rebuilds `advisors` by keeping 
 
 the installer creates the target directory when needed. it writes the new yaml to a file in a sibling temporary directory named `.watchdog-*`, renames that file over the selected target, and removes the temporary directory. this is the installer’s atomic replacement path.
 
-yaml parse errors, validation errors, packaged-profile errors, directory errors, write errors, and rename errors stop installation. on failure, the commands do not print a success result; temporary-directory cleanup runs after a temporary directory exists. `/advisor-install` reports the error in the omp ui. `nikos-gates advisor install` writes the error to stderr and returns exit code `2`.
+yaml parse errors, validation errors, packaged-profile errors, directory errors, write errors, and rename errors stop installation. on failure, the commands do not print a success result; temporary-directory cleanup runs after a temporary directory exists. `/advisor-install` reports the error in the omp ui. `nikos-advisor install` writes the error to stderr and returns exit code `2`.
 
-source: [installer](../advisor/install.js), [command registration](../gate-checker/index.ts), [shell installer](../gate-checker/gate-cli.js)
+source: [installer](../advisor/install.js), [command registration](../advisor/index.ts), [shell installer](../advisor/cli.js)
 
 ## shipped terra profile
 
@@ -188,7 +188,7 @@ run `/advisor-install`, start a new omp session, run `/advisor on`, and run `/ad
 
 ### a direct shell install fails
 
-use exactly `nikos-gates advisor install`. the direct command rejects another subcommand or extra arguments, prints the failure as `advisor install: ...`, and returns exit code `2`.
+use exactly `nikos-advisor install`. the direct command rejects another subcommand or extra arguments, prints the failure as `advisor install: ...`, and returns exit code `2`.
 
 ### a terra note has incomplete evidence
 
@@ -198,7 +198,7 @@ native omp can accept the note because it validates only `note` and `severity`. 
 
 the shipped model is `openai-codex/gpt-5.6-terra:high`. make that model available to the native omp host, start a new omp session, enable the advisor, and check `/advisor status` again.
 
-source: [terra profile](../advisor/WATCHDOG.yml), [installer](../advisor/install.js), [shell installer](../gate-checker/gate-cli.js), [command registration](../gate-checker/index.ts)
+source: [terra profile](../advisor/WATCHDOG.yml), [installer](../advisor/install.js), [shell installer](../advisor/cli.js), [command registration](../advisor/index.ts)
 
 ## Proposed advisor guidance release
 

@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "types": ["bun"]
   },
-  "include": ["gate-checker/index.ts", "gate-checker/mutation-lease.ts"]
+  "include": ["gate-checker/index.ts", "gate-checker/mutation-lease.ts", "advisor/index.ts"]
 }
