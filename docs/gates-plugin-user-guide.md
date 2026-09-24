@@ -728,7 +728,7 @@ nikos-gates stats \
   --ledger /path/to/ledger.jsonl
 ```
 
-stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, process-shape rate, miss reasons, counts by rule, `clean_under_errors`, and frustration counts by type and source (`agent`, `auto`, or `legacy`). `--json` returns the ledger path, record count, every ledger summary field, `clean_under_errors`, and a nested `frustrations` object with its record count, `byType`, and `bySource` maps.
+stats include record count, continuation chains, resolved chains, cap hits, cap-hit rate, forced retries, inline flags, low: no git runs, counts by rule, `clean_under_errors`, and frustration counts by type and source (`agent`, `auto`, or `legacy`). `--json` returns the ledger path, record count, every ledger summary field, `clean_under_errors`, and a nested `frustrations` object with its record count, `byType`, and `bySource` maps.
 
 source: [stats cli](../gate-checker/gate-cli.js), [ledger aggregation](../gate-checker/ledger.js), [scratchpad reader](../gate-checker/frustrations.js)
 
@@ -805,7 +805,6 @@ record types:
 | `clean_under_errors` | records a valid `none` claim after machine-visible friction; never blocks |
 | `chain_end` | records resolved, stalemate, or cap-reached continuation chains |
 | `no_git` | records no-git operation |
-| `process_shape` | records whether the request matched the structured-process workload |
 | `lease_manual_release` | records a successful stale-only or authorized force release |
 
 ### tuning signals
@@ -815,12 +814,9 @@ record types:
 - **inline flags:** marker issues found early without a full response retry.
 - **clean under errors:** valid `none` records filed after failed tools or non-record blocking continuations.
 - **low: no git runs:** requests that started without git evidence, recorded as `no_git_runs`.
-- **process-shape rate:** bounded changed requests with test evidence.
 - **rule counts:** frequent rules show where users or predicates need attention.
 
-process-shape records classify nonmatches as `no-changes`, `too-broad`, or `no-test-run`. the metric measures possible process use; it does not activate the process.
-
-source: [ledger writer and aggregation](../gate-checker/ledger.js), [process-shape recording](../gate-checker/index.ts)
+source: [ledger writer and aggregation](../gate-checker/ledger.js)
 
 ## troubleshooting
 

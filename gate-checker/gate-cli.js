@@ -111,14 +111,6 @@ function stats(args) {
   console.log(`  inline flags     ${summary.inlineFlags}  <- caught early, no retry needed`);
   console.log(`  low: no git runs ${summary.no_git_runs}`);
   console.log(`  clean under errors ${cleanundererrors}`);
-  if (summary.shapeRequests > 0) {
-    console.log(`  process-shaped  ${summary.shapeMatched}/${summary.shapeRequests} requests  (${(summary.shapeMatchRate * 100).toFixed(1)}%)  <- "a process should have run"`);
-    const misses = Object.entries(summary.shapeMissBy).sort((left, right) => right[1] - left[1]);
-    if (misses.length) {
-      console.log("  not process-shaped because:");
-      for (const [reason, count] of misses) console.log(`    ${String(count).padStart(5)}  ${reason}`);
-    }
-  }
   for (const [title, values] of [["fires by rule:", summary.byRule], ["inline flags by rule:", summary.inlineByRule]]) {
     const entries = Object.entries(values).sort((left, right) => right[1] - left[1]);
     if (!entries.length) continue;

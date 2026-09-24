@@ -30,7 +30,6 @@ export function summarize(records) {
   const byRule = {};
   const inlineByRule = {};
   const releasedByReason = {};
-  const processMissBy = {};
   let chains = 0;
   let capHits = 0;
   let resolved = 0;
@@ -38,8 +37,6 @@ export function summarize(records) {
   let continuations = 0;
   let inlineFlags = 0;
   let no_git_runs = 0;
-  let processRequests = 0;
-  let processMatched = 0;
   for (const record of records) {
     if (record.event === "gate_eval") {
       for (const rule of Array.isArray(record.rules) ? record.rules : []) increment(byRule, rule);
@@ -59,19 +56,11 @@ export function summarize(records) {
       }
     } else if (record.event === "no_git" || record.event === "degraded") {
       no_git_runs++;
-    } else if (record.event === "process_shape") {
-      processRequests++;
-      if (record.matched) processMatched++;
-      else increment(processMissBy, String(record.reason ?? "unknown"));
     }
   }
   return {
     chains, resolved, capHits, capHitRate: chains ? capHits / chains : 0,
     continuations, releasedWithFailures, releasedByReason, inlineFlags,
     no_git_runs, byRule, inlineByRule,
-    "shapeRequests": processRequests,
-    "shapeMatched": processMatched,
-    "shapeMatchRate": processRequests ? processMatched / processRequests : 0,
-    "shapeMissBy": processMissBy,
   };
 }

@@ -231,12 +231,6 @@ type BoundaryValue =
   | SessionEvent;
 type BoundarySchema<T> = { safeParse(value: BoundaryValue): { success: true; data: T } | { success: false } };
 type DiffEvidence = { changed: Set<string>; added: AddedMap };
-type ProcessCandidate = {
-  matched: boolean;
-  changed: number;
-  testRan: boolean;
-  reason: "no-changes" | "too-broad" | "no-test-run" | null;
-};
 type JournalFields = {
   outcome?: string;
   release_reason?: string;
@@ -287,7 +281,6 @@ const SUBAGENT_REFERENCE_RE =
   /\b(sub-?agents?|reviewers?|review(?:ed|s)?\s+(?:by|agent)|delegat(?:e|ed|ion)|spawned\s+agents?|per\s+the\s+review|according\s+to\s+the\s+(?:review|agent)|the\s+agent\s+(?:reported|found|said|confirmed)|its?\s+report)\b/i;
 const COMMIT_BOUNDARY_RE = /(?:^|[;&|(])\s*git\s+commit\b(?![-_])/;
 const MAX_CONTINUATIONS = 3;
-const PROCESS_MAX_FILES = 8;
 
 function freshEvidence(): TurnEvidence {
   return {
@@ -753,13 +746,6 @@ function runCommitGate(cwd: string): GateFailure | null {
   } catch {
     return null;
   }
-}
-function processCandidate(ev: TurnEvidence, changed: number): ProcessCandidate {
-  const testRan = ranTestRunner(ev);
-  if (!changed) return { matched: false, changed, testRan, reason: "no-changes" };
-  if (changed > PROCESS_MAX_FILES) return { matched: false, changed, testRan, reason: "too-broad" };
-  if (!testRan) return { matched: false, changed, testRan, reason: "no-test-run" };
-  return { matched: true, changed, testRan, reason: null };
 }
 function formatFailures(failures: GateFailure[]): string {
   return `[GATE CHECKER — deterministic post-turn gate]\n\nthe following machine-checked gates failed:\n\n${failures.map((failure, index) => `${index + 1}. ${failure.gate}/${failure.rule}\n   ${failure.detail}`).join("\n\n")}\n\nthese are deterministic checks, not model judgment. fix each failure before yielding. do not repeat the same response.`;
@@ -1622,20 +1608,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     state: RequestState,
     failures: GateFailure[],
   ): SessionStopResult | void => {
-    const candidate = processCandidate(evidence, state.changedCount);
-    const recordProcess = (
-      outcome: "gates_clean" | "released_with_failures",
-      release_reason: string | null = null,
-    ): void =>
-      ledger.append("process_shape", {
-        ...candidate,
-        outcome,
-        release_reason,
-        hasGit: state.hasGit,
-        subagents: evidence.subagents.length,
-        continuations: continuationCount,
-        cwd: state.cwd,
-      });
     const graded = applyPolicy(failures, policy);
     const blocking = graded.filter((failure) => (failure.severity ?? "block") === "block");
     const warnings = graded.filter((failure) => failure.severity === "warn");
@@ -1666,7 +1638,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         )
       : null;
     if (blockingKey && continuationCount > 0 && blockingKey === lastBlockingKey) {
-      recordProcess("released_with_failures", "stalemate");
       try {
         const rules = [...new Set(blocking.map((failure) => failure.rule))].join(", ");
         context.ui?.notify?.(
@@ -1692,7 +1663,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     lastBlockingKey = blockingKey;
 
     if (!blocking.length) {
-      recordProcess("gates_clean");
       try {
         context.ui?.setStatus?.("gate", state.hasGit ? "✓ gates passed" : "✓ gates passed · low: no git");
       } catch {}
@@ -1725,7 +1695,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     appendJournal("continuation", { continuation: continuationCount, failure_hash: blockingKey });
 
     if (continuationCount > MAX_CONTINUATIONS) {
-      recordProcess("released_with_failures", "continuation_cap");
       try {
         context.ui?.notify?.(
           `gate checker: ${blocking.length} unresolved failure(s) after ${continuationCount} continuations — review manually`,
