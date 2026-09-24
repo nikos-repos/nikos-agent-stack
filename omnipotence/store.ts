@@ -822,13 +822,15 @@ export class orchestrationstore {
 		const versionrow = this.data.query("pragma user_version").get() as { user_version: number };
 		if (versionrow.user_version > 8)
 			throw new Error(`database schema ${versionrow.user_version} is newer than supported 8`);
+		// a current schema opens without replaying history: projection drift is doctor's to report
+		// and repair's to fix, and blocking the open here would lock repair out of the very store it fixes.
+		if (versionrow.user_version === 8) return;
 		if (versionrow.user_version > 0) {
 			const issues = this.eventprojectionissues();
 			if (issues.length > 0) {
 				throw new Error(`database migration blocked: ${issues.join("; ")}`);
 			}
 		}
-		if (versionrow.user_version === 8) return;
 		if (versionrow.user_version === 7) {
 			const backup = `${this.path}.migration-v7-${Date.now()}`;
 			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);

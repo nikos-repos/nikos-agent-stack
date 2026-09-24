@@ -501,20 +501,24 @@ describe("authoritative orchestration store", () => {
 		store.close();
 	});
 	test("doctor detects projection drift and repair restores it from events", () => {
-		const { store, path } = openstore();
-		const run = createrun(store);
-		const effect = store.requesteffect(run.id, {
+		const opened = openstore();
+		const path = opened.path;
+		const run = createrun(opened.store);
+		const effect = opened.store.requesteffect(run.id, {
 			key: "repair-check",
 			kind: "task",
 			input: { value: 1 },
 		});
-		store.transitionrun(run.id, "running");
+		opened.store.transitionrun(run.id, "running");
+		opened.store.close();
 
 		const external = new Database(path);
 		external.query("update runs set status = 'failed' where id = ?").run(run.id);
 		external.query("delete from effects where id = ?").run(effect.id);
 		external.close();
 
+		// a drifted store must still open, or repair can never reach it.
+		const store = new orchestrationstore(path);
 		const report = store.doctor();
 		expect(report.ok).toBe(false);
 		expect(report.issues).toContain(`run ${run.id} projection status failed does not match running`);
