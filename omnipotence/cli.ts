@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { blueprintservice } from "./blueprints.ts";
-import { jsonvalueof, parsejson } from "./contracts.ts";
+import { errormessage, jsonvalueof, parsejson } from "./contracts.ts";
 import type { jsonvalue, orchestrationmode } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import type { advanceresult } from "./engine.ts";
@@ -543,7 +543,7 @@ export async function runcli(argv: readonly string[], options: clioptions = {}):
 		throw new clierror(`unknown command ${group}`);
 	} catch (error) {
 		const known = error instanceof clierror;
-		const message = error instanceof Error ? error.message : String(error);
+		const message = errormessage(error);
 		const conflict =
 			/stale .*fence|blocked|uncertain|conflict|leased|terminal|already has active run/u.test(message);
 		const validation = error instanceof TypeError;

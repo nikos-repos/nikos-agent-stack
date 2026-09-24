@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertenginecompatibility, hashcontent, hashfiles } from "./blueprints.ts";
-import { defineprocess, jsonvalueof, objectrecord, stablejson, stringfield } from "./contracts.ts";
+import { defineprocess, isterminal, jsonvalueof, objectrecord, stablejson, stringfield } from "./contracts.ts";
 import type { jsonschema, jsonvalue, processcontext, processdefinition } from "./contracts.ts";
 import type { orchestrationengine } from "./engine.ts";
 import { definehook } from "./hooks.ts";
@@ -109,7 +109,7 @@ export async function loadactiveblueprints(
 	const pinned = new Set(
 		store
 			.listruns()
-			.filter((run) => run.status !== "completed" && run.status !== "failed" && run.status !== "halted")
+			.filter((run) => !isterminal(run.status))
 			.filter((run) => run.blueprintname !== null && run.blueprintversion !== null)
 			.map((run) => `${run.blueprintname}@${run.blueprintversion}`),
 	);

@@ -29,6 +29,17 @@ export type runstatus =
 	| "failed"
 	| "halted";
 
+const terminalrunstatuses: ReadonlySet<string> = new Set(["completed", "failed", "halted"]);
+
+// a finished run never advances again. the single spelling of that rule.
+export function isterminal(status: string | null | undefined): boolean {
+	return status !== null && status !== undefined && terminalrunstatuses.has(status);
+}
+
+export function errormessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export type effectstatus = "requested" | "resolved_ok" | "resolved_error" | "uncertain" | "cancelled";
 export type effectkind = "task" | "parallel" | "subprocess" | "sleep" | "breakpoint" | "hook";
 export type orchestrationmode = "babysit" | "plan" | "yolo" | "forever";

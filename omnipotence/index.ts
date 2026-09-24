@@ -2,7 +2,15 @@ import type { TSchema } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
-import { jsonvalueof, objectrecord, parsejson, stablejson, stringfield } from "./contracts.ts";
+import {
+	errormessage,
+	isterminal,
+	jsonvalueof,
+	objectrecord,
+	parsejson,
+	stablejson,
+	stringfield,
+} from "./contracts.ts";
 import type { jsonvalue, orchestrationmode } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
 import type { advanceresult } from "./engine.ts";
@@ -113,10 +121,6 @@ function commandinput(args: unknown, command: string): { processid: string; inpu
 	return { processid, input: commandjson(json, "omnipotence input") };
 }
 
-function terminalstatus(status: string | undefined): boolean {
-	return status === "completed" || status === "failed" || status === "halted";
-}
-
 // a real type guard, not an alias: `effects` lives only on the waiting arm of advanceresult,
 // so every reader of result.effects has to pass through this to be honest about the union.
 function waiting(result: advanceresult): result is advanceresult & { status: "waiting" } {
@@ -173,22 +177,22 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		});
 	};
 	const stale = (result: advanceresult): boolean =>
-		closed || (!terminalstatus(result.status) && terminalstatus(store.getrun(result.run.id)?.status));
+		closed || (!isterminal(result.status) && isterminal(store.getrun(result.run.id)?.status));
 	// the one question every dispatch retry path asks: is this effect still worth acting on?
 	const effectstillpending = (rootrunid: string, effect: effectrecord): boolean => {
 		const current = store.geteffect(effect.runid, effect.id);
 		const root = store.getrun(rootrunid);
-		return current?.status === "requested" && root !== null && !terminalstatus(root.status);
+		return current?.status === "requested" && root !== null && !isterminal(root.status);
 	};
 	const blockrun = (runid: string, reason: string) => {
 		let run = store.getrun(runid);
-		if (!run || terminalstatus(run.status)) return null;
+		if (!run || isterminal(run.status)) return null;
 		if (run.status !== "blocked") {
 			try {
 				run = store.transitionrun(run.id, "blocked", null, reason);
 			} catch (error) {
 				const current = store.getrun(runid);
-				if (!current || terminalstatus(current.status)) return null;
+				if (!current || isterminal(current.status)) return null;
 				throw error;
 			}
 		}
@@ -249,7 +253,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				if (closed) return;
 			} catch (error) {
 				if (closed) return;
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				if (/stale .*fence/.test(message)) {
 					const current = store.geteffect(effect.runid, effect.id);
 					if (current?.fence !== effect.fence) return;
@@ -308,7 +312,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				} catch (error) {
 					if (!effectstillpending(result.run.id, effect)) continue;
 					revertclaims();
-					const message = error instanceof Error ? error.message : String(error);
+					const message = errormessage(error);
 					if (!blockdispatch(`hidden-turn dispatch intent failed: ${message}`)) return scheduled;
 					throw error;
 				}
@@ -326,7 +330,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 					);
 				} catch (error) {
 					revertclaims();
-					const message = error instanceof Error ? error.message : String(error);
+					const message = errormessage(error);
 					if (blockdispatch(`hidden-turn scheduling failed: ${message}`)) throw error;
 					return scheduled;
 				}
@@ -335,7 +339,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 						store.markeffectdispatched(effect.runid, effect.id, effect.fence);
 					}
 				} catch (error) {
-					const message = error instanceof Error ? error.message : String(error);
+					const message = errormessage(error);
 					if (blockdispatch(`hidden-turn dispatch acknowledgement failed: ${message}`)) throw error;
 					return scheduled;
 				}
@@ -510,7 +514,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		if (!run) return;
 		await ensureloaded();
 		const result = await engine.advance(run.id);
-		if (terminalstatus(result.status)) {
+		if (isterminal(result.status)) {
 			appendstate(result);
 			return;
 		}
@@ -601,7 +605,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			});
 		}
 		const recovered = store.getrun(run.id);
-		if (!unsafe && recovered && recovered.status !== "blocked" && !terminalstatus(recovered.status)) {
+		if (!unsafe && recovered && recovered.status !== "blocked" && !isterminal(recovered.status)) {
 			await schedule(result);
 		}
 		if (recovered) pi.appendEntry(stateentry, { runid: recovered.id, status: recovered.status });

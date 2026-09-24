@@ -15,6 +15,8 @@ import {
 	assertprocessid,
 	assertversion,
 	compareversions,
+	errormessage,
+	isterminal,
 	jsonvalueof,
 	objectrecord,
 	parsejson,
@@ -59,7 +61,6 @@ const manifestfields: Record<string, true> = {
 	migrations: true,
 };
 const engineversion = packagejson.version;
-const terminalstates: Record<string, true> = { completed: true, failed: true, halted: true };
 
 export function assertenginecompatibility(manifestvalue: jsonvalue, name: string, version: string): void {
 	const manifest = objectrecord(manifestvalue, "blueprint.manifest");
@@ -207,18 +208,6 @@ function migrationpatch(manifest: Record<string, jsonvalue>, from: string): json
 	return null;
 }
 
-function processids(record: blueprintrecord): Set<string> {
-	const manifest = objectrecord(record.manifest, "blueprint.manifest");
-	const entries = manifest.processes;
-	const ids = new Set<string>();
-	if (!Array.isArray(entries)) return ids;
-	for (const value of entries) {
-		const entry = objectrecord(value, "blueprint.process");
-		if (typeof entry.id === "string") ids.add(entry.id);
-	}
-	return ids;
-}
-
 export class blueprintservice {
 	private readonly store: orchestrationstore;
 	private readonly installroot: string;
@@ -350,7 +339,7 @@ export class blueprintservice {
 					issues.push(`blueprint ${identity} registry content hash mismatch`);
 				}
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				issues.push(`blueprint ${identity} verification failed: ${message}`);
 			}
 		}
@@ -371,14 +360,8 @@ export class blueprintservice {
 	remove(name: string, version: string): void {
 		const record = this.store.getblueprint(name, version);
 		if (!record) throw new Error(`blueprint ${name}@${version} is not installed`);
-		const ids = processids(record);
 		for (const run of this.store.listruns()) {
-			if (
-				run.blueprintname === name &&
-				run.blueprintversion === version &&
-				ids.has(run.processid) &&
-				!Object.hasOwn(terminalstates, run.status)
-			) {
+			if (run.blueprintname === name && run.blueprintversion === version && !isterminal(run.status)) {
 				throw new Error(`blueprint ${name}@${version} is pinned by active run ${run.id}`);
 			}
 		}

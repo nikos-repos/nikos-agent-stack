@@ -4,6 +4,8 @@ import {
 	assertprocessid,
 	assertvalid,
 	compareversions,
+	errormessage,
+	isterminal,
 	jsonvalueof,
 	objectrecord,
 	stablejson,
@@ -14,13 +16,14 @@ import type {
 	orchestrationmode,
 	parallelrequest,
 	processcontext,
+	processblueprint,
 	processdefinition,
 } from "./contracts.ts";
 import { hookdispatcherror, hookregistry } from "./hooks.ts";
 import type { hookphase, hookresult, hookselector } from "./hooks.ts";
 import { modepolicy } from "./processes.ts";
 import type { profileservice } from "./profiles.ts";
-import { childrunprefix, orchestrationstore } from "./store.ts";
+import { childrunprefix, orchestrationstore, runblueprint } from "./store.ts";
 import type { effectpost, effectrecord, hookdeliveryrecord, runrecord, uncertainresolution } from "./store.ts";
 
 export interface startinput {
@@ -227,7 +230,7 @@ export class orchestrationengine {
 	resolveprocess(
 		processid: string,
 		version?: string,
-		blueprint?: { name: string; version: string },
+		blueprint?: processblueprint | null,
 	): Readonly<processdefinition> {
 		assertprocessid(processid);
 		const candidates = [...this.processes.values()]
@@ -244,7 +247,7 @@ export class orchestrationengine {
 		}
 		const selected = candidates[0]!;
 		if (
-			blueprint === undefined &&
+			!blueprint &&
 			candidates.length > 1 &&
 			compareversions(selected.version, candidates[1]!.version) === 0
 		) {
@@ -255,11 +258,7 @@ export class orchestrationengine {
 	private async dispatchphase(runid: string, phase: hookphase, input: jsonvalue): Promise<hookresult[]> {
 		const run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);
-		const blueprint =
-			run.blueprintname && run.blueprintversion
-				? { name: run.blueprintname, version: run.blueprintversion }
-				: null;
-		const results = await this.hooks.dispatchfor(phase, input, blueprint);
+		const results = await this.hooks.dispatchfor(phase, input, runblueprint(run));
 		for (const result of results) this.store.recordevent(runid, "hook_completed", jsonvalueof(result));
 		return results;
 	}
@@ -283,7 +282,7 @@ export class orchestrationengine {
 			this.store.completehookdelivery(delivery);
 			this.store.recordevent(delivery.runid, "hook_completed", jsonvalueof(result));
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errormessage(error);
 			this.store.failhookdelivery(delivery, message);
 			throw error;
 		}
@@ -297,13 +296,9 @@ export class orchestrationengine {
 	): Promise<void> {
 		const run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);
-		const blueprint =
-			run.blueprintname && run.blueprintversion
-				? { name: run.blueprintname, version: run.blueprintversion }
-				: null;
 		const input = { runid, effectid, status };
 		const existing = this.store.listhookdeliveries(runid, effectid);
-		for (const hook of this.hooks.listfor("effect_resolved", blueprint)) {
+		for (const hook of this.hooks.listfor("effect_resolved", runblueprint(run))) {
 			const known = existing.find(
 				(delivery) =>
 					delivery.hookid === hook.id &&
@@ -334,7 +329,7 @@ export class orchestrationengine {
 		try {
 			await this.dispatchphase(runid, phase, input);
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errormessage(error);
 			this.store.recordevent(runid, "hook_failed", { phase, message });
 		}
 	}
@@ -343,9 +338,7 @@ export class orchestrationengine {
 		const process = this.resolveprocess(
 			input.processid,
 			input.processversion,
-			input.blueprintname && input.blueprintversion
-				? { name: input.blueprintname, version: input.blueprintversion }
-				: undefined,
+			runblueprint(input),
 		);
 		assertvalid(process.input, input.input, "run.input");
 		const policy = modepolicy(input.mode);
@@ -374,7 +367,7 @@ export class orchestrationengine {
 			});
 			return run;
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errormessage(error);
 			this.store.recordevent(run.id, "hook_failed", { phase: "run_start", message });
 			const failed = this.store.transitionrun(run.id, "failed", null, message);
 			await this.postsafe(run.id, "run_failed", { runid: run.id, error: message });
@@ -490,13 +483,7 @@ export class orchestrationengine {
 		assertprocessid(processid);
 		let childprocess: Readonly<processdefinition>;
 		try {
-			childprocess = this.resolveprocess(
-				processid,
-				undefined,
-				run.blueprintname && run.blueprintversion
-					? { name: run.blueprintname, version: run.blueprintversion }
-					: undefined,
-			);
+			childprocess = this.resolveprocess(processid, undefined, runblueprint(run));
 		} catch {
 			childprocess = this.resolveprocess(processid);
 		}
@@ -610,14 +597,10 @@ export class orchestrationengine {
 							: undefined,
 			};
 		} else {
+			const blueprint = runblueprint(run);
 			const selected = this.hooks.resolve(
 				hookid,
-				run.blueprintname && run.blueprintversion
-					? {
-						blueprintname: run.blueprintname,
-						blueprintversion: run.blueprintversion,
-					}
-					: {},
+				blueprint ? { blueprintname: blueprint.name, blueprintversion: blueprint.version } : {},
 			);
 			selector = {
 				version: selected.version,
@@ -717,7 +700,7 @@ export class orchestrationengine {
 		for (const ownedrunid of this.store.ownedrunids(runid).reverse()) {
 			const run = this.store.getrun(ownedrunid);
 			if (!run) throw new Error(`run ${ownedrunid} does not exist`);
-			if (run.status === "completed" || run.status === "failed" || run.status === "halted") continue;
+			if (isterminal(run.status)) continue;
 			this.store.bumpfence(run.id);
 			const halted = this.store.transitionrun(run.id, "halted", null, reason);
 			await this.postsafe(run.id, "run_halted", {
@@ -752,13 +735,7 @@ export class orchestrationengine {
 			}
 			run = this.store.transitionrun(runid, "running");
 		}
-		const process = this.resolveprocess(
-			run.processid,
-			run.processversion,
-			run.blueprintname && run.blueprintversion
-				? { name: run.blueprintname, version: run.blueprintversion }
-				: undefined,
-		);
+		const process = this.resolveprocess(run.processid, run.processversion, runblueprint(run));
 		if (processhash(process) !== run.processhash) return this.block(runid, "process source changed during replay");
 
 		if (run.status === "created") run = this.store.transitionrun(runid, "running");
@@ -803,7 +780,7 @@ export class orchestrationengine {
 			if (error instanceof processblocked || error instanceof hookdispatcherror) {
 				return this.block(runid, error.message);
 			}
-			const message = error instanceof Error ? error.message : String(error);
+			const message = errormessage(error);
 			const failed = this.store.transitionrun(runid, "failed", null, message);
 			await this.postsafe(runid, "run_failed", { runid, error: message });
 			return { status: "failed", run: failed, error: message };
@@ -829,7 +806,7 @@ export class orchestrationengine {
 			try {
 				await this.dispatchresolvedeffect(post.rootrunid, post.runid, post.effectid, effect.status);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				const blocked = await this.block(post.rootrunid, message);
 				if (blocked.status !== "blocked") throw new Error(message);
 				return { status: "blocked", run: blocked.run, effect, reason: blocked.reason };
@@ -907,7 +884,7 @@ export class orchestrationengine {
 			try {
 				retried = await this.retrypendinghookdeliveries(runid);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				return this.block(runid, message);
 			}
 			for (const retriedrunid of retried) {
@@ -948,7 +925,7 @@ export class orchestrationengine {
 					decision: resolution.decision,
 				});
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				return this.block(resolution.rootrunid, message);
 			}
 			if (!modepolicy(root.mode).persistent && root.turns >= root.maxturns) {
@@ -958,7 +935,7 @@ export class orchestrationengine {
 			try {
 				await this.dispatchresolvedeffect(resolution.rootrunid, resolution.runid, resolution.effectid, resolved.status);
 			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				return this.block(resolution.rootrunid, message);
 			}
 			return this.advanceclaimed(resolution.rootrunid);

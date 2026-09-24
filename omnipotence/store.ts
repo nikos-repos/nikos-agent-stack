@@ -6,6 +6,8 @@ import {
 	asserteffectkey,
 	assertprocessid,
 	assertversion,
+	errormessage,
+	isterminal,
 	jsonvalueof,
 	numberfield,
 	objectrecord,
@@ -13,7 +15,15 @@ import {
 	stablejson,
 	stringfield,
 } from "./contracts.ts";
-import type { effectkind, effectstatus, jsonvalue, orchestrationmode, processparent, runstatus } from "./contracts.ts";
+import type {
+	effectkind,
+	effectstatus,
+	jsonvalue,
+	orchestrationmode,
+	processblueprint,
+	processparent,
+	runstatus,
+} from "./contracts.ts";
 
 export interface runrecord {
 	id: string;
@@ -274,8 +284,16 @@ const effectstatuses: Record<effectstatus, true> = {
 	uncertain: true,
 	cancelled: true,
 };
-const terminalstatuses: Record<string, true> = { completed: true, failed: true, halted: true };
 export const childrunprefix = "child-";
+
+// a run's blueprint identity is stored as two nullable columns written together; this is the one read of it.
+export function runblueprint(run: {
+	blueprintname?: string | null;
+	blueprintversion?: string | null;
+}): processblueprint | null {
+	if (!run.blueprintname || !run.blueprintversion) return null;
+	return { name: run.blueprintname, version: run.blueprintversion };
+}
 const transitions: Record<runstatus, readonly runstatus[]> = {
 	created: ["running", "waiting_effect", "waiting_for_user", "blocked", "completed", "failed", "halted"],
 	running: ["waiting_effect", "waiting_for_user", "blocked", "completed", "failed", "halted"],
@@ -740,7 +758,7 @@ export class orchestrationstore {
 				}
 			}
 		} catch (error) {
-			replay.issues.push(`event verification failed: ${error instanceof Error ? error.message : String(error)}`);
+			replay.issues.push(`event verification failed: ${errormessage(error)}`);
 		}
 		// a lease claim is the durable epoch; projection payloads only set a floor for unclaimed runs.
 		for (const [runid, epoch] of claimepochs) replay.leaseepochs.set(runid, epoch);
@@ -1136,7 +1154,7 @@ export class orchestrationstore {
 		if (sessionid.length === 0) throw new TypeError("session id is required");
 		return this.transact(() => {
 			let run = this.requiredrun(runid);
-			if (Object.hasOwn(terminalstatuses, run.status)) throw new Error(`run ${runid} is terminal`);
+			if (isterminal(run.status)) throw new Error(`run ${runid} is terminal`);
 			const occupied = this.getsessionrun(sessionid);
 			if (occupied && occupied.id !== runid && !force) {
 				throw new Error(`session ${sessionid} already has active run ${occupied.id}`);
@@ -1451,7 +1469,7 @@ export class orchestrationstore {
 		const inputhash = sha256(inputjson);
 		return this.transact(() => {
 			const run = this.requiredrun(runid);
-			if (Object.hasOwn(terminalstatuses, run.status)) throw new Error(`run ${runid} is terminal`);
+			if (isterminal(run.status)) throw new Error(`run ${runid} is terminal`);
 			const existing = this.geteffectbykey(runid, request.key);
 			if (existing) {
 				if (existing.kind !== request.kind || existing.inputhash !== inputhash) {
@@ -1762,7 +1780,7 @@ export class orchestrationstore {
 			);
 		const updated = this.requiredrun(run.id);
 		this.appendevent(run.id, "run_status", jsonvalueof(updated));
-		if (Object.hasOwn(terminalstatuses, status) && run.sessionid) {
+		if (isterminal(status) && run.sessionid) {
 			this.data.query("delete from sessions where session_id = ?").run(run.sessionid);
 			this.appendevent(run.id, "session_unbound", { sessionid: run.sessionid, runid: run.id });
 		}
@@ -1845,12 +1863,12 @@ export class orchestrationstore {
 					`session ${binding.session_id} points to run ${run.id} with projection session ${run.session_id ?? "<none>"}`,
 				);
 			}
-			if (Object.hasOwn(terminalstatuses, run.status)) {
+			if (isterminal(run.status)) {
 				issues.push(`session ${binding.session_id} points to terminal run ${run.id}`);
 			}
 		}
 		for (const run of runrows) {
-			if (!run.session_id || Object.hasOwn(terminalstatuses, run.status)) continue;
+			if (!run.session_id || isterminal(run.status)) continue;
 			if (sessionbyrun.get(run.id) !== run.session_id) {
 				issues.push(`run ${run.id} projection session ${run.session_id} has no matching binding`);
 			}

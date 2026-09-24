@@ -1,4 +1,4 @@
-import { assertprocessid, assertversion, compareversions, jsonvalueof } from "./contracts.ts";
+import { assertprocessid, assertversion, compareversions, errormessage, jsonvalueof } from "./contracts.ts";
 import type { jsonvalue, processblueprint } from "./contracts.ts";
 
 export type hookphase =
@@ -202,7 +202,7 @@ export class hookregistry {
 						`hook ${hook.id} timed out after ${hook.timeoutms}ms during ${hook.phase}`,
 					);
 				}
-				const message = error instanceof Error ? error.message : String(error);
+				const message = errormessage(error);
 				throw new hookdispatcherror(
 					hook.id,
 					hook.phase,
