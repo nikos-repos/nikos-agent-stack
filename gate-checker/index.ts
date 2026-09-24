@@ -285,8 +285,10 @@ const commitRoutingEnabled = existsSync(COMMIT_SCRIPT_PATH);
 const SNAPSHOT_TAG_RE = /\[([^\]]+?)#([0-9A-Fa-f]{4})\]/g;
 const TEST_PASS_RE = /\b(?:tests?|specs?|suite)\s+(?:pass(?:ed|es)?|succeed(?:ed|s)?|are\s+(?:green|passing))\b/i;
 const ALL_PASS_RE = /\b(?:all|every)\s+(?:tests?|specs?)\s+pass\b/i;
+// ponytail: the runner must start a shell command (after optional VAR=value assignments); wrappers such as
+// `timeout 60 bun test` are not recognized, add them when they show up.
 const TEST_RUNNER_RE =
-  /(?:npm\s+(?:test|run\s+test)|npx\s+(?:jest|vitest|mocha|playwright)|yarn\s+test|pnpm\s+(?:test|run\s+test)|pytest|python\s+-m\s+(?:pytest|unittest)|cargo\s+test|go\s+test|bun\s+(?:test|run\s+test)|bunx\s+(?:playwright|vitest)|node\s+--test|tsx\s+--test|jest|vitest|mocha|rspec|bundle\s+exec\s+(?:rspec|minitest)|deno\s+test|gradle\s+test|mvn\s+test)/i;
+  /(?:^|[;&|(])\s*(?:\w+=\S*\s+)*(?:npm\s+(?:test|run\s+test)|npx\s+(?:jest|vitest|mocha|playwright)|yarn\s+test|pnpm\s+(?:test|run\s+test)|pytest|python\s+-m\s+(?:pytest|unittest)|cargo\s+test|go\s+test|bun\s+(?:test|run\s+test)|bunx\s+(?:playwright|vitest)|node\s+--test|tsx\s+--test|jest|vitest|mocha|rspec|bundle\s+exec\s+(?:rspec|minitest)|deno\s+test|gradle\s+test|mvn\s+test)\b/i;
 const MOD_CLAIM_RE =
   /(?:modif(?:ied|y)|updated?|changed?|edited?|added?\s+to|fixed?\s+in|refactored?|rewrote?|replaced?|removed?\s+(?:from|in)|deleted?\s+(?:from|in))\s+`([a-zA-Z0-9_./~-]+[/][a-zA-Z0-9_./~-]+\.[a-zA-Z]{1,8})`/gi;
 const SUBAGENT_REFERENCE_RE =

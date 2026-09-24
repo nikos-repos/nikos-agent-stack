@@ -322,6 +322,17 @@ try {
   }
 
   {
+    const probe = harness(repository(), "medium");
+    await start(probe);
+    await writeChange(probe, "two\n");
+    const bash = (command) => probe.handlers.tool_result({ toolName: "bash", toolCallId: command, input: { command }, content: [{ type: "text", text: "" }], isError: false }, probe.context);
+    await bash("grep -rn jest package.json");
+    assert((await finish(probe, "updated the file"))?.additionalContext.includes("no_test_run"), "an incidental runner name must not count as a test run");
+    await bash("cd src && bun test");
+    assert(await finish(probe, "updated the file") === undefined, "a runner at a command boundary must count as a test run");
+  }
+
+  {
     const probe = harness(repository(), "low", "false");
     await start(probe);
     await writeChange(probe, "two\n");
