@@ -757,7 +757,7 @@ the default acquisition wait is 5000 ms. polling uses a 50 ms interval with up t
 
 a matching terminal event releases the lease. background bash remains owned until terminal async state, a matching job snapshot, cancellation, or stale recovery. `/gates-lease status`, `/gates-lease on`, and `/gates-lease off` inspect or change only the current session. `off` refuses while this gate instance tracks an active operation and otherwise releases only its idle lease. external editors and processes that do not use gate-aware native tools remain outside this cooperative guarantee.
 
-source: [lease cli](../gate-checker/gate-cli.js), [lease records and recovery](../gate-checker/lease.js), [ledger](../gate-checker/ledger.js)
+source: [lease cli](../gate-checker/gate-cli.js), [lease records and recovery](../gate-checker/lease.js), [tool-call lease integration](../gate-checker/mutation-lease.ts), [ledger](../gate-checker/ledger.js)
 
 ## repository scopes and audit
 

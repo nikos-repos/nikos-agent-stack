@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve as resolvePath } from "node:path";
+import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
 
 const tag = Object.prototype.toString;
 export const isText = (value) => tag.call(value) === "[object String]";
@@ -170,6 +170,10 @@ export function checkAddedLines(added, markers) {
 }
 
 export const normalizePath = (path) => path.replace(/^\.\//, "");
+export function isInside(root, path) {
+  const rel = relative(root, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
 export function makeClaimMatcher(changedFiles, repoRoot, cwd) {
   const normalized = new Set([...changedFiles].map(normalizePath));
   if (!repoRoot) return (claim) => normalized.has(normalizePath(claim));

@@ -36,6 +36,7 @@ const expectedFiles = [
 	"gate-checker/config.js",
 	"gate-checker/scope.js",
 	"gate-checker/lease.js",
+	"gate-checker/mutation-lease.ts",
 	"gate-checker/risks.js",
 	"gate-checker/provenance.js",
 	"gate-checker/journal.js",
