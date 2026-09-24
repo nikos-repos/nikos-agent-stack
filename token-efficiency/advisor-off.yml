@@ -1,0 +1,5 @@
+# flag: run without the terra advisor. it made 12.6% of spend in the last 30 days and
+# one advise note per ~32 advisor requests; measure task success before turning it off for good.
+# run with: omp --config token-efficiency/advisor-off.yml
+advisor:
+  enabled: false

@@ -1,0 +1,5 @@
+# flag: compact at 250k tokens instead of 85% of a 1M window (850k).
+# 82.5% of main-agent cost in the last 30 days came from requests above 200k context.
+# run with: omp --config token-efficiency/compaction-250k.yml
+compaction:
+  thresholdTokens: 250000
