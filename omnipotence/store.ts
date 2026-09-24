@@ -1477,13 +1477,28 @@ export class orchestrationstore {
 		});
 	}
 
+	// the one guard every effect write passes: the caller's fence must still own both the run and
+	// the effect, and when it names an input hash, that hash must be the one committed.
+	fencedeffect(
+		runid: string,
+		effectid: string,
+		fence: number,
+		inputhash?: string,
+	): { run: runrecord; effect: effectrecord } {
+		const run = this.requiredrun(runid);
+		if (run.fence !== fence) throw new Error(`stale fence ${fence}; current fence is ${run.fence}`);
+		const effect = this.geteffect(runid, effectid);
+		if (!effect) throw new Error(`effect ${effectid} does not exist`);
+		if (effect.fence !== fence) throw new Error(`stale effect fence ${effect.fence}; current fence is ${fence}`);
+		if (inputhash !== undefined && effect.inputhash !== inputhash) {
+			throw new Error(`effect ${effect.id} input hash mismatch`);
+		}
+		return { run, effect };
+	}
+
 	claimeffectdispatching(runid: string, effectid: string, fence: number): { effect: effectrecord; claimed: boolean } {
 		return this.transact(() => {
-			const run = this.requiredrun(runid);
-			if (run.fence !== fence) throw new Error(`stale fence ${fence}; current fence is ${run.fence}`);
-			const effect = this.geteffect(runid, effectid);
-			if (!effect) throw new Error(`effect ${effectid} does not exist`);
-			if (effect.fence !== fence) throw new Error(`stale effect fence ${effect.fence}; current fence is ${fence}`);
+			const { effect } = this.fencedeffect(runid, effectid, fence);
 			if (effect.status !== "requested") throw new Error(`effect ${effectid} is not pending`);
 			if (effect.dispatchedat || effect.dispatchingat) return { effect, claimed: false };
 			const dispatchingat = now();
@@ -1503,11 +1518,7 @@ export class orchestrationstore {
 
 	markeffectdispatched(runid: string, effectid: string, fence: number): effectrecord {
 		return this.transact(() => {
-			const run = this.requiredrun(runid);
-			if (run.fence !== fence) throw new Error(`stale fence ${fence}; current fence is ${run.fence}`);
-			const effect = this.geteffect(runid, effectid);
-			if (!effect) throw new Error(`effect ${effectid} does not exist`);
-			if (effect.fence !== fence) throw new Error(`stale effect fence ${effect.fence}; current fence is ${fence}`);
+			const { effect } = this.fencedeffect(runid, effectid, fence);
 			if (effect.status !== "requested") throw new Error(`effect ${effectid} is not pending`);
 			if (effect.dispatchedat) return effect;
 			if (!effect.dispatchingat) throw new Error(`effect ${effectid} has no dispatch intent`);
@@ -1524,10 +1535,7 @@ export class orchestrationstore {
 
 	reverteffectdispatch(runid: string, effectid: string, fence: number): effectrecord {
 		return this.transact(() => {
-			const run = this.requiredrun(runid);
-			if (run.fence !== fence) throw new Error(`stale fence ${fence}; current fence is ${run.fence}`);
-			const effect = this.geteffect(runid, effectid);
-			if (!effect) throw new Error(`effect ${effectid} does not exist`);
+			const { effect } = this.fencedeffect(runid, effectid, fence);
 			if (effect.status !== "requested") throw new Error(`effect ${effectid} is not pending`);
 			if (effect.dispatchedat === null && effect.dispatchingat === null) return effect;
 			const updatedat = now();
@@ -1543,15 +1551,7 @@ export class orchestrationstore {
 
 	posteffect(post: effectpost): effectrecord {
 		return this.transact(() => {
-			const run = this.requiredrun(post.runid);
-			if (post.fence !== run.fence) throw new Error(`stale fence ${post.fence}; current fence is ${run.fence}`);
-			const effect = this.geteffect(post.runid, post.effectid);
-			if (!effect) throw new Error(`effect ${post.effectid} does not exist`);
-			if (post.inputhash !== effect.inputhash) {
-				throw new Error(`effect ${effect.id} input hash mismatch`);
-			}
-			if (effect.fence !== post.fence)
-				throw new Error(`stale effect fence ${effect.fence}; current fence is ${post.fence}`);
+			const { run, effect } = this.fencedeffect(post.runid, post.effectid, post.fence, post.inputhash);
 			const status: effectstatus =
 				post.status === "ok" ? "resolved_ok" : post.status === "error" ? "resolved_error" : post.status;
 			const value = post.value === undefined ? null : jsonvalueof(post.value, "effect.value");
@@ -1600,21 +1600,14 @@ export class orchestrationstore {
 
 	resolveuncertain(resolution: uncertainresolution): effectrecord {
 		return this.transact(() => {
-			const run = this.requiredrun(resolution.runid);
-			if (resolution.fence !== run.fence) {
-				throw new Error(`stale fence ${resolution.fence}; current fence is ${run.fence}`);
-			}
-			const effect = this.geteffect(resolution.runid, resolution.effectid);
-			if (!effect) throw new Error(`effect ${resolution.effectid} does not exist`);
+			const { run, effect } = this.fencedeffect(
+				resolution.runid,
+				resolution.effectid,
+				resolution.fence,
+				resolution.inputhash,
+			);
 			if (effect.status !== "uncertain") throw new Error(`effect ${effect.id} is not uncertain`);
-
 			const updatedat = now();
-			if (effect.fence !== resolution.fence) {
-				throw new Error(`stale effect fence ${effect.fence}; current fence is ${resolution.fence}`);
-			}
-			if (resolution.inputhash !== effect.inputhash) {
-				throw new Error(`effect ${effect.id} input hash mismatch`);
-			}
 			if (resolution.decision === "retry") {
 				const fence = run.fence + 1;
 				this.data.query("update runs set fence = ?, updated_at = ? where id = ?").run(fence, updatedat, run.id);

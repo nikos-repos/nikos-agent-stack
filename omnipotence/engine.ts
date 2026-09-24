@@ -904,20 +904,13 @@ export class orchestrationengine {
 			if (!this.ownsrun(resolution.rootrunid, resolution.runid)) {
 				throw new Error(`effect run ${resolution.runid} is not owned by root run ${resolution.rootrunid}`);
 			}
-			const targetrun = this.store.getrun(resolution.runid);
-			if (!targetrun) throw new Error(`run ${resolution.runid} does not exist`);
-			if (targetrun.fence !== resolution.fence) {
-				throw new Error(`stale fence ${resolution.fence}; current fence is ${targetrun.fence}`);
-			}
-			const effect = this.store.geteffect(resolution.runid, resolution.effectid);
-			if (!effect) throw new Error(`effect ${resolution.effectid} does not exist`);
+			const { effect } = this.store.fencedeffect(
+				resolution.runid,
+				resolution.effectid,
+				resolution.fence,
+				resolution.inputhash,
+			);
 			if (effect.status !== "uncertain") throw new Error(`effect ${effect.id} is not uncertain`);
-			if (effect.fence !== resolution.fence) {
-				throw new Error(`stale effect fence ${effect.fence}; current fence is ${resolution.fence}`);
-			}
-			if (effect.inputhash !== resolution.inputhash) {
-				throw new Error(`effect ${effect.id} input hash mismatch`);
-			}
 			const root = this.store.getrun(resolution.rootrunid);
 			if (!root) throw new Error(`run ${resolution.rootrunid} does not exist`);
 			try {
