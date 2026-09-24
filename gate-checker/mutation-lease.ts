@@ -278,8 +278,9 @@ export function createMutationLease(
       ? { ...metadata, acquisition_wait_ms: Math.max(0, waitMs) }
       : metadata;
     // every call of one turn reaches tool_call before any of them runs, so a call that overlaps
-    // an operation this session still holds shares that lease instead of waiting on itself.
-    const shared = activeOperations.values().next().value?.lease;
+    // a foreground operation of this turn shares its lease instead of waiting on itself. a running
+    // background bash is not shared: later calls still wait for it, as they did before.
+    const shared = [...activeOperations.values()].find((operation) => !operation.backgroundRunning)?.lease;
     let result: LeaseRecord;
     if (shared) result = shared;
     else {
