@@ -2,16 +2,26 @@ import { isRecord, isText } from "./predicates.js";
 
 export const journal_type = "omp.gate-checker.journal";
 export const journal_version = 1;
-const recovery = (reason) => ({ status: "recovery_required", reason, request_id: null, continuation: 0, failure_hash: null, verify_ids: [], outcome: null, release_reason: null });
+/**
+ * @typedef {{ status: "idle" | "active" | "terminal" | "recovery_required", reason: string | null,
+ *   request_id: string | null, repo_root: string | null, baseline_sha: string | null, baseline_dirty: string[],
+ *   baseline_snapshots: object, policy_fingerprint: string | null, continuation: number, failure_hash: string | null,
+ *   verify_ids: string[], outcome: string | null, release_reason: string | null }} JournalState
+ */
+/** @type {JournalState} */
+const idle = {
+  status: "idle", reason: null, request_id: null, repo_root: null, baseline_sha: null, baseline_dirty: [],
+  baseline_snapshots: {}, policy_fingerprint: null, continuation: 0, failure_hash: null, verify_ids: [],
+  outcome: null, release_reason: null,
+};
+/** @returns {JournalState} */
+const recovery = (reason) => ({ ...idle, status: "recovery_required", reason });
 const objectLike = (value) => isRecord(value) || Array.isArray(value);
 const valid = (event) => isRecord(event) && event.version === journal_version && isText(event.kind) && isText(event.request_id) && event.request_id.length > 0;
 
+/** @returns {JournalState} */
 export function reducejournal(events) {
-  let state = {
-    status: "idle", request_id: null, repo_root: null, baseline_sha: null,
-    baseline_dirty: [], baseline_snapshots: {}, policy_fingerprint: null,
-    continuation: 0, failure_hash: null, verify_ids: [], outcome: null, release_reason: null,
-  };
+  let state = idle;
   if (!Array.isArray(events)) return recovery("malformed journal event");
   // only the latest request matters: a request left open by a crash must not poison every later restore.
   const latest = events.findLastIndex((event) => isRecord(event) && event.kind === "request_start");
@@ -21,7 +31,7 @@ export function reducejournal(events) {
       if (!isText(event.repo_root) || !Array.isArray(event.baseline_dirty) || !isText(event.policy_fingerprint))
         return recovery("invalid request baseline");
       state = {
-        status: "active", request_id: event.request_id, repo_root: event.repo_root,
+        status: "active", reason: null, request_id: event.request_id, repo_root: event.repo_root,
         baseline_sha: isText(event.baseline_sha) ? event.baseline_sha : null,
         baseline_dirty: event.baseline_dirty.filter(isText),
         baseline_snapshots: objectLike(event.baseline_snapshots) ? event.baseline_snapshots : {},
@@ -52,6 +62,7 @@ export function reducejournal(events) {
   return state;
 }
 
+/** @returns {JournalState} */
 export function journalfrombranch(branch) {
   if (!Array.isArray(branch)) return reducejournal([]);
   return reducejournal(branch.filter((entry) => isRecord(entry) && entry.type === "custom" && entry.customType === journal_type).map((entry) => entry.data));

@@ -225,6 +225,13 @@ export function capturebaseline(cwd = ".") {
   }
 }
 
+/**
+ * @typedef {{ path: string, type: string, staged: boolean, unstaged: boolean, old_path: string | null,
+ *   old_mode: string | null, new_mode: string | null, binary: boolean, submodule: boolean }} ScopeFile
+ * @typedef {{ version: number, kind: string, repo_root: string, resolved: object, folder: string | null,
+ *   files: ScopeFile[], added: Record<string, Array<{ line: number, text: string }>>, digest: string }} Scope
+ */
+/** @returns {Scope} */
 export function resolvescope(options) {
   if (!isRecord(options) || !scope_kinds.has(options.kind)) throw new Error("unknown gate scope");
   const cwd = options.cwd || ".";

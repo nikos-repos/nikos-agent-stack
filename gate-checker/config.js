@@ -8,6 +8,12 @@ export const DEFAULT_LEVEL = "medium";
 export const CONFIG_PATH = process.env.OMP_GATE_CONFIG ||
   resolvePath(homedir(), ".omp/gate-checker/config.json");
 
+/** @typedef {"off" | "warn" | "block" | "auto"} Mode */
+/**
+ * @typedef {{ enabled: boolean, inline: boolean, completion: Mode, citation: Mode, snapshot: Mode, manifest: Mode,
+ *   subagentClaim: Mode, verify: Mode, complexity: Mode, commit: Mode, runtime: Mode }} LevelPolicy
+ */
+/** @type {Record<string, LevelPolicy>} */
 const policy_table = {
   off: {
     enabled: false, inline: false,
@@ -36,6 +42,7 @@ export function policyFor(level) {
   return { level: selected, ...policy_table[selected] };
 }
 
+/** @type {Record<string, "completion" | "citation" | "snapshot" | "manifest" | "subagentClaim" | "verify" | "complexity" | "commit" | "runtime">} */
 export const RULE_FAMILY = {
   forbidden_marker: "completion",
   fabricated_modification: "citation",

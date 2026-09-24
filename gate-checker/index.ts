@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { execFileSync, execSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
@@ -38,20 +38,9 @@ import { omnipotenceStop } from "../omnipotence/stop-decision.ts";
 type Policy = ReturnType<typeof policyFor>;
 type AddedLine = { line: number; text: string };
 type AddedMap = Map<string, AddedLine[]>;
-type TextBlock = { type: "text"; text: string };
+// a content block as omp sends it: text, image, thinking, or tool call; only text blocks carry `text`.
+type ContentBlock = { type: string; text?: string };
 type TaskInput = { task?: string; context?: string; tasks?: TaskInput[] };
-type FrustrationEvidence =
-  | { kind: "gate"; event_id: string; rule: string }
-  | { kind: "snapshot"; path: string; line: number; digest: string; claim: string }
-  | { kind: "command"; command: string; exit_code: number; output: string };
-type FrustrationInput = {
-  agent_id: string;
-  primary_goal: string;
-  complaint: string;
-  type: string;
-  severity: string;
-  evidence: FrustrationEvidence[];
-};
 export type ToolInput = {
   cwd?: string;
   path?: string;
@@ -65,7 +54,6 @@ export type ToolInput = {
   context?: string;
   tasks?: TaskInput[];
 };
-export type ToolCallEvent = { toolName: string; toolCallId: string; input: ToolInput; sessionId?: string };
 type StructuredManifest = {
   changed?: string[];
   changedFiles?: string[];
@@ -78,33 +66,6 @@ export type ToolDetails = {
   async?: { state?: string; jobId?: string };
   results?: AgentResult[];
 };
-type SessionEntry = {
-  type?: string;
-  message?: { role?: string; content?: string | TextBlock[] };
-  customType?: string;
-  data?: object;
-};
-type SessionManager = {
-  getBranch?(): SessionEntry[];
-  getSessionFile?(): string;
-  getSessionId?(): string;
-};
-export type ExtensionContext = {
-  cwd: string;
-  hasUI: boolean;
-  sessionManager?: SessionManager;
-  getAsyncJobSnapshot?(): AsyncJobSnapshot | null;
-  invokeTool?(
-    params: ToolInput,
-    options?: { signal?: AbortSignal; onUpdate?: (result: ToolResultPayload) => void },
-  ): Promise<ToolResultPayload>;
-  ui?: { notify?(message: string, type?: string): void; setStatus?(key: string, text: string): void };
-};
-export type ToolResultPayload = { content?: TextBlock[]; details?: ToolDetails; isError?: boolean };
-type AsyncJob = { id: string; status?: string };
-export type AsyncJobSnapshot = { running?: AsyncJob[]; recent?: AsyncJob[] };
-type SessionStopResult = { continue?: boolean; additionalContext?: string; decision?: "block"; reason?: string };
-export type ToolCallResult = { block?: boolean; reason?: string; input?: ToolInput };
 type InterrogationAnswers = { unnecessary: string; deleted: string; simplified: string };
 type SubagentEvidence = { id: string; report: string; manifest: string[] | null };
 type GateFailure = {
@@ -134,30 +95,9 @@ type TurnEvidence = {
   interrogations: Map<string, InterrogationAnswers>;
   hadblockingfailure: boolean;
 };
-export type ToolResultEvent = {
-  toolName: string;
-  toolCallId: string;
-  input: ToolInput;
-  content: string | TextBlock[];
-  details?: ToolDetails;
-  isError: boolean;
-};
-type ExecutionUpdateEvent = { toolCallId: string; partialResult: { details?: ToolDetails } };
-type RuleEvent = { rules?: Array<{ name: string }> };
-type LifecycleEvent = { id: string; status?: string; sessionFile?: string };
-type SubagentEvent = { id: string; event: { type: string; message: { role: string; content: string | TextBlock[] } } };
-type AgentEndEvent = { willContinue?: true };
-type SessionEvent = { timestamp?: number; stop_hook_active?: boolean };
-type BoundaryValue =
-  | ToolCallEvent
-  | ToolResultEvent
-  | ExecutionUpdateEvent
-  | RuleEvent
-  | LifecycleEvent
-  | SubagentEvent
-  | AgentEndEvent
-  | SessionEvent;
-type BoundarySchema<T> = { safeParse(value: BoundaryValue): { success: true; data: T } | { success: false } };
+// omp's zod validates each untrusted host event before a handler reads it.
+type Schema<T> = { safeParse(value: unknown): { success: true; data: T } | { success: false } };
+type Continuation = { continue: true; additionalContext: string };
 type DiffEvidence = { changed: Set<string>; added: AddedMap };
 type JournalFields = {
   outcome?: string;
@@ -235,12 +175,16 @@ function freshEvidence(): TurnEvidence {
     hadblockingfailure: false,
   };
 }
-function parseEvent<T>(schema: BoundarySchema<T>, value: BoundaryValue): T | null {
+function parseEvent<T>(schema: Schema<T>, value: unknown): T | null {
   const parsed = schema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
-function extractText(content: string | TextBlock[] | null | undefined): string {
-  return Array.isArray(content) ? content.map((item) => item.text).join("\n") : (content ?? "");
+function extractText(content: string | ContentBlock[] | null | undefined): string {
+  if (!Array.isArray(content)) return content ?? "";
+  return content
+    .filter((item) => item.type === "text")
+    .map((item) => item.text ?? "")
+    .join("\n");
 }
 function extractSnapshotRefs(text: string): Array<{ path: string; tag: string }> {
   const refs: Array<{ path: string; tag: string }> = [];
@@ -448,6 +392,11 @@ function treeStateKey(cwd: string, baselineSha: string | null, touched: Map<stri
     .map((path) => `${path}:${hashContent(readSnapshot(isAbsolute(path) ? path : resolvePath(cwd, path)) ?? "")}`);
   return parts.length ? hashContent(parts.join("\n")) : unknownState();
 }
+// execSync rejects with an Error that carries the child's stdout and stderr.
+function commandOutput(error: unknown): string {
+  const failure = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+  return `${failure.stdout ?? ""}${failure.stderr ?? ""}`.trim() || String(failure.message ?? error);
+}
 function runVerifyGate(cwd: string, command: string): GateFailure | null {
   try {
     execSync(command, {
@@ -459,7 +408,7 @@ function runVerifyGate(cwd: string, command: string): GateFailure | null {
     });
     return null;
   } catch (error) {
-    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim() || String(error.message ?? error);
+    const output = commandOutput(error);
     return {
       gate: "verify",
       rule: "verify_failed",
@@ -510,7 +459,7 @@ function runComplexityGate(cwd: string, command: string, changedFiles: Set<strin
         }
       : null;
   } catch (error) {
-    const output = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim() || String(error.message ?? error);
+    const output = commandOutput(error);
     const detail = complexityOutput(output) ?? "linter failed without output";
     return {
       gate: "risk",
@@ -790,7 +739,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         value: level,
         label: level,
       })),
-    handler: async (args: string, context: ExtensionContext): Promise<void> => {
+    handler: async (args, context) => {
       const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if (!parts.length) {
         context.ui?.notify?.(
@@ -819,11 +768,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   pi.registerCommand("gates-disable", {
     description: "turn every gate off",
-    handler: async (_args: string, context: ExtensionContext): Promise<void> => applyLevel("off", context),
+    handler: async (_args, context) => applyLevel("off", context),
   });
   pi.registerCommand("advisor-install", {
     description: "install or update the bundled terra advisor",
-    handler: async (args: string, context: ExtensionContext): Promise<void> => {
+    handler: async (args, context) => {
       if (args.trim()) {
         context.ui?.notify?.("/advisor-install accepts no arguments", "error");
         return;
@@ -870,13 +819,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     description: "log friction from the current session. papercuts count even when nothing failed.",
     approval: "write",
     parameters: frustrationSchema,
-    execute: async (
-      _toolCallId: string,
-      params: FrustrationInput,
-      _signal: AbortSignal | undefined,
-      _onUpdate: (result: ToolResultPayload) => void,
-      context: ExtensionContext,
-    ): Promise<ToolResultPayload> => {
+    execute: async (_toolCallId, params, _signal, _onUpdate, context) => {
       const taxonomyRoot = evidence.repoRoot ?? context.cwd;
       const result = validateFrustration(params, {
         repoRoot: taxonomyRoot,
@@ -905,13 +848,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       "answer the three first-principles questions against what you just built. required once per changed generation when the gate reports a trigger.",
     approval: "write",
     parameters: interrogationSchema,
-    execute: async (
-      _toolCallId: string,
-      params: InterrogationAnswers,
-      _signal: AbortSignal | undefined,
-      _onUpdate: (result: ToolResultPayload) => void,
-      context: ExtensionContext,
-    ): Promise<ToolResultPayload> => {
+    execute: async (_toolCallId, params, _signal, _onUpdate, context) => {
       const generationHash = treeStateKey(evidence.repoRoot ?? context.cwd, evidence.baselineSha, evidence.preTouch);
       evidence.interrogations.set(generationHash, params);
       ledger.append("gate_eval", {
@@ -1098,7 +1035,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     context: ExtensionContext,
     state: RequestState,
     failures: GateFailure[],
-  ): SessionStopResult | void => {
+  ): Continuation | void => {
     const graded = applyPolicy(failures, policy);
     const blocking = graded.filter((failure) => (failure.severity ?? "block") === "block");
     const warnings = graded.filter((failure) => failure.severity === "warn");
@@ -1211,7 +1148,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     return { continue: true, additionalContext: formatFailures(blocking) };
   };
 
-  const completionDecision = async (context: ExtensionContext): Promise<SessionStopResult | void> => {
+  const completionDecision = async (context: ExtensionContext): Promise<Continuation | void> => {
     if (!policy.enabled) {
       terminalJournal("skipped_disabled");
       return;
@@ -1237,20 +1174,20 @@ export default function gateChecker(pi: ExtensionAPI): void {
   };
 
   const events = pi.events;
-  events.on("task:subagent:event", (payload: SubagentEvent) => {
+  events.on("task:subagent:event", (payload: unknown) => {
     const parsed = parseEvent(subagentEventSchema, payload);
     if (parsed) recordProvenance(provenancefromevent(parsed));
   });
-  events.on("task:subagent:lifecycle", (payload: LifecycleEvent) => {
+  events.on("task:subagent:lifecycle", (payload: unknown) => {
     const parsed = parseEvent(lifecycleSchema, payload);
     if (parsed?.sessionFile && ["completed", "failed", "aborted"].includes(parsed.status ?? ""))
       mutationLease.releaseStaleSession(evidence.repoRoot, parsed.sessionFile, "child_lifecycle");
   });
-  pi.on("agent_end", (event: AgentEndEvent) => {
+  pi.on("agent_end", (event) => {
     const parsed = parseEvent(agentEndSchema, event);
     if (!parsed?.willContinue) mutationLease.releaseOrphaned("agent_end");
   });
-  pi.on("session_start", (event: SessionEvent, context: ExtensionContext) => {
+  pi.on("session_start", (event, context) => {
     if (!parseEvent(eventSchema, event)) return;
     mutationLease.registerWrappers();
     restoreJournal(context);
@@ -1263,20 +1200,20 @@ export default function gateChecker(pi: ExtensionAPI): void {
       context.ui?.setStatus?.("gate", status);
     } catch {}
   });
-  pi.on("session_branch", (event: SessionEvent, context: ExtensionContext) => {
+  pi.on("session_branch", (event, context) => {
     if (parseEvent(eventSchema, event)) restoreJournal(context);
   });
-  pi.on("session_tree", (event: SessionEvent, context: ExtensionContext) => {
+  pi.on("session_tree", (event, context) => {
     if (parseEvent(eventSchema, event)) restoreJournal(context);
   });
-  pi.on("session_shutdown", (event: SessionEvent) => {
+  pi.on("session_shutdown", (event) => {
     if (parseEvent(eventSchema, event)) mutationLease.releaseAll("session_shutdown");
   });
-  pi.on("ttsr_triggered", (event: RuleEvent) => {
+  pi.on("ttsr_triggered", (event) => {
     const parsed = parseEvent(ttsrSchema, event);
     if (parsed?.rules) for (const rule of parsed.rules) evidence.ttsrHits.add(rule.name);
   });
-  pi.on("agent_start", (event: SessionEvent, context: ExtensionContext) => {
+  pi.on("agent_start", (event, context) => {
     if (!parseEvent(eventSchema, event)) return;
     mutationLease.registerWrappers();
     if (continuationCount > 0) return;
@@ -1306,7 +1243,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         context.ui?.setStatus?.("gate", armingStatus());
       } catch {}
   });
-  pi.on("tool_call", async (event: ToolCallEvent, context: ExtensionContext): Promise<ToolCallResult | void> => {
+  pi.on("tool_call", async (event, context) => {
     const parsed = parseEvent(toolCallSchema, event);
     if (!parsed) return;
     if (!policy.enabled) return;
@@ -1342,7 +1279,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return { input: { ...event.input, task: `${GATE_NUDGE}${parsed.input.task ?? ""}` } };
     }
   });
-  pi.on("tool_result", async (event: ToolResultEvent, context: ExtensionContext): Promise<ToolResultPayload | void> => {
+  pi.on("tool_result", async (event, context) => {
     const parsed = parseEvent(toolResultSchema, event);
     if (!parsed) return;
     mutationLease.onToolResult(parsed, context);
@@ -1361,10 +1298,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
             evidence.flaggedInline.add(hit.detail);
             ledger.append("inline_flag", { rule: hit.rule, path, detail: hit.detail, tool: parsed.toolName });
           }
-          const content = Array.isArray(parsed.content) ? parsed.content : [{ type: "text", text: parsed.content }];
+          // append to the host's own content so non-text blocks such as images survive the notice.
           return {
             content: [
-              ...content,
+              ...event.content,
               {
                 type: "text",
                 text: `\n[GATE CHECKER — inline]\n${fresh.map((hit) => `  • ${hit.detail}`).join("\n")}\nFix this now, while you are in the file. If left, the completion gate will block the whole response at the end of the turn.`,
@@ -1385,11 +1322,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
       }
     }
   });
-  pi.on("tool_execution_update", (event: ExecutionUpdateEvent) => {
+  pi.on("tool_execution_update", (event) => {
     const parsed = parseEvent(executionUpdateSchema, event);
     if (parsed) mutationLease.onExecutionUpdate(parsed.toolCallId, parsed.partialResult.details);
   });
-  pi.on("session_stop", async (event: SessionEvent, context: ExtensionContext): Promise<SessionStopResult | void> => {
+  pi.on("session_stop", async (event, context) => {
     const parsed = parseEvent(eventSchema, event);
     if (!parsed) return;
     return (

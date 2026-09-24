@@ -105,6 +105,11 @@ export function loadForbiddenMarkers(dir, explicitPath = null) {
   }
 }
 
+/**
+ * @param {string} diff
+ * @param {Map<string, Array<{ line: number, text: string }>>} out
+ * @param {string | null} [fallbackPath]
+ */
 export function parseDiffAdditions(diff, out, fallbackPath = null) {
   let file = fallbackPath;
   if (file && !out.has(file)) out.set(file, []);
@@ -149,6 +154,7 @@ export function diffByLineSet(path, before, after) {
   return out;
 }
 
+/** @returns {Array<{ gate: "completion", rule: "forbidden_marker", detail: string }>} */
 export function checkAddedLines(added, markers) {
   const failures = [];
   const lowered = markers.map((marker) => [marker, marker.toLowerCase()]);

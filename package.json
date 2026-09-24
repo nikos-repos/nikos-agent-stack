@@ -94,6 +94,12 @@
     "README.md"
   ],
   "scripts": {
-    "test": "bun test ./ask-questionnaire/*.test.ts ./omnipotence/*.test.ts ./n-code-mode/*.test.ts ./plugin.test.ts && bun test ./gate-checker/*.test.ts"
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "bun run typecheck && bun test ./ask-questionnaire/*.test.ts ./omnipotence/*.test.ts ./n-code-mode/*.test.ts ./plugin.test.ts && bun test ./gate-checker/*.test.ts"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "^18.3.0",
+    "@types/bun": "^1.4.2",
+    "typescript": "^7.0.2"
   }
 }

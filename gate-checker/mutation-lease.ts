@@ -1,17 +1,8 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
-import type {
-  AsyncJobSnapshot,
-  ExtensionContext,
-  ToolCallEvent,
-  ToolCallResult,
-  ToolDetails,
-  ToolInput,
-  ToolResultEvent,
-  ToolResultPayload,
-} from "./index.ts";
+import type { ToolDetails, ToolInput } from "./index.ts";
 import * as ledger from "./ledger.js";
 import {
   acquirelease,
@@ -59,8 +50,10 @@ type ActiveOperation = {
   target: string | null;
   backgroundRunning: boolean;
 };
-type LeaseStatus = { status?: string; kind?: string; valid?: boolean; stale?: boolean; record?: LeaseRecord };
-type BuiltinTool = { name: string; description?: string; parameters?: object; sourceInfo?: { source?: string } };
+type LeaseStatus = { status?: string; kind?: string; valid?: boolean; stale?: boolean; record?: LeaseRecord | null };
+// a mutation-capable call the lease may cover.
+type OperationCall = { toolName: string; toolCallId: string; input: ToolInput; sessionId?: string };
+type ToolResultNotice = { toolName: string; toolCallId: string; isError: boolean; details?: ToolDetails };
 function absolutePathPreserving(base: string, child: string): string {
   if (isAbsolute(child)) return child;
   return `${(isAbsolute(base) ? base : resolvePath(base)).replace(/\/+$/, "")}/${child}`;
@@ -98,7 +91,7 @@ function effectiveLeaseInput(toolName: string, input: ToolInput): ToolInput {
   if (!paths.length) return input;
   return paths.length === 1 ? { ...input, path: paths[0], paths } : { ...input, paths };
 }
-function leaseScope(event: ToolCallEvent, context: ExtensionContext, repoRoot: string | null): LeaseScope | null {
+function leaseScope(event: OperationCall, context: ExtensionContext, repoRoot: string | null): LeaseScope | null {
   if (!repoRoot) return null;
   const root = canonicalPath(repoRoot);
   if (!root) return null;
@@ -184,10 +177,7 @@ function asyncJobId(details?: ToolDetails): string | null {
 
 export type MutationLease = {
   registerWrappers(): void;
-  onToolResult(
-    event: Pick<ToolResultEvent, "toolName" | "toolCallId" | "isError" | "details">,
-    context: ExtensionContext,
-  ): void;
+  onToolResult(event: ToolResultNotice, context: ExtensionContext): void;
   onExecutionUpdate(toolCallId: string, details: ToolDetails | undefined): void;
   releaseAll(reason: string): void;
   releaseOrphaned(reason: string): void;
@@ -230,7 +220,7 @@ export function createMutationLease(
     if (operation.pollTimer || !context.getAsyncJobSnapshot || !operation.asyncJobId) return;
     const poll = (): void => {
       if (activeOperations.get(toolCallId) !== operation) return;
-      let snapshot: AsyncJobSnapshot | null = null;
+      let snapshot: ReturnType<ExtensionContext["getAsyncJobSnapshot"]> = null;
       try {
         snapshot = context.getAsyncJobSnapshot() ?? null;
       } catch {
@@ -264,15 +254,14 @@ export function createMutationLease(
     } catch {}
   };
   const acquireOperation = async (
-    event: ToolCallEvent,
+    event: OperationCall,
     context: ExtensionContext,
     scope: LeaseScope,
-  ): Promise<ToolCallResult | void> => {
-    if (!leaseEnabled || !gate.enabled() || !event.toolCallId || activeOperations.has(event.toolCallId)) return;
+  ): Promise<string | null> => {
+    if (!leaseEnabled || !gate.enabled() || !event.toolCallId || activeOperations.has(event.toolCallId)) return null;
     const sessionId = event.sessionId ?? context.sessionManager?.getSessionId?.() ?? "";
     const sessionFile = context.sessionManager?.getSessionFile?.() ?? null;
-    if (!sessionId || !sessionFile)
-      return { block: true, reason: "mutation lease requires the active session id and session file" };
+    if (!sessionId || !sessionFile) return "mutation lease requires the active session id and session file";
     const metadata = {
       cwd: scope.cwd,
       owner_id: leaseOwnerId,
@@ -293,10 +282,7 @@ export function createMutationLease(
     try {
       result = await acquirelease(acquisitionOptions);
     } catch (error) {
-      return {
-        block: true,
-        reason: `mutation lease could not be acquired: ${error instanceof Error ? error.message : String(error)}`,
-      };
+      return `mutation lease could not be acquired: ${error instanceof Error ? error.message : String(error)}`;
     }
     if (result.acquired !== true) {
       const holder = result.conflict?.session_file ?? null;
@@ -310,7 +296,7 @@ export function createMutationLease(
       } catch {}
       if (!reason) reason = result.error ?? result.diagnostic ?? "mutation lease is unavailable";
       if (result.timed_out === true) ledger.append("lease_wait_timed_out", { ...metadata, reason, ts: Date.now() });
-      return { block: true, reason };
+      return reason;
     }
     const timer = setInterval(() => {
       const operation = activeOperations.get(event.toolCallId);
@@ -336,10 +322,11 @@ export function createMutationLease(
     });
     ledger.append("lease_acquired", { ...leasefields(result), recovered: result.recovered, ts: Date.now() });
     if (result.recovered === true) ledger.append("lease_recovered", { ...leasefields(result), ts: Date.now() });
+    return null;
   };
   const registerBuiltinWrappers = (): void => {
     if (builtinWrappersRegistered) return;
-    let configuredTools: BuiltinTool[] = [];
+    let configuredTools: ReturnType<ExtensionAPI["getAllTools"]> = [];
     try {
       configuredTools = pi.getAllTools?.() ?? [];
     } catch {}
@@ -359,24 +346,20 @@ export function createMutationLease(
         description: candidate.description,
         parameters: candidate.parameters,
         approval: name === "bash" ? "exec" : "write",
-        execute: async (
-          toolCallId: string,
-          params: ToolInput,
-          signal: AbortSignal | undefined,
-          onUpdate: (result: ToolResultPayload) => void,
-          context: ExtensionContext,
-        ): Promise<ToolResultPayload> => {
-          const event: ToolCallEvent = {
+        execute: async (toolCallId, params, signal, onUpdate, context) => {
+          // omp validated params against this built-in's own schema before calling the wrapper.
+          const input = params as ToolInput;
+          const event: OperationCall = {
             toolName: name,
             toolCallId,
-            input: params,
+            input,
             sessionId: context.sessionManager?.getSessionId?.(),
           };
           const scope = leaseScope(event, context, gate.repoRoot());
-          const blocked = scope ? await acquireOperation(event, context, scope) : undefined;
-          if (blocked?.block) throw new Error(blocked.reason ?? "mutation lease is unavailable");
+          const blocked = scope ? await acquireOperation(event, context, scope) : null;
+          if (blocked) throw new Error(blocked);
           if (!context.invokeTool) throw new Error(`native ${name} tool is unavailable`);
-          return context.invokeTool(params, { signal, onUpdate });
+          return context.invokeTool(input, { signal, onUpdate });
         },
       });
       registered = true;
