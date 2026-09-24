@@ -642,6 +642,14 @@ interface ownershipgraph {
 	readonly parents: ReadonlyMap<string, effectrecord>;
 }
 
+interface eventreplay {
+	issues: string[];
+	runs: Map<string, projectionrecord>;
+	effects: Map<string, projectionrecord>;
+	leaseepochs: Map<string, number>;
+	claimed: Set<string>;
+}
+
 export interface storeoptions {
 	readonly?: boolean;
 }
@@ -670,58 +678,48 @@ export class orchestrationstore {
 		this.data.close();
 	}
 
-	private eventprojectionissues(): string[] {
-		const issues: string[] = [];
-		const tables = new Set(
-			(this.data.query("select name from sqlite_master where type = 'table'").all() as Array<{ name: string }>).map(
-				(row) => row.name,
-			),
-		);
-		if (!tables.has("events") || !tables.has("runs") || !tables.has("effects")) return issues;
+	// the one fold over the event log. doctor compares its projections against the tables;
+	// repair refuses to rebuild while any event-level issue stands.
+	private replayevents(): eventreplay {
+		const replay: eventreplay = {
+			issues: [],
+			runs: new Map(),
+			effects: new Map(),
+			leaseepochs: new Map(),
+			claimed: new Set(),
+		};
+		const claimepochs = new Map<string, number>();
 		try {
-			const schemarow = this.data.query("pragma user_version").get() as { user_version: number };
-			const schema = schemarow.user_version;
 			const events = this.data
 				.query(
 					"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq",
 				)
 				.all() as eventrow[];
 			const previousbyrun = new Map<string, string | null>();
-			const runstatusbyid = new Map<string, string>();
-			const effectstatusbyid = new Map<string, string>();
-			const runprojectionbyid = new Map<string, projectionrecord>();
-			const runlegacyleaseepochbyid = new Map<string, number>();
-			const runclaimepochbyid = new Map<string, number>();
-			const claimruns = new Set<string>();
-			const effectprojectionbyid = new Map<string, projectionrecord>();
 			for (const event of events) {
 				const previous = previousbyrun.get(event.run_id) ?? null;
 				if (event.previous_hash !== previous) {
-					issues.push(`run ${event.run_id} event ${event.seq} previous hash mismatch`);
+					replay.issues.push(`run ${event.run_id} event ${event.seq} previous hash mismatch`);
 				}
 				const expectedhash = sha256(
 					`${event.run_id}\n${event.seq}\n${event.type}\n${event.payload_json}\n${event.previous_hash ?? ""}`,
 				);
-				if (event.hash !== expectedhash) {
-					issues.push(`run ${event.run_id} event ${event.seq} hash mismatch`);
-				}
+				if (event.hash !== expectedhash) replay.issues.push(`run ${event.run_id} event ${event.seq} hash mismatch`);
 				previousbyrun.set(event.run_id, event.hash);
 				const payload = parsejson(event.payload_json, `event ${event.run_id}/${event.seq}`);
 				if (isrunprojectionevent(event.type)) {
 					const projectionpayload = objectrecord(payload, "event payload");
-					runstatusbyid.set(event.run_id, stringfield(projectionpayload, "status", "event payload"));
-					if (schema >= 7) {
-						const projection = eventrunprojection(projectionpayload);
-						if (projection.id !== event.run_id) {
-							issues.push(`run ${event.run_id} event ${event.seq} run identity mismatch`);
-						}
-						runprojectionbyid.set(event.run_id, projection);
-						if (typeof projection.leaseepoch === "number") {
-							runlegacyleaseepochbyid.set(
-								event.run_id,
-								Math.max(runlegacyleaseepochbyid.get(event.run_id) ?? 0, projection.leaseepoch),
-							);
-						}
+					assertstatus(stringfield(projectionpayload, "status", "event payload"));
+					const projection = eventrunprojection(projectionpayload);
+					if (projection.id !== event.run_id) {
+						replay.issues.push(`run ${event.run_id} event ${event.seq} run identity mismatch`);
+					}
+					replay.runs.set(event.run_id, projection);
+					if (typeof projection.leaseepoch === "number") {
+						replay.leaseepochs.set(
+							event.run_id,
+							Math.max(replay.leaseepochs.get(event.run_id) ?? 0, projection.leaseepoch),
+						);
 					}
 				}
 				if (event.type === "lease_claimed") {
@@ -729,86 +727,24 @@ export class orchestrationstore {
 					const runid = stringfield(projectionpayload, "runid", "event payload");
 					const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
 					if (runid !== event.run_id) {
-						issues.push(`run ${event.run_id} event ${event.seq} lease claim run identity mismatch`);
+						replay.issues.push(`run ${event.run_id} event ${event.seq} lease claim run identity mismatch`);
 					}
-					claimruns.add(event.run_id);
-					runclaimepochbyid.set(event.run_id, Math.max(runclaimepochbyid.get(event.run_id) ?? 0, leaseepoch));
+					replay.claimed.add(event.run_id);
+					claimepochs.set(event.run_id, Math.max(claimepochs.get(event.run_id) ?? 0, leaseepoch));
 				}
 				if (event.type.startsWith("effect_")) {
 					const projectionpayload = objectrecord(payload, "event payload");
 					const effectid = stringfield(projectionpayload, "id", "event payload");
-					const status = stringfield(projectionpayload, "status", "event payload");
-					effectstatusbyid.set(effectid, status);
-					if (schema >= 7) effectprojectionbyid.set(effectid, eventeffectprojection(projectionpayload));
-				}
-			}
-			if (schema >= 7) {
-				const seenruns = new Set<string>();
-				const runrows = this.data.query("select * from runs order by id").all() as runrow[];
-				for (const row of runrows) {
-					seenruns.add(row.id);
-					const expected = runprojectionbyid.get(row.id);
-					if (!expected) {
-						issues.push(`run ${row.id} projection has no event record`);
-						continue;
-					}
-					compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
-					const durableleaseepoch = claimruns.has(row.id)
-						? (runclaimepochbyid.get(row.id) ?? 0)
-						: (runlegacyleaseepochbyid.get(row.id) ?? 0);
-					if (claimruns.has(row.id)) {
-						if (row.lease_epoch !== durableleaseepoch) {
-							issues.push(
-								`run ${row.id} projection leaseepoch ${row.lease_epoch} does not match durable claim epoch ${durableleaseepoch}`,
-							);
-						}
-					} else if (row.lease_epoch < durableleaseepoch) {
-						issues.push(
-							`run ${row.id} projection leaseepoch ${row.lease_epoch} is below durable event minimum ${durableleaseepoch}`,
-						);
-					}
-				}
-				for (const runid of runprojectionbyid.keys()) {
-					if (!seenruns.has(runid)) issues.push(`run ${runid} projection is missing`);
-				}
-				const seeneffects = new Set<string>();
-				const effectrows = this.data.query("select * from effects order by id").all() as effectrow[];
-				for (const row of effectrows) {
-					seeneffects.add(row.id);
-					const expected = effectprojectionbyid.get(row.id);
-					if (!expected) {
-						issues.push(`effect ${row.id} projection has no event record`);
-						continue;
-					}
-					compareprojection("effect", row.id, effectprojection(row), expected, effectprojectionfields, issues);
-				}
-				for (const effectid of effectprojectionbyid.keys()) {
-					if (!seeneffects.has(effectid)) issues.push(`effect ${effectid} projection is missing`);
-				}
-			} else {
-				for (const row of this.data.query("select id, status from runs").all() as Array<{
-					id: string;
-					status: string;
-				}>) {
-					const expected = runstatusbyid.get(row.id);
-					if (expected && row.status !== expected) {
-						issues.push(`run ${row.id} projection status ${row.status} does not match ${expected}`);
-					}
-				}
-				for (const row of this.data.query("select id, status from effects").all() as Array<{
-					id: string;
-					status: string;
-				}>) {
-					const expected = effectstatusbyid.get(row.id);
-					if (expected && row.status !== expected) {
-						issues.push(`effect ${row.id} projection status ${row.status} does not match ${expected}`);
-					}
+					asserteffectstatus(stringfield(projectionpayload, "status", "event payload"));
+					replay.effects.set(effectid, eventeffectprojection(projectionpayload));
 				}
 			}
 		} catch (error) {
-			issues.push(`event projection verification failed: ${error instanceof Error ? error.message : String(error)}`);
+			replay.issues.push(`event verification failed: ${error instanceof Error ? error.message : String(error)}`);
 		}
-		return issues;
+		// a lease claim is the durable epoch; projection payloads only set a floor for unclaimed runs.
+		for (const [runid, epoch] of claimepochs) replay.leaseepochs.set(runid, epoch);
+		return replay;
 	}
 
 	private migrate(): void {
@@ -1853,74 +1789,21 @@ export class orchestrationstore {
 		for (const row of integrity) {
 			if (row.integrity_check !== "ok") issues.push(`sqlite integrity: ${row.integrity_check}`);
 		}
-		const rows = this.data
-			.query(
-				"select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by run_id, seq",
-			)
-			.all() as eventrow[];
-		const previousbyrun = new Map<string, string | null>();
-		const runprojectionbyid = new Map<string, projectionrecord>();
-		const runlegacyleaseepochbyid = new Map<string, number>();
-		const runclaimepochbyid = new Map<string, number>();
-		const claimruns = new Set<string>();
-		const effectprojectionbyid = new Map<string, projectionrecord>();
-		for (const row of rows) {
-			const expectedprevious = previousbyrun.get(row.run_id) ?? null;
-			if (row.previous_hash !== expectedprevious) {
-				issues.push(`run ${row.run_id} event ${row.seq} previous hash mismatch`);
-			}
-			const expectedhash = sha256(
-				`${row.run_id}\n${row.seq}\n${row.type}\n${row.payload_json}\n${row.previous_hash ?? ""}`,
-			);
-			if (row.hash !== expectedhash) issues.push(`run ${row.run_id} event ${row.seq} hash mismatch`);
-			previousbyrun.set(row.run_id, row.hash);
-			const payload = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
-			if (isrunprojectionevent(row.type)) {
-				const projectionpayload = objectrecord(payload, "event payload");
-				const status = stringfield(projectionpayload, "status", "event payload");
-				assertstatus(status);
-				const projection = eventrunprojection(projectionpayload);
-				runprojectionbyid.set(row.run_id, projection);
-				if (typeof projection.leaseepoch === "number") {
-					runlegacyleaseepochbyid.set(
-						row.run_id,
-						Math.max(runlegacyleaseepochbyid.get(row.run_id) ?? 0, projection.leaseepoch),
-					);
-				}
-			}
-			if (row.type === "lease_claimed") {
-				const projectionpayload = objectrecord(payload, "event payload");
-				const runid = stringfield(projectionpayload, "runid", "event payload");
-				const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
-				if (runid !== row.run_id) {
-					issues.push(`run ${row.run_id} event ${row.seq} lease claim run identity mismatch`);
-				}
-				claimruns.add(row.run_id);
-				runclaimepochbyid.set(row.run_id, Math.max(runclaimepochbyid.get(row.run_id) ?? 0, leaseepoch));
-			}
-			if (row.type.startsWith("effect_")) {
-				const projectionpayload = objectrecord(payload, "event payload");
-				const effectid = stringfield(projectionpayload, "id", "event payload");
-				const status = stringfield(projectionpayload, "status", "event payload");
-				asserteffectstatus(status);
-				effectprojectionbyid.set(effectid, eventeffectprojection(projectionpayload));
-			}
-		}
+		const replay = this.replayevents();
+		issues.push(...replay.issues);
 
 		const seenruns = new Set<string>();
 		const runrows = this.data.query("select * from runs order by id").all() as runrow[];
 		for (const row of runrows) {
 			seenruns.add(row.id);
-			const expected = runprojectionbyid.get(row.id);
+			const expected = replay.runs.get(row.id);
 			if (!expected) {
 				issues.push(`run ${row.id} projection has no event record`);
 				continue;
 			}
 			compareprojection("run", row.id, runprojection(row), expected, runprojectionfields, issues);
-			const durableleaseepoch = claimruns.has(row.id)
-				? (runclaimepochbyid.get(row.id) ?? 0)
-				: (runlegacyleaseepochbyid.get(row.id) ?? 0);
-			if (claimruns.has(row.id)) {
+			const durableleaseepoch = replay.leaseepochs.get(row.id) ?? 0;
+			if (replay.claimed.has(row.id)) {
 				if (row.lease_epoch !== durableleaseepoch) {
 					issues.push(
 						`run ${row.id} projection leaseepoch ${row.lease_epoch} does not match durable claim epoch ${durableleaseepoch}`,
@@ -1932,7 +1815,7 @@ export class orchestrationstore {
 				);
 			}
 		}
-		for (const runid of runprojectionbyid.keys()) {
+		for (const runid of replay.runs.keys()) {
 			if (!seenruns.has(runid)) issues.push(`run ${runid} projection is missing`);
 		}
 
@@ -1940,14 +1823,14 @@ export class orchestrationstore {
 		const effectrows = this.data.query("select * from effects order by id").all() as effectrow[];
 		for (const row of effectrows) {
 			seeneffects.add(row.id);
-			const expected = effectprojectionbyid.get(row.id);
+			const expected = replay.effects.get(row.id);
 			if (!expected) {
 				issues.push(`effect ${row.id} projection has no event record`);
 				continue;
 			}
 			compareprojection("effect", row.id, effectprojection(row), expected, effectprojectionfields, issues);
 		}
-		for (const effectid of effectprojectionbyid.keys()) {
+		for (const effectid of replay.effects.keys()) {
 			if (!seeneffects.has(effectid)) issues.push(`effect ${effectid} projection is missing`);
 		}
 
@@ -2024,46 +1907,21 @@ export class orchestrationstore {
 	repair(): { backup: string; report: doctorreport } {
 		const backup = `${this.path}.backup-${Date.now()}`;
 		this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-		const eventissues = this.eventprojectionissues().filter(
-			(issue) => issue.includes(" event ") || issue.startsWith("event projection verification failed:"),
-		);
-		if (eventissues.length > 0) {
-			throw new Error(`repair event verification failed: ${eventissues.join("; ")}`);
+		const replay = this.replayevents();
+		if (replay.issues.length > 0) {
+			throw new Error(`repair event verification failed: ${replay.issues.join("; ")}`);
 		}
 		let report: doctorreport | undefined;
 		this.transact(() => {
 			const rows = this.data
 				.query("select id, run_id, seq, type, payload_json, previous_hash, hash, created_at from events order by id")
 				.all() as eventrow[];
-			const leaseepochs = new Map(
-				(this.data.query("select id, lease_epoch from runs").all() as Array<{ id: string; lease_epoch: number }>).map(
-					(row) => [row.id, row.lease_epoch] as const,
-				),
-			);
-			const claimleaseepochs = new Map<string, number>();
-			for (const row of rows) {
-				const payload = parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`);
-				if (isrunprojectionevent(row.type)) {
-					const projectionpayload = objectrecord(payload, "event payload");
-					const id = stringfield(projectionpayload, "id", "event payload");
-					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
-					leaseepochs.set(
-						id,
-						Math.max(
-							leaseepochs.get(id) ?? 0,
-							typeof projectionpayload.leaseepoch === "number" ? projectionpayload.leaseepoch : 0,
-						),
-					);
-				}
-				if (row.type === "lease_claimed") {
-					const projectionpayload = objectrecord(payload, "event payload");
-					const runid = stringfield(projectionpayload, "runid", "event payload");
-					if (runid !== row.run_id) throw new Error(`event ${row.id} lease claim run identity mismatch`);
-					const leaseepoch = numberfield(projectionpayload, "leaseepoch", "event payload");
-					claimleaseepochs.set(runid, Math.max(claimleaseepochs.get(runid) ?? 0, leaseepoch));
-				}
+			const leaseepochs = new Map(replay.leaseepochs);
+			const current = this.data.query("select id, lease_epoch from runs").all() as Array<{ id: string; lease_epoch: number }>;
+			for (const row of current) {
+				if (replay.claimed.has(row.id)) continue;
+				leaseepochs.set(row.id, Math.max(leaseepochs.get(row.id) ?? 0, row.lease_epoch));
 			}
-			for (const [runid, leaseepoch] of claimleaseepochs) leaseepochs.set(runid, leaseepoch);
 			this.data.query("delete from sessions").run();
 			this.data.query("delete from effects").run();
 			this.data.query("delete from runs").run();
