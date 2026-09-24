@@ -1077,11 +1077,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     );
     const state = journalfrombranch(context.sessionManager?.getBranch?.() ?? []);
     if (state.status !== "active") {
-      requestId = null;
-      continuationCount = 0;
-      lastBlockingKey = null;
-      journalRecovery =
-        state.status === "recovery_required" ? (state.reason ?? "gate journal recovery required") : null;
+      forgetRequest(state.status === "recovery_required" ? (state.reason ?? "gate journal recovery required") : null);
       if (journalRecovery)
         try {
           context.ui?.setStatus?.("gate", "⚠ gate journal recovery required");
@@ -1093,10 +1089,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       (cwdRoot && cwdRoot !== state.repo_root) ||
       state.baseline_sha === null
     ) {
-      requestId = null;
-      continuationCount = 0;
-      lastBlockingKey = null;
-      journalRecovery = "the restored request lacks complete adjudication evidence; start a fresh request";
+      forgetRequest("the restored request lacks complete adjudication evidence; start a fresh request");
       try {
         context.ui?.setStatus?.("gate", "⚠ stale gate journal closed");
       } catch {}
@@ -1114,11 +1107,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineDirty = new Set(state.baseline_dirty);
     evidence.repoRoot = state.repo_root;
   };
+  // the one place request state resets; a closed request never leaves a chain count or blocking key behind.
+  const forgetRequest = (recovery: string | null): void => {
+    requestId = null;
+    continuationCount = 0;
+    lastBlockingKey = null;
+    journalRecovery = recovery;
+  };
   const terminalJournal = (outcome: string, fields: TerminalFields = {}): void => {
     appendJournal("terminal", { outcome, ...fields });
     releaseOrphanedOperations("terminal_journal");
-    requestId = null;
-    journalRecovery = null;
+    forgetRequest(null);
   };
   const recordProvenance = (record: SubagentEvidence | null): void => {
     if (record) evidence.subagents = mergeprovenance(evidence.subagents, record);
@@ -1611,8 +1610,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         cwd: state.cwd,
       });
       terminalJournal("released_with_failures", { release_reason: "stalemate" });
-      continuationCount = 0;
-      lastBlockingKey = null;
       return;
     }
     lastBlockingKey = blockingKey;
@@ -1630,8 +1627,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         });
       }
       terminalJournal(warnings.length ? "passed_with_warnings" : "passed");
-      continuationCount = 0;
-      lastBlockingKey = null;
       return;
     }
 
@@ -1675,8 +1670,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         cwd: state.cwd,
       });
       terminalJournal("released_with_failures", { release_reason: "continuation_cap" });
-      continuationCount = 0;
-      lastBlockingKey = null;
       return;
     }
 
@@ -1700,19 +1693,16 @@ export default function gateChecker(pi: ExtensionAPI): void {
   const completionDecision = async (context: ExtensionContext): Promise<SessionStopResult | void> => {
     if (!policy.enabled) {
       terminalJournal("skipped_disabled");
-      continuationCount = 0;
       return;
     }
     const assistantText = getLastAssistantText(context) ?? "";
     if (shouldSkipNoTools(evidence.hadToolCalls, assistantText, journalRecovery)) {
       terminalJournal("skipped_no_tools");
-      continuationCount = 0;
       return;
     }
     const mutated = evidence.filesTouched.size > 0 || evidence.hadtoolerror;
     if (!assistantText && !evidence.askedUser && !journalRecovery && !mutated) {
       terminalJournal("skipped_no_assistant_text");
-      continuationCount = 0;
       return;
     }
 
@@ -1724,7 +1714,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     collectDeliveryFailures(context, state, failures);
     if (canSkipUserQuestion(evidence.askedUser, state.changedCount, journalRecovery)) {
       terminalJournal("skipped_user_question");
-      continuationCount = 0;
       return;
     }
     return settleRequest(context, state, failures);
@@ -1775,7 +1764,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     registerBuiltinWrappers();
     if (continuationCount > 0) return;
     releaseOrphanedOperations("agent_start");
-    if (requestId) lastBlockingKey = null;
     evidence = freshEvidence();
     const baseline = capturebaseline(context.cwd);
     evidence.baselineSha = baseline.sha;
