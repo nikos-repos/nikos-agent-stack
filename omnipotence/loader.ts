@@ -1,8 +1,6 @@
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { assertenginecompatibility } from "./blueprints.ts";
+import { assertenginecompatibility, hashcontent, hashfiles } from "./blueprints.ts";
 import { defineprocess, jsonvalueof, objectrecord, stablejson, stringfield } from "./contracts.ts";
 import type { jsonschema, jsonvalue, processcontext, processdefinition } from "./contracts.ts";
 import type { orchestrationengine } from "./engine.ts";
@@ -24,20 +22,10 @@ function entries(manifest: unknown, field: "processes" | "hooks"): Record<string
 }
 
 function verifiedsourcehash(blueprint: blueprintrecord): string {
-	const manifest = objectrecord<unknown>(blueprint.manifest, "blueprint.manifest");
-	const declared = objectrecord<unknown>(manifest.files, "blueprint.files");
-	const files: Record<string, string> = {};
-	for (const [path, expected] of Object.entries(declared)) {
-		if (typeof expected !== "string") throw new TypeError(`blueprint file ${path} has invalid hash`);
-		const actual = createHash("sha256")
-			.update(readFileSync(join(blueprint.installpath, path)))
-			.digest("hex");
-		if (actual !== expected) throw new Error(`blueprint ${blueprint.name}@${blueprint.version} file ${path} hash mismatch`);
-		files[path] = actual;
-	}
-	const actual = createHash("sha256")
-		.update(stablejson({ manifest: blueprint.manifest, files }))
-		.digest("hex");
+	const manifest = objectrecord(blueprint.manifest, "blueprint.manifest");
+	const { files, issues } = hashfiles(blueprint.installpath, objectrecord(manifest.files, "blueprint.files"));
+	if (issues.length > 0) throw new Error(`blueprint ${blueprint.name}@${blueprint.version} ${issues[0]}`);
+	const actual = hashcontent(stablejson({ manifest: blueprint.manifest, files }));
 	if (actual !== blueprint.contenthash) {
 		throw new Error(`blueprint ${blueprint.name}@${blueprint.version} registry content hash mismatch`);
 	}

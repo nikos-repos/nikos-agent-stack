@@ -183,7 +183,7 @@ describe("local blueprint lifecycle", () => {
 			}),
 		);
 		expect(() => blueprints.install(traversal)).toThrow(
-			"blueprint.files ../escape.ts escapes package root",
+			"blueprint file ../escape.ts escapes package root",
 		);
 
 		const linked = fixture(root, "3.0.0");

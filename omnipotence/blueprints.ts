@@ -78,8 +78,45 @@ function escapesroot(root: string, path: string): boolean {
 	return offset === ".." || offset.startsWith(`..${sep}`) || isAbsolute(offset);
 }
 
-function hashcontent(content: string | Uint8Array): string {
+export function hashcontent(content: string | Uint8Array): string {
 	return createHash("sha256").update(content).digest("hex");
+}
+
+// the one check every declared blueprint file passes at install, doctor, and load: inside the
+// package root even after symlinks resolve, a regular file, and matching its sha-256.
+export function hashfiles(
+	root: string,
+	declared: Record<string, jsonvalue>,
+): { files: Record<string, string>; issues: string[] } {
+	const files: Record<string, string> = {};
+	const issues: string[] = [];
+	for (const [path, expected] of Object.entries(declared)) {
+		const absolute = resolve(root, path);
+		if (isAbsolute(path) || escapesroot(root, absolute)) {
+			issues.push(`file ${path} escapes package root`);
+			continue;
+		}
+		if (!existsSync(absolute)) {
+			issues.push(`file ${path} is missing`);
+			continue;
+		}
+		const real = realpathSync(absolute);
+		if (escapesroot(root, real)) {
+			issues.push(`file ${path} escapes package root`);
+			continue;
+		}
+		if (!statSync(real).isFile()) {
+			issues.push(`file ${path} is not a regular file`);
+			continue;
+		}
+		const actual = hashcontent(readFileSync(real));
+		if (actual !== expected) {
+			issues.push(`file ${path} hash mismatch`);
+			continue;
+		}
+		files[path] = actual;
+	}
+	return { files, issues };
 }
 
 
@@ -199,24 +236,8 @@ export class blueprintservice {
 		const name = stringfield(manifest, "name", "blueprint");
 		const version = stringfield(manifest, "version", "blueprint");
 		assertenginecompatibility(manifest, name, version);
-		const declared = objectrecord(manifest.files, "blueprint.files");
-		const files: Record<string, string> = {};
-		for (const [path, expected] of Object.entries(declared)) {
-			if (isAbsolute(path) || escapesroot(source, resolve(source, path))) {
-				throw new Error(`blueprint.files ${path} escapes package root`);
-			}
-			const absolute = resolve(source, path);
-			const real = realpathSync(absolute);
-			if (escapesroot(source, real)) {
-				throw new Error(`blueprint file ${path} escapes package root`);
-			}
-			if (!statSync(real).isFile()) {
-				throw new Error(`blueprint file ${path} is not a regular file`);
-			}
-			const actual = hashcontent(readFileSync(real));
-			if (actual !== expected) throw new Error(`blueprint file ${path} hash mismatch`);
-			files[path] = actual;
-		}
+		const { files, issues } = hashfiles(source, objectrecord(manifest.files, "blueprint.files"));
+		if (issues.length > 0) throw new Error(`blueprint ${issues[0]}`);
 		const installpath = join(this.installroot, name, version);
 		const contenthash = hashcontent(stablejson({ manifest, files }));
 		return {
@@ -322,32 +343,10 @@ export class blueprintservice {
 				) {
 					issues.push(`blueprint ${identity} manifest identity mismatch`);
 				}
-				const declared = objectrecord(manifest.files, "blueprint.files");
-				const files: Record<string, string> = {};
-				for (const [path, expected] of Object.entries(declared)) {
-					const absolute = resolve(record.installpath, path);
-					if (isAbsolute(path) || escapesroot(record.installpath, absolute)) {
-						issues.push(`blueprint ${identity} file ${path} escapes install root`);
-						continue;
-					}
-					if (!existsSync(absolute)) {
-						issues.push(`blueprint ${identity} file ${path} is missing`);
-						continue;
-					}
-					const real = realpathSync(absolute);
-					if (escapesroot(record.installpath, real)) {
-						issues.push(`blueprint ${identity} file ${path} escapes install root`);
-						continue;
-					}
-					if (!statSync(real).isFile()) {
-						throw new Error(`blueprint file ${path} is not a regular file`);
-					}
-					const actual = hashcontent(readFileSync(real));
-					files[path] = actual;
-					if (actual !== expected) issues.push(`blueprint ${identity} file ${path} hash mismatch`);
-				}
-				const contenthash = hashcontent(stablejson({ manifest, files }));
-				if (Object.keys(files).length === Object.keys(declared).length && contenthash !== record.contenthash) {
+				const checked = hashfiles(record.installpath, objectrecord(manifest.files, "blueprint.files"));
+				for (const issue of checked.issues) issues.push(`blueprint ${identity} ${issue}`);
+				const contenthash = hashcontent(stablejson({ manifest, files: checked.files }));
+				if (checked.issues.length === 0 && contenthash !== record.contenthash) {
 					issues.push(`blueprint ${identity} registry content hash mismatch`);
 				}
 			} catch (error) {
