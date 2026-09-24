@@ -523,7 +523,7 @@ the canonical agent directory is `PI_CODING_AGENT_DIR` when set, otherwise
 <agent-dir>/skills/git-commit/scripts/smart_commit.sh
 ```
 
-the extension resolves this script path once at module load. while gates are enabled, a bash call that runs a non-amend `git commit` at a shell command boundary is blocked before execution. the block reason names the exact replacement:
+the extension resolves this script path once at module load. while gates are enabled, a bash call that runs a non-amend `git commit` at a shell command boundary is blocked before execution, including forms with `command`, `VAR=value` prefixes, or git global options such as `-C <dir>` and `-c <key>=<value>`. the block reason names the exact replacement:
 
 ```text
 bash '<agent-dir>/skills/git-commit/scripts/smart_commit.sh' '<type(scope): message>'

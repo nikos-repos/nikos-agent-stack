@@ -207,7 +207,9 @@ const MOD_CLAIM_RE =
   /(?:modif(?:ied|y)|updated?|changed?|edited?|added?\s+to|fixed?\s+in|refactored?|rewrote?|replaced?|removed?\s+(?:from|in)|deleted?\s+(?:from|in))\s+`([a-zA-Z0-9_./~-]+[/][a-zA-Z0-9_./~-]+\.[a-zA-Z]{1,8})`/gi;
 const SUBAGENT_REFERENCE_RE =
   /\b(sub-?agents?|reviewers?|review(?:ed|s)?\s+(?:by|agent)|delegat(?:e|ed|ion)|spawned\s+agents?|per\s+the\s+review|according\s+to\s+the\s+(?:review|agent)|the\s+agent\s+(?:reported|found|said|confirmed)|its?\s+report)\b/i;
-const COMMIT_BOUNDARY_RE = /(?:^|[;&|(])\s*git\s+commit\b(?![-_])/;
+// a `git commit` that starts a shell command, after optional `command`, VAR=value, and git global options (-C dir, -c k=v).
+const COMMIT_BOUNDARY_RE =
+  /(?:^|[;&|(])\s*(?:command\s+|\w+=\S*\s+)*git(?:\s+(?:-[Cc]\s+(?:'[^']*'|"[^"]*"|\S+)|--?[\w-]+(?:=(?:'[^']*'|"[^"]*"|\S+))?))*\s+commit\b(?![-_])/;
 const MAX_CONTINUATIONS = 3;
 
 function freshEvidence(): TurnEvidence {

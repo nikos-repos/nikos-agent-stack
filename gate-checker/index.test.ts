@@ -310,8 +310,10 @@ test("no-git first-touch snapshots catch added markers", async () => {
 test("raw git commit is blocked with the exact smart_commit command", async () => {
   const probe = harness(repository(), "medium", "true");
   await start(probe);
-  const routed = await probe.handlers.tool_call({ toolName: "bash", toolCallId: "bash-1", input: { command: "git diff --cached --quiet || git commit -am 'msg'" } }, probe.context);
-  assert(routed?.block === true && routed.reason.includes(commitScript), "raw git commit must be blocked with the exact smart_commit command");
+  for (const command of ["git diff --cached --quiet || git commit -am 'msg'", "git -C . commit -m msg", "git -c user.name=x commit -m msg", "command git commit -m msg"]) {
+    const routed = await probe.handlers.tool_call({ toolName: "bash", toolCallId: "bash-1", input: { command } }, probe.context);
+    assert(routed?.block === true && routed.reason.includes(commitScript), `raw git commit must be blocked with the exact smart_commit command: ${command}`);
+  }
 });
 
 test("the lease protocol recovers dead claimants and stale holders without losing fencing", async () => {
