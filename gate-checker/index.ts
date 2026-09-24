@@ -30,7 +30,12 @@ import { mergeprovenance, provenancefromdetails, provenancefromevent } from "./p
 import { journal_type, journal_version, journalfrombranch } from "./journal.js";
 import { auditscope } from "./risks.js";
 import { createMutationLease } from "./mutation-lease.ts";
-import { appendRecord as appendFrustration, validateRecord as validateFrustration } from "./frustrations.js";
+import {
+  appendRecord as appendFrustration,
+  FIXED_SEVERITIES,
+  FIXED_TYPES,
+  validateRecord as validateFrustration,
+} from "./frustrations.js";
 import { questionnaireStop } from "../ask-questionnaire/stop-decision.ts";
 import { omnipotenceStop } from "../omnipotence/stop-decision.ts";
 
@@ -774,8 +779,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
     agent_id: pi.zod.string().describe('your assigned id (e.g. "main" or the subagent id)'),
     primary_goal: pi.zod.string().describe("the goal you were assigned for this request"),
     complaint: pi.zod.string().describe('what went wrong or what blocked you; use "none" with type "none"'),
-    type: pi.zod.string().describe("friction category, or none for a friction-free session"),
-    severity: pi.zod.string().describe('low, medium, high, or blocker; type "none" requires low'),
+    type: pi.zod
+      .string()
+      .describe(`one of ${FIXED_TYPES.join(", ")}, or a type from the repo's .omp/gates-frustrations.json`),
+    severity: pi.zod.string().describe(`one of ${FIXED_SEVERITIES.join(", ")}; type "none" requires low`),
     evidence: pi.zod.array(
       pi.zod.union([
         pi.zod.object({ kind: pi.zod.literal("gate"), event_id: pi.zod.string(), rule: pi.zod.string() }),
@@ -793,7 +800,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
           output: pi.zod.string(),
         }),
       ]),
-    ),
+    ).min(1),
   });
   pi.registerTool({
     name: "record_frustration",

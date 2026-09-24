@@ -6,8 +6,8 @@ import { isRecord, isText, nonempty, parseJsonObject } from "./predicates.js";
 
 export const FRUSTRATION_PATH = process.env.OMP_GATE_FRUSTRATIONS ||
   resolvePath(homedir(), ".omp/gate-checker/frustrations.jsonl");
-const FIXED_TYPES = ["tooling", "environment", "requirements", "workflow", "test", "dependency", "performance", "other", "none"];
-const FIXED_SEVERITIES = ["low", "medium", "high", "blocker"];
+export const FIXED_TYPES = ["tooling", "environment", "requirements", "workflow", "test", "dependency", "performance", "other", "none"];
+export const FIXED_SEVERITIES = ["low", "medium", "high", "blocker"];
 
 const timestamp = (value) => nonempty(value) && Number.isFinite(Date.parse(value));
 
