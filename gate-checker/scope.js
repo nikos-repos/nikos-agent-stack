@@ -191,9 +191,11 @@ function snapshot(repo_root, path, untracked = false) {
     throw error;
   }
 }
-function collect_untracked(repo_root, folder, records, added) {
+// baseline dirt is skipped here; the exclusion pass snapshots it once and admits it only when it changed.
+function collect_untracked(repo_root, folder, records, added, baseline_dirty) {
   const raw = git(repo_root, ["ls-files", "--others", "--exclude-standard", "-z", ...path_args(folder)]);
   for (const path of raw.split("\0").filter(Boolean)) {
+    if (baseline_dirty.has(path)) continue;
     const current = snapshot(repo_root, path, true);
     const nested = current.directory === true;
     records.set(path, { path, type: nested ? "nested_repo" : "untracked", staged: false, unstaged: true, old_path: null, old_mode: null, new_mode: null, binary: current.binary && !nested, submodule: false });
@@ -272,12 +274,12 @@ export function resolvescope(options) {
   const { args, resolved } = diff_args(options, repo_root);
   const records = new Map();
   const added = new Map();
+  const excluded = options.baseline_dirty || new Set();
   collect_diff(repo_root, args, options.folder, records, added);
   if (options.kind === "request" || options.kind === "uncommitted") {
     mark_worktree_flags(repo_root, options.folder, records);
-    collect_untracked(repo_root, options.folder, records, added);
+    collect_untracked(repo_root, options.folder, records, added, excluded);
   }
-  const excluded = options.baseline_dirty || new Set();
   const snapshots = options.baseline_snapshots || {};
   let store = null;
   for (const path of excluded) {

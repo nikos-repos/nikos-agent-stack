@@ -243,6 +243,15 @@ test("audit reports an untracked nested repository as nested_repo, not binary co
   assert(ids.includes("risk.nested_repo") && !ids.includes("risk.binary"), "a nested repository must not be reported as binary content");
 });
 
+test("an unchanged large untracked file from before the request does not block scope", async () => {
+  const cwd = repository();
+  writeFileSync(join(cwd, "notes.txt"), "x".repeat(2 * 1024 * 1024 + 1));
+  const probe = harness(cwd, "medium", "true");
+  await start(probe);
+  await writeChange(probe, "two\n");
+  assert(await finish(probe, "updated the file") === undefined, "unchanged baseline dirt must not be read as request content");
+});
+
 test("committing after interrogate keeps the interrogation", async () => {
   const probe = harness(repository(), "medium", "true");
   await start(probe);
