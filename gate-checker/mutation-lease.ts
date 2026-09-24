@@ -34,11 +34,10 @@ type LeaseRecord = {
   repo_root?: string;
   acquired?: boolean;
   recovered?: boolean;
-  conflict?: LeaseRecord;
+  record?: LeaseRecord | null;
   waited_ms?: number;
   timed_out?: boolean;
   error?: string;
-  diagnostic?: string;
 };
 type LeaseScope = { cwd: string; target: string | null };
 type ActiveOperation = {
@@ -50,7 +49,7 @@ type ActiveOperation = {
   target: string | null;
   backgroundRunning: boolean;
 };
-type LeaseStatus = { status?: string; kind?: string; valid?: boolean; stale?: boolean; record?: LeaseRecord | null };
+type LeaseStatus = { status?: string; stale?: boolean; record?: LeaseRecord | null };
 // a mutation-capable call the lease may cover.
 type OperationCall = { toolName: string; toolCallId: string; input: ToolInput; sessionId?: string };
 type ToolResultNotice = { toolName: string; toolCallId: string; isError: boolean; details?: ToolDetails };
@@ -285,7 +284,7 @@ export function createMutationLease(
       return `mutation lease could not be acquired: ${error instanceof Error ? error.message : String(error)}`;
     }
     if (result.acquired !== true) {
-      const holder = result.conflict?.session_file ?? null;
+      const holder = result.record?.session_file ?? null;
       let reason = "";
       try {
         reason = formatleasestatus(result, {
@@ -294,7 +293,7 @@ export function createMutationLease(
           cwd: scope.cwd,
         });
       } catch {}
-      if (!reason) reason = result.error ?? result.diagnostic ?? "mutation lease is unavailable";
+      if (!reason) reason = result.error ?? "mutation lease is unavailable";
       if (result.timed_out === true) ledger.append("lease_wait_timed_out", { ...metadata, reason, ts: Date.now() });
       return reason;
     }
@@ -419,12 +418,7 @@ export function createMutationLease(
       try {
         const status: LeaseStatus = inspectlease({ cwd });
         const record = status.record;
-        if (
-          status.status === "held" &&
-          status.kind === "v2" &&
-          status.valid === true &&
-          record?.owner_id === leaseOwnerId
-        ) {
+        if (status.status === "held" && record?.owner_id === leaseOwnerId) {
           const released = Boolean(releaselease(record, { cwd }));
           if (!released) {
             context.ui?.notify?.("cannot disable mutation lease: current lease could not be released", "error");

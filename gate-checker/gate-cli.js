@@ -146,7 +146,7 @@ function leaserelease(args) {
   if (force && (!nonempty(args["owner-id"]) || !nonempty(args["tool-call-id"]) || !nonempty(args.reason))) return null;
   const cwd = leasecwd(args);
   const status = inspectlease({ cwd });
-  if (status.status !== "held" || status.valid !== true || !status.record) {
+  if (status.status !== "held") {
     console.error(`lease release: ${staleonly ? "stale-only" : "force"} refused`);
     console.error(formatleasestatus(status, { cwd }));
     return 1;

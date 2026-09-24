@@ -132,54 +132,42 @@ export function leasefields(record) {
 export function formatleasestatus(status, options = {}) {
   const cwd = options.cwd === undefined ? "." : shellQuote(options.cwd);
   const inspect = `inspect with: nikos-gates lease status --cwd ${cwd}`;
-  if (!isRecord(status)) return `lease status unavailable; ${inspect}`;
-  const state = status.status ?? status.kind;
-  if (state === "free" || status.exists === false) return `worktree mutation lease is free; ${inspect}`;
-  if (state === "malformed") return `malformed lease record at ${displayStatus(status.data_path)}; ${inspect}; do not delete it`;
-  if (state === "initializing") return `worktree mutation lease is initializing; ${inspect}`;
-  if (state !== "held" && status.acquired !== true) return `worktree mutation lease status ${displayStatus(state)}; ${inspect}`;
-  const record = isRecord(status.record) ? status.record : isRecord(status.conflict) ? status.conflict : status;
+  if (status.status === "free") return `worktree mutation lease is free; ${inspect}`;
+  if (status.status === "malformed") return `malformed lease record at ${displayStatus(status.data_path)}; ${inspect}; do not delete it`;
+  if (status.status === "initializing") return `worktree mutation lease is initializing; ${inspect}`;
+  const record = status.record;
   const waited = Number.isFinite(options.waited_ms) ? Math.max(0, Number(options.waited_ms)) : null;
   const title = waited === null ? "worktree mutation lease is held" : `worktree mutation busy after ${formatAge(waited)}`;
   const relation = nonempty(options.relation) ? options.relation : "unknown";
   return [title, `agent: ${displayStatus(record.agent_id)}`, `session: ${displayStatus(record.session_id)}`, `request: ${displayStatus(record.request_id)}`, `tool name: ${displayStatus(record.tool_name)}`, `target: ${displayStatus(record.target)}`, `tool call: ${displayStatus(record.tool_call_id)}`, `pid: ${displayStatus(record.pid)}`, `age: ${formatAge(status.age_ms)}`, `heartbeat age: ${formatAge(status.heartbeat_age_ms, " ago")}`, `fence: ${displayStatus(record.fence)}`, `relation: ${relation}`, inspect].join("\n");
 }
 function scopeEquals(record, scope, paths) { return isRecord(record) && record.repo_root === scope.repo_root && record.common_dir === scope.common_dir && record.path === paths.path; }
-function freeStatus(scope, paths, dead_pid_grace_ms) {
-  return { acquired: false, exists: false, status: "free", kind: "missing", valid: false, stale: false, heartbeat_stale: false, path: paths.path, data_path: paths.data_path, initialization_path: paths.initialization_path, fence_path: paths.fence_path, repo_root: scope.repo_root, common_dir: scope.common_dir, key: scope.key, record: null, validation: null, age_ms: null, heartbeat_age_ms: null, pid_alive: false, dead_pid_grace_ms, diagnostic: null };
-}
+// one status shape: the state, whether it is stale, the record behind it, and what a caller needs to explain it.
 export function inspectlease(input = {}) {
   const options = optionsOf(input);
   const scope = options.scope || identity(options.cwd || ".");
   const paths = leasePaths(scope);
   const now = nowOf(options);
-  const dead_pid_grace_ms = deadGraceMs(options);
-  const stale_ms = staleMs(options);
+  const base = { status: "free", stale: false, record: null, reason: null, data_path: paths.data_path, age_ms: null, heartbeat_age_ms: null, pid_alive: false };
   let directory = false;
   try { directory = statSync(paths.path).isDirectory(); }
   catch (error) { if (String(error?.code ?? "").toLowerCase() !== "enoent") throw error; }
-  if (!directory) return freeStatus(scope, paths, dead_pid_grace_ms);
+  if (!directory) return base;
   const stored = readRecord(paths.data_path);
-  let status = stored.kind;
-  let record = stored.record;
-  let validation = stored.validation;
-  if (stored.kind === "missing") { status = "initializing"; record = readClaim(paths.initialization_path); validation = null; }
-  else if (stored.kind === "v2" && !scopeEquals(record, scope, paths)) { status = "malformed"; validation = invalidLease("lease record repository identity does not match its directory"); }
-  if (status !== "v2") {
-    const initialized = status === "initializing" && validClaim(record);
-    const age_ms = initialized ? Math.max(0, now - record.claimed_at) : null;
-    const pid_alive = initialized ? processAlive(record.pid) : false;
-    const stale = initialized && age_ms >= dead_pid_grace_ms && !pid_alive;
-    const result = { acquired: false, exists: true, status, kind: status, valid: false, stale, heartbeat_stale: false, path: paths.path, data_path: paths.data_path, initialization_path: paths.initialization_path, fence_path: paths.fence_path, repo_root: scope.repo_root, common_dir: scope.common_dir, key: scope.key, record, validation, age_ms, heartbeat_age_ms: null, pid_alive, dead_pid_grace_ms, pid: initialized ? record.pid : null, claimed_at: initialized ? record.claimed_at : null, diagnostic: null };
-    result.diagnostic = formatleasestatus(result, { cwd: options.cwd });
-    return result;
+  if (stored.kind === "missing") {
+    const record = readClaim(paths.initialization_path);
+    if (!validClaim(record)) return { ...base, status: "initializing", record };
+    const age_ms = Math.max(0, now - record.claimed_at);
+    const pid_alive = processAlive(record.pid);
+    return { ...base, status: "initializing", record, age_ms, pid_alive, stale: age_ms >= deadGraceMs(options) && !pid_alive };
   }
-  const age_ms = Math.max(0, now - record.acquired_at);
+  if (stored.kind !== "v2" || !scopeEquals(stored.record, scope, paths)) {
+    const reason = stored.kind === "v2" ? "lease record repository identity does not match its directory" : stored.validation?.reason ?? null;
+    return { ...base, status: "malformed", record: stored.record, reason };
+  }
+  const record = stored.record;
   const heartbeat_age_ms = Math.max(0, now - record.heartbeat_at);
-  const stale = heartbeat_age_ms >= stale_ms;
-  const result = { acquired: true, exists: true, status: "held", kind: "v2", valid: true, stale, heartbeat_stale: stale, path: paths.path, data_path: paths.data_path, initialization_path: paths.initialization_path, fence_path: paths.fence_path, repo_root: scope.repo_root, common_dir: scope.common_dir, key: scope.key, record, validation, age_ms, heartbeat_age_ms, pid_alive: processAlive(record.pid), dead_pid_grace_ms, fence: record.fence, owner_id: record.owner_id, request_id: record.request_id, session_id: record.session_id, session_file: record.session_file, agent_id: record.agent_id, tool_call_id: record.tool_call_id, tool_name: record.tool_name, target: record.target, pid: record.pid, acquired_at: record.acquired_at, heartbeat_at: record.heartbeat_at, diagnostic: null };
-  result.diagnostic = formatleasestatus(result, { cwd: options.cwd });
-  return result;
+  return { ...base, status: "held", record, age_ms: Math.max(0, now - record.acquired_at), heartbeat_age_ms, pid_alive: processAlive(record.pid), stale: heartbeat_age_ms >= staleMs(options) };
 }
 function nextFence(parent, key, token) {
   const path = join(parent, `${key}.fence`);
@@ -244,10 +232,9 @@ function acquireRecord(options, scope, paths, now, initialization) {
     releaseClaim(claimed);
   }
 }
-function conflictResult(options, scope, paths, status, waited_ms = 0) {
-  const metadata = operationMetadata(options);
-  const diagnostic = formatleasestatus(status, { waited_ms, cwd: options.cwd });
-  return { acquired: false, recovered: false, path: paths.path, token: null, fence: null, owner_id: metadata.owner_id, request_id: metadata.request_id, session_id: metadata.session_id, session_file: metadata.session_file, agent_id: metadata.agent_id, tool_call_id: metadata.tool_call_id, tool_name: metadata.tool_name, target: metadata.target, pid: metadata.pid, repo_root: scope.repo_root, common_dir: scope.common_dir, conflict: status.record, status: status.status, valid: status.valid, stale: status.stale, age_ms: status.age_ms, heartbeat_age_ms: status.heartbeat_age_ms, pid_alive: status.pid_alive, claimed_at: status.claimed_at ?? null, dead_pid_grace_ms: status.dead_pid_grace_ms, diagnostic, error: diagnostic, retryable: ["held", "free", "initializing"].includes(status.status), timed_out: false, waited_ms };
+// a failed acquisition is the observed status plus how long the caller waited.
+function conflictResult(status, cwd, waited_ms = 0, timed_out = false) {
+  return { ...status, acquired: false, waited_ms, timed_out, error: formatleasestatus(status, { waited_ms, cwd }) };
 }
 function tryacquirelease(input = {}) {
   const options = optionsOf(input);
@@ -257,20 +244,16 @@ function tryacquirelease(input = {}) {
   const now = nowOf(options);
   mkdirSync(paths.parent, { recursive: true });
   const initialization = publishInitialization(paths, now);
-  if (!initialization) return conflictResult(options, scope, paths, inspectlease({ ...options, scope }));
+  if (!initialization) return conflictResult(inspectlease({ ...options, scope }), options.cwd);
   const record = acquireRecord(options, scope, paths, now, initialization);
   if (record) return { ...record, recovered: false };
-  return conflictResult(options, scope, paths, inspectlease({ ...options, scope }));
-}
-function timeoutResult(result, waited_ms, cwd) {
-  const diagnostic = formatleasestatus(result, { waited_ms, cwd });
-  return { ...result, timed_out: true, retryable: false, waited_ms, diagnostic, error: diagnostic };
+  return conflictResult(inspectlease({ ...options, scope }), options.cwd);
 }
 function recoverable(status, scope, options) {
-  if (!status.stale || !status.conflict) return false;
+  if (!status.stale || !status.record) return false;
   return status.status === "initializing"
-    ? reclaimInitialization(status.conflict, scope, options)
-    : releasestalelease(status.conflict, { ...options, scope });
+    ? reclaimInitialization(status.record, scope, options)
+    : releasestalelease(status.record, { ...options, scope });
 }
 export async function acquirelease(input = {}) {
   const options = optionsOf(input);
@@ -283,9 +266,9 @@ export async function acquirelease(input = {}) {
     if (result.acquired) return { ...result, recovered: recovered || result.recovered };
     if (result.status === "malformed") return { ...result, waited_ms };
     if (recoverable(result, scope, options)) { recovered = true; continue; }
-    if (waited_ms >= wait_ms) return timeoutResult(result, waited_ms, options.cwd);
+    if (waited_ms >= wait_ms) return conflictResult(result, options.cwd, waited_ms, true);
     const delay = Math.min(nextDelay(), wait_ms - waited_ms);
-    if (delay <= 0) return timeoutResult(result, waited_ms, options.cwd);
+    if (delay <= 0) return conflictResult(result, options.cwd, waited_ms, true);
     await new Promise((done) => setTimeout(done, delay));
     waited_ms += delay;
   }
