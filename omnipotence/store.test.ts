@@ -123,7 +123,7 @@ describe("authoritative orchestration store", () => {
 		expect(second.claimed).toBe(false);
 		expect(second.effect).toEqual(first.effect);
 		expect(store.events(run.id).filter((event) => event.type === "effect_dispatch_started")).toHaveLength(1);
-		expect(store.markeffectdispatching(run.id, effect.id, effect.fence)).toEqual(first.effect);
+		expect(store.claimeffectdispatching(run.id, effect.id, effect.fence).effect).toEqual(first.effect);
 		other.close();
 		store.close();
 	});
@@ -179,7 +179,7 @@ describe("authoritative orchestration store", () => {
 			kind: "task",
 			input: { target: "external" },
 		});
-		store.markeffectdispatching(run.id, effect.id, effect.fence);
+		store.claimeffectdispatching(run.id, effect.id, effect.fence);
 		const dispatched = store.markeffectdispatched(run.id, effect.id, effect.fence);
 		const uncertain = store.posteffect({
 			runid: run.id,
@@ -228,7 +228,7 @@ describe("authoritative orchestration store", () => {
 			kind: "task",
 			input: { order: 2 },
 		});
-		store.markeffectdispatching(run.id, second.id, second.fence);
+		store.claimeffectdispatching(run.id, second.id, second.fence);
 		store.markeffectdispatched(run.id, second.id, second.fence);
 		store.posteffect({
 			runid: run.id,
@@ -279,7 +279,7 @@ describe("authoritative orchestration store", () => {
 		).toThrow("stale fence");
 		const pending = store.geteffect(run.id, effect.id);
 		if (!pending) throw new Error("expected refenced effect");
-		store.markeffectdispatching(run.id, pending.id, pending.fence);
+		store.claimeffectdispatching(run.id, pending.id, pending.fence);
 		store.markeffectdispatched(run.id, pending.id, pending.fence);
 		expect(() => store.unbindsession("session-new")).toThrow(
 			`run ${run.id} has dispatched effect ${pending.id}; resolve it before session ownership changes`,
@@ -306,7 +306,7 @@ describe("authoritative orchestration store", () => {
 			kind: "task",
 			input: {},
 		});
-		store.markeffectdispatching(child.id, childwork.id, childwork.fence);
+		store.claimeffectdispatching(child.id, childwork.id, childwork.fence);
 		store.markeffectdispatched(child.id, childwork.id, childwork.fence);
 
 		expect(() => store.bindsession("session-new", root.id)).toThrow(

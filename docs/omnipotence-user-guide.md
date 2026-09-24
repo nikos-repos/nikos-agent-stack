@@ -112,7 +112,7 @@ source: [api.ts](../omnipotence/api.ts) and [contracts.ts](../omnipotence/contra
 
 each effect has a stable lowercase key. a repeated key reuses its stored effect only when its kind and normalized input are identical. a changed kind or input fails replay. effect keys are at most 128 characters and use lowercase letters, digits, `.`, `_`, `/`, and `-`.
 
-- `ctx.task(key, input, label?)` requests one external task. the process pauses until a result is posted.
+- `ctx.task(key, input)` requests one external task. the process pauses until a result is posted.
 - `ctx.parallel(key, requests, maxconcurrency?)` requests independent task effects named `key/request.key`. duplicate request keys fail. the default concurrency is the request count, with a minimum of one. the engine creates requests incrementally up to the limit and waits for all results.
 - `ctx.subprocess(key, processid, input)` runs a child process from the same pinned blueprint when the parent has one. the child version and blueprint identity are stored. the child id is deterministic from the parent run, effect key, process id, version, and input. the parent waits for the child and cannot complete while the child is blocked, failed, or halted.
 - `ctx.sleep(key, until)` validates an iso timestamp, stores the normalized deadline, and resolves internally with `null` at or after the deadline. future deadlines put the run in `waiting_effect`.

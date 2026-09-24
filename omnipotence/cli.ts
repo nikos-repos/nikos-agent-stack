@@ -109,8 +109,9 @@ function parseinteger(value: string | undefined, label: string): number {
 }
 
 function parsemode(value: string | undefined): orchestrationmode {
-	const mode = value ?? "babysit";
-	if (mode === "resume" || !publicmodes.includes(mode)) throw new clierror(`unsupported run mode ${mode}`);
+	const requested = value ?? "babysit";
+	const mode = publicmodes.find((entry) => entry === requested);
+	if (!mode) throw new clierror(`unsupported run mode ${requested}`);
 	return mode;
 }
 

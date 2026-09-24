@@ -70,7 +70,6 @@ export class profileservice {
 		this.store = store;
 	}
 
-
 	validate(document: unknown): profiledocument {
 		return validateprofile(document);
 	}
@@ -82,11 +81,6 @@ export class profileservice {
 	read(scope: profilescope, projectroot: string): profilerecord | null {
 		const root = scope === "user" ? "" : resolve(projectroot);
 		return this.store.getprofile(scope, root);
-	}
-
-	history(scope: profilescope, projectroot: string): profilerecord[] {
-		const root = scope === "user" ? "" : resolve(projectroot);
-		return this.store.profilehistory(scope, root);
 	}
 
 	snapshot(projectroot: string, defaults: unknown, runpatch: unknown): profilesnapshot {
@@ -101,10 +95,6 @@ export class profileservice {
 			userprofileversion: user?.version ?? null,
 			projectprofileversion: project?.version ?? null,
 		};
-	}
-
-	effective(projectroot: string, defaults: unknown, runpatch: unknown): profiledocument {
-		return this.snapshot(projectroot, defaults, runpatch).effective;
 	}
 
 	render(profile: unknown): string {

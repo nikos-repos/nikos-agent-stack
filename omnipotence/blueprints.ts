@@ -120,16 +120,6 @@ export function hashfiles(
 	return { files, issues };
 }
 
-
-function setproperty(target: Record<string, jsonvalue>, key: string, value: jsonvalue): void {
-	Object.defineProperty(target, key, {
-		value,
-		enumerable: true,
-		configurable: true,
-		writable: true,
-	});
-}
-
 function validatemanifest(value: jsonvalue): Record<string, jsonvalue> {
 	const manifest = objectrecord(value, "blueprint");
 	for (const key of Object.keys(manifest)) {

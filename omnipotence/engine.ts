@@ -155,6 +155,13 @@ function isturnbudgetreason(reason: string | null | undefined): boolean {
 	return reason.startsWith("turn budget ");
 }
 
+// modes without optional breakpoints approve every breakpoint the process did not mark required.
+function autoapproval(run: runrecord, input: jsonvalue): jsonvalue | null {
+	if (modepolicy(run.mode).optionalbreakpoints) return null;
+	if (objectrecord(input, "breakpoint input").required === true) return null;
+	return { approved: true, mode: run.mode };
+}
+
 function terminalresult(run: runrecord): advanceresult | null {
 	if (run.status === "completed") return { status: "completed", run, output: run.output ?? null };
 	if (run.status === "failed") return { status: "failed", run, error: run.blockedreason ?? "process failed" };
@@ -258,27 +265,18 @@ export class orchestrationengine {
 	private async dispatchphase(runid: string, phase: hookphase, input: jsonvalue): Promise<hookresult[]> {
 		const run = this.store.getrun(runid);
 		if (!run) throw new Error(`run ${runid} does not exist`);
-		const results = await this.hooks.dispatchfor(phase, input, runblueprint(run));
+		const results = await this.hooks.dispatch(phase, input, runblueprint(run));
 		for (const result of results) this.store.recordevent(runid, "hook_completed", jsonvalueof(result));
 		return results;
 	}
-	private hookdeliveryselector(delivery: hookdeliveryrecord): hookselector {
-		return delivery.blueprintname !== null && delivery.blueprintversion !== null
-			? {
+	private async dispatchhookdelivery(delivery: hookdeliveryrecord): Promise<void> {
+		try {
+			// the store writes a delivery's blueprint name and version together, so they are both null or both set.
+			const result = await this.hooks.dispatchone(delivery.hookid, delivery.input, {
 				version: delivery.hookversion,
 				blueprintname: delivery.blueprintname,
 				blueprintversion: delivery.blueprintversion,
-			}
-			: {
-				version: delivery.hookversion,
-				blueprintname: null,
-				blueprintversion: null,
-			};
-	}
-
-	private async dispatchhookdelivery(delivery: hookdeliveryrecord): Promise<void> {
-		try {
-			const result = await this.hooks.dispatchone(delivery.hookid, delivery.input, this.hookdeliveryselector(delivery));
+			});
 			this.store.completehookdelivery(delivery);
 			this.store.recordevent(delivery.runid, "hook_completed", jsonvalueof(result));
 		} catch (error) {
@@ -565,10 +563,8 @@ export class orchestrationengine {
 	}
 
 	private async breakpoint(run: runrecord, key: string, input: jsonvalue): Promise<jsonvalue> {
-		if (!modepolicy(run.mode).optionalbreakpoints) {
-			const record = objectrecord(input, "breakpoint input");
-			if (record.required !== true) return { approved: true, mode: run.mode };
-		}
+		const approval = autoapproval(run, input);
+		if (approval) return approval;
 		const effect = await this.ensureeffect(run, "breakpoint", key, input);
 		return this.effectvalue(effect);
 	}
@@ -674,10 +670,8 @@ export class orchestrationengine {
 			subprocess: (key, processid, input) => pending({ key, kind: "subprocess", input: { processid, input } }),
 			sleep: (key, until) => pending({ key, kind: "sleep", input: { until } }),
 			breakpoint: (key, input) => {
-				const record = objectrecord(input, "breakpoint input");
-				return !modepolicy(run.mode).optionalbreakpoints && record.required !== true
-					? Promise.resolve({ approved: true, mode: run.mode })
-					: pending({ key, kind: "breakpoint", input });
+				const approval = autoapproval(run, input);
+				return approval ? Promise.resolve(approval) : pending({ key, kind: "breakpoint", input });
 			},
 			hook: (key, hookid, input) => pending({ key, kind: "hook", input: { hookid, input } }),
 			halt(reason, payload = null): never {

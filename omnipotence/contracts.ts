@@ -48,7 +48,6 @@ export interface effectrequest {
 	key: string;
 	kind: effectkind;
 	input: jsonvalue;
-	label?: string;
 }
 
 export interface parallelrequest extends effectrequest {
@@ -68,7 +67,7 @@ export interface processcontext {
 	readonly runid: string;
 	readonly profile: jsonvalue;
 	readonly parent: processparent | null;
-	task(key: string, input: jsonvalue, label?: string): Promise<jsonvalue>;
+	task(key: string, input: jsonvalue): Promise<jsonvalue>;
 	parallel(key: string, requests: readonly parallelrequest[], maxconcurrency?: number): Promise<jsonvalue[]>;
 	subprocess(key: string, processid: string, input: jsonvalue): Promise<jsonvalue>;
 	sleep(key: string, until: string): Promise<void>;
@@ -108,16 +107,6 @@ export interface processinput<input = unknown, output = unknown> {
 	run(context: processcontext, input: input): Promise<output>;
 }
 
-export interface jsonerror {
-	code: string;
-	message: string;
-	details?: jsonvalue;
-}
-
-export type jsonenvelope<data extends jsonvalue = jsonvalue> =
-	| { ok: true; data: data }
-	| { ok: false; error: jsonerror };
-
 const processidpattern = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)*$/;
 const versionpattern = /^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/;
 const effectkeypattern = /^[a-z0-9][a-z0-9._/-]{0,127}$/;
@@ -156,10 +145,6 @@ function pathfor(parent: string, key: string): string {
 
 function issue(path: string, message: string): validationissue[] {
 	return [{ path, message }];
-}
-
-function sameprimitive(left: jsonprimitive, right: unknown): boolean {
-	return left === right;
 }
 
 function validatetype(schema: jsonschema, type: jsontype, value: unknown, path: string): validationissue[] {
@@ -224,7 +209,7 @@ function validatetype(schema: jsonschema, type: jsontype, value: unknown, path: 
 }
 
 export function validate(schema: jsonschema, value: unknown, path = "value"): validationissue[] {
-	if (schema.enum && !schema.enum.some((entry) => sameprimitive(entry, value))) {
+	if (schema.enum && !schema.enum.some((entry) => entry === value)) {
 		return issue(path, `expected one of ${schema.enum.map((entry) => JSON.stringify(entry)).join(", ")}`);
 	}
 

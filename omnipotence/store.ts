@@ -598,10 +598,7 @@ function hookdeliverykey(
 	].join("\u0000");
 }
 
-function parsehookdelivery(
-	row: eventrow,
-	type: "hook_delivery_pending" | "hook_delivery_failed" | "hook_delivery_completed",
-): hookdeliveryrecord {
+function parsehookdelivery(row: eventrow): hookdeliveryrecord {
 	const payload = objectrecord(parsejson(row.payload_json, `event ${row.run_id}/${row.seq}`), "event payload");
 	const phase = stringfield(payload, "phase", "event payload");
 	if (phase !== "effect_resolved") throw new Error(`event payload.phase: unsupported hook phase ${phase}`);
@@ -624,7 +621,7 @@ function parsehookdelivery(
 		blueprintversion,
 		status,
 		input: payload.input,
-		state: type === "hook_delivery_completed" ? "completed" : "pending",
+		state: row.type === "hook_delivery_completed" ? "completed" : "pending",
 		error,
 	};
 }
@@ -1380,14 +1377,7 @@ export class orchestrationstore {
 			.all() as eventrow[];
 		const latest = new Map<string, hookdeliveryrecord>();
 		for (const row of rows) {
-			if (
-				row.type !== "hook_delivery_pending" &&
-				row.type !== "hook_delivery_failed" &&
-				row.type !== "hook_delivery_completed"
-			) {
-				continue;
-			}
-			const delivery = parsehookdelivery(row, row.type);
+			const delivery = parsehookdelivery(row);
 			latest.set(hookdeliverykey(delivery), delivery);
 		}
 		return [...latest.values()];
@@ -1528,10 +1518,6 @@ export class orchestrationstore {
 			this.appendevent(runid, "effect_dispatch_started", jsonvalueof(dispatching));
 			return { effect: dispatching, claimed: true };
 		});
-	}
-
-	markeffectdispatching(runid: string, effectid: string, fence: number): effectrecord {
-		return this.claimeffectdispatching(runid, effectid, fence).effect;
 	}
 
 	markeffectdispatched(runid: string, effectid: string, fence: number): effectrecord {

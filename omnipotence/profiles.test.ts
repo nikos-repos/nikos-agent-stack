@@ -37,7 +37,7 @@ describe("versioned orchestration profiles", () => {
 			processes: { default: "delivery.review" },
 		});
 
-		const effective = profiles.effective(
+		const { effective } = profiles.snapshot(
 			"/workspace/project",
 			{
 				schema: 1,
@@ -66,7 +66,7 @@ describe("versioned orchestration profiles", () => {
 		const second = profiles.write("user", "", { schema: 1, instructions: ["second"] });
 		expect(first.version).toBe(1);
 		expect(second.version).toBe(2);
-		expect(profiles.history("user", "").map((entry) => entry.version)).toEqual([1, 2]);
+		expect(store.profilehistory("user", "").map((entry) => entry.version)).toEqual([1, 2]);
 
 		expect(() =>
 			profiles.write("project", "/workspace/project", {

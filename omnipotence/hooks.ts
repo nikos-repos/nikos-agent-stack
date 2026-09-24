@@ -149,18 +149,9 @@ export class hookregistry {
 			.sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
 	}
 
-	async dispatchfor(
-		phase: hookphase,
-		input: jsonvalue,
-		blueprint?: processblueprint | null,
-	): Promise<hookresult[]> {
+	async dispatch(phase: hookphase, input: jsonvalue, blueprint?: processblueprint | null): Promise<hookresult[]> {
 		if (!Object.hasOwn(phases, phase)) throw new TypeError(`hook.phase: unsupported phase ${phase}`);
 		return this.execute(this.listfor(phase, blueprint), input);
-	}
-
-	async dispatch(phase: hookphase, input: jsonvalue): Promise<hookresult[]> {
-		if (!Object.hasOwn(phases, phase)) throw new TypeError(`hook.phase: unsupported phase ${phase}`);
-		return this.execute(this.list(phase), input);
 	}
 
 	async dispatchone(

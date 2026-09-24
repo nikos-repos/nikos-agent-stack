@@ -185,7 +185,7 @@ describe("ordered orchestration hooks", () => {
 		).toEqual({ version: 1 });
 		expect(
 			(
-				await registry.dispatchfor("before_advance", payload, {
+				await registry.dispatch("before_advance", payload, {
 					name: "audit-pack",
 					version: "1.0.0",
 				})
@@ -212,7 +212,7 @@ describe("ordered orchestration hooks", () => {
 		register("audit.alpha", { name: "alpha-pack", version: "1.0.0" });
 		register("audit.beta", { name: "beta-pack", version: "1.0.0" });
 
-		const results = await registry.dispatchfor("before_advance", payload, {
+		const results = await registry.dispatch("before_advance", payload, {
 			name: "alpha-pack",
 			version: "1.0.0",
 		});

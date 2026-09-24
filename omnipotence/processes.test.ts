@@ -28,7 +28,6 @@ describe("built-in orchestration modes", () => {
 		expect(modepolicy("plan")).toEqual({ execute: false, optionalbreakpoints: false, persistent: false });
 		expect(modepolicy("yolo")).toEqual({ execute: true, optionalbreakpoints: false, persistent: false });
 		expect(modepolicy("forever")).toEqual({ execute: true, optionalbreakpoints: false, persistent: true });
-		expect(modepolicy("resume")).toEqual({ execute: true, optionalbreakpoints: true, persistent: false });
 	});
 
 	test("resume posts a breakpoint answer without a second start", async () => {
