@@ -120,9 +120,8 @@ type GateFailure = {
   severity?: "block" | "warn";
 };
 type TurnEvidence = {
-  hadToolCalls: boolean;
   askedUser: boolean;
-  filesTouched: Set<string>;
+  wroteFiles: boolean;
   snapshotTags: Set<string>;
   bashCommands: Array<{ cmd: string; isError: boolean }>;
   subagents: SubagentEvidence[];
@@ -252,9 +251,8 @@ const MAX_CONTINUATIONS = 3;
 
 function freshEvidence(): TurnEvidence {
   return {
-    hadToolCalls: false,
     askedUser: false,
-    filesTouched: new Set(),
+    wroteFiles: false,
     snapshotTags: new Set(),
     bashCommands: [],
     subagents: [],
@@ -303,26 +301,20 @@ function ranTestRunner(ev: TurnEvidence): boolean {
 function reliesOnSubagents(text: string): boolean {
   return SUBAGENT_REFERENCE_RE.test(text);
 }
-function checkCitations(
-  assistantText: string,
-  subagents: SubagentEvidence[],
-  changedFiles: Set<string>,
-  ev: TurnEvidence,
-  hasGit: boolean,
-  cwd: string,
-  watched: Set<string> | null,
-): GateFailure[] {
+function checkCitations(state: RequestState, ev: TurnEvidence): GateFailure[] {
+  const { assistantText, watched } = state;
+  const subagents = ev.subagents;
   const failures: GateFailure[] = [];
-  const isChanged = makeClaimMatcher(changedFiles, ev.repoRoot, cwd);
+  const isChanged = makeClaimMatcher(state.changedFiles, ev.repoRoot, state.cwd);
+  // git mode judges every claim; no-git mode judges only the files it watched.
   const canJudge = (claim: string): boolean => watched === null || watched.has(normalizePath(claim));
-  if (hasGit || watched !== null)
-    for (const claimed of extractModClaims(assistantText))
-      if (canJudge(claimed) && !isChanged(claimed))
-        failures.push({
-          gate: "citation",
-          rule: "fabricated_modification",
-          detail: `assistant text claims modification of \`${claimed}\` but git diff does not include this file. either make the change or remove the claim.`,
-        });
+  for (const claimed of extractModClaims(assistantText))
+    if (canJudge(claimed) && !isChanged(claimed))
+      failures.push({
+        gate: "citation",
+        rule: "fabricated_modification",
+        detail: `assistant text claims modification of \`${claimed}\` but git diff does not include this file. either make the change or remove the claim.`,
+      });
   if (claimsTestSuccess(assistantText) && !ranTestRunner(ev))
     failures.push({
       gate: "citation",
@@ -338,9 +330,7 @@ function checkCitations(
       if (ev.judgedSubagents.has(seen)) continue;
       ev.judgedSubagents.add(seen);
       const manifest = subagent.manifest ?? extractManifest(subagent.report);
-      const contradicts =
-        (hasGit || watched !== null) &&
-        extractModClaims(subagent.report).some((claim) => canJudge(claim) && !isChanged(claim));
+      const contradicts = extractModClaims(subagent.report).some((claim) => canJudge(claim) && !isChanged(claim));
       if (manifest === null)
         failures.push({
           gate: "citation",
@@ -348,7 +338,7 @@ function checkCitations(
           severity: contradicts ? "block" : "warn",
           detail: `subagent #${index + 1} returned no manifest. it must report the files it changed — either the ${MANIFEST_OPEN}…${MANIFEST_CLOSE} block, or a JSON \`${MANIFEST_JSON_KEYS.join("`/`")}\` field (empty if it changed none). verify its work yourself before repeating its claims.`,
         });
-      else if (hasGit || watched !== null)
+      else
         for (const claimed of manifest)
           if (canJudge(claimed) && !isChanged(claimed))
             failures.push({
@@ -356,14 +346,13 @@ function checkCitations(
               rule: "subagent_manifest_mismatch",
               detail: `subagent #${index + 1} listed \`${claimed}\` in its manifest but the diff does not include that file.`,
             });
-      if (hasGit || watched !== null)
-        for (const claimed of extractModClaims(subagent.report))
-          if (canJudge(claimed) && !isChanged(claimed))
-            failures.push({
-              gate: "citation",
-              rule: "subagent_fabricated_modification",
-              detail: `subagent #${index + 1} claimed modification of \`${claimed}\` but the diff does not include this file.`,
-            });
+      for (const claimed of extractModClaims(subagent.report))
+        if (canJudge(claimed) && !isChanged(claimed))
+          failures.push({
+            gate: "citation",
+            rule: "subagent_fabricated_modification",
+            detail: `subagent #${index + 1} claimed modification of \`${claimed}\` but the diff does not include this file.`,
+          });
       if (claimsTestSuccess(subagent.report) && !ranTestRunner(ev))
         failures.push({
           gate: "citation",
@@ -449,9 +438,6 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
     if (entry.type === "message" && entry.message?.role === "assistant") return extractText(entry.message.content);
   }
   return null;
-}
-function shouldSkipNoTools(hadToolCalls: boolean, assistantText: string, journalRecovery: string | null): boolean {
-  return !hadToolCalls && !assistantText && !journalRecovery;
 }
 function canSkipUserQuestion(askedUser: boolean, changedCount: number, journalRecovery: string | null): boolean {
   return askedUser && changedCount === 0 && !journalRecovery;
@@ -1101,7 +1087,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const prior = evidence.interrogations;
     evidence = freshEvidence();
     for (const [key, answers] of prior) evidence.interrogations.set(key, answers);
-    evidence.hadToolCalls = true;
     evidence.baselineSha = state.baseline_sha;
     evidence.baselineSnapshots = state.baseline_snapshots;
     evidence.baselineDirty = new Set(state.baseline_dirty);
@@ -1542,18 +1527,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     if (state.canAdjudicate) {
-      failures.push(
-        ...checkCitations(
-          state.assistantText,
-          evidence.subagents,
-          state.changedFiles,
-          evidence,
-          state.hasGit,
-          state.cwd,
-          state.watched,
-        ),
-        ...checkAddedLines(state.added, state.markers),
-      );
+      failures.push(...checkCitations(state, evidence), ...checkAddedLines(state.added, state.markers));
     }
   };
 
@@ -1652,14 +1626,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         );
         context.ui?.setStatus?.("gate", `⚠ ${blocking.length} failures — released with failures (continuation cap)`);
       } catch {}
-      try {
-        pi.appendEntry("omp.gate-checker.result", {
-          failures: blocking,
-          continuationCount,
-          settled: true,
-          ts: Date.now(),
-        });
-      } catch {}
       ledger.append("chain_end", {
         outcome: "released_with_failures",
         release_reason: "continuation_cap",
@@ -1679,14 +1645,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         `⚠ ${blocking.length} gate failure(s) — forcing continuation (${continuationCount}/${MAX_CONTINUATIONS})`,
       );
     } catch {}
-    try {
-      pi.appendEntry("omp.gate-checker.result", {
-        failures: blocking,
-        continuationCount,
-        settled: false,
-        ts: Date.now(),
-      });
-    } catch {}
     return { continue: true, additionalContext: formatFailures(blocking) };
   };
 
@@ -1696,11 +1654,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return;
     }
     const assistantText = getLastAssistantText(context) ?? "";
-    if (shouldSkipNoTools(evidence.hadToolCalls, assistantText, journalRecovery)) {
-      terminalJournal("skipped_no_tools");
-      return;
-    }
-    const mutated = evidence.filesTouched.size > 0 || evidence.hadtoolerror;
+    const mutated = evidence.wroteFiles || evidence.hadtoolerror;
     if (!assistantText && !evidence.askedUser && !journalRecovery && !mutated) {
       terminalJournal("skipped_no_assistant_text");
       return;
@@ -1792,7 +1746,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
   pi.on("tool_call", async (event: ToolCallEvent, context: ExtensionContext): Promise<ToolCallResult | void> => {
     const parsed = parseEvent(toolCallSchema, event);
     if (!parsed) return;
-    evidence.hadToolCalls = true;
     if (!policy.enabled) return;
     bindRepository(parsed.input, context);
     reportRepositoryLimit(parsed.input, context);
@@ -1804,7 +1757,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       const evidencePath = isInside(context.cwd, abs) ? normalizePath(relative(context.cwd, abs)) : abs;
       if ((evidence.baselineSha === null || outside) && !evidence.preTouch.has(evidencePath))
         evidence.preTouch.set(evidencePath, readSnapshot(abs));
-      evidence.filesTouched.add(parsed.input.path);
+      evidence.wroteFiles = true;
     }
     // block rather than rewrite: rewriting a shell command changes its meaning (`||`, `-a`, `-F`).
     const command = parsed.input.command ?? "";

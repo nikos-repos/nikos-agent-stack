@@ -260,7 +260,6 @@ source: [session-stop handler registration](../gate-checker/index.ts), [write-on
 final checks do not run when:
 
 - the active level is off.
-- the request made no tool calls, has no final assistant text, and has no journal recovery.
 - no final assistant text exists, the request did not use the user-question tool, changed no file, had no tool error, and no journal recovery exists.
 - the request used the user-question tool, changed no file, and has no journal recovery.
 
