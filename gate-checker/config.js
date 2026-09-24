@@ -19,19 +19,19 @@ const policy_table = {
     enabled: true, inline: true,
     completion: "warn", citation: "warn", snapshot: "off", manifest: "off",
     subagentClaim: "warn", verify: "warn", complexity: "warn", commit: "off",
-    scratchpad: "block", runtime: "warn",
+    scratchpad: "warn", runtime: "warn",
   },
   medium: {
     enabled: true, inline: true,
     completion: "block", citation: "block", snapshot: "warn", manifest: "auto",
     subagentClaim: "block", verify: "block", complexity: "warn", commit: "off",
-    scratchpad: "block", runtime: "block",
+    scratchpad: "warn", runtime: "block",
   },
   high: {
     enabled: true, inline: true,
     completion: "block", citation: "block", snapshot: "block", manifest: "block",
     subagentClaim: "block", verify: "block", complexity: "warn", commit: "block",
-    scratchpad: "block", runtime: "block",
+    scratchpad: "warn", runtime: "block",
   },
 };
 

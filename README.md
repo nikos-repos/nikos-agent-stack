@@ -151,7 +151,7 @@ rule families:
 - `subagentClaim`: subagent claims checked against the diff.
 - `verify`: the configured verification command must pass.
 - `commit`: the working tree must be committed.
-- `scratchpad`: each active agent session needs one validated frustration record.
+- `scratchpad`: optional validated friction capture; missing session coverage warns.
 
 engagement levels:
 
@@ -171,8 +171,8 @@ engagement levels:
 
 | level    | behavior                                                                                                                         |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `low`    | delivery findings warn, but a missing scratchpad record blocks. for exploration and non-git work.                                |
-| `medium` | default. completion, citation, subagent-claim, verification, runtime-integrity, interrogation, repeated home-path, and scratchpad failures block. the commit gate stays off. |
+| `low`    | delivery findings and missing scratchpad coverage warn. for exploration and non-git work.                                |
+| `medium` | default. completion, citation, subagent-claim, verification, runtime-integrity, interrogation, and repeated home-path failures block. missing scratchpad coverage warns; the commit gate stays off. |
 | `high`   | medium policy plus blocking snapshot, manifest, and commit checks. complexity findings remain warnings.                              |
 | `off`    | delivery checks, scratchpad enforcement, and gate outcome telemetry stop. request journal bookkeeping and the no-git diagnostic can still close and describe the active request. set with `/gates-disable`. |
 
@@ -190,7 +190,7 @@ the server derives `session_file` and `session_id` from the active session and a
 
 fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, `other`, and `none`; fixed severities are `low`, `medium`, `high`, and `blocker`. a project can extend both lists in `.omp/gates-frustrations.json`. real friction needs nonempty `gate`, `snapshot`, or `command` evidence. a friction-free session uses `type: "none"`, `complaint: "none"`, `severity: "low"`, and may send an empty evidence array; the extension discards caller evidence and injects one trusted `clean_turn` gate entry.
 
-the extension writes machine-authored scratchpad records for warning and blocking gate outcomes. those records satisfy main-session coverage in the same stop, never a child session. an agent may append its own perspective. a missing active agent session blocks at every enabled level. if an agent files `none` after a failed tool result or a continuation forced by another blocking rule, the extension writes the non-blocking `clean_under_errors` telemetry event. the missing-record continuation itself does not count as friction.
+the extension writes machine-authored scratchpad records for warning and blocking gate outcomes. those records satisfy main-session coverage in the same stop, never a child session. an agent may optionally append its own perspective. a missing main or child session record warns at every enabled level and never forces a continuation. if an agent files `none` after a failed tool result or a continuation forced by another blocking rule, the extension writes the non-blocking `clean_under_errors` telemetry event. missing-record warnings do not count as friction.
 
 command-line gate commands use the same predicates as the extension:
 
@@ -255,7 +255,7 @@ gates:
 
 - enforcement runs at `session_stop`; inline marker feedback runs at `tool_result`. at level `off` the `tool_call` handler does nothing at all.
 - a no-tool request skips final checks only when it also has no final assistant text and no journal recovery.
-- a request that asked the user is released only when it changed no file, has no journal recovery, and every active agent session has a scratchpad record.
+- a request that asked the user is released when it changed no file and has no journal recovery; optional scratchpad coverage does not delay that release.
 - a continuation chain is capped by the runtime, and a no-progress chain aborts. neither is on the engagement dial.
 - files already dirty at agent start are subtracted from the request diff by design.
 - without git, the gate checker falls back to first-touch content hashing. the changed-file and added-line sets stay complete, but the commit gate cannot apply.

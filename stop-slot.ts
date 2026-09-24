@@ -3,7 +3,7 @@ export type StopDecision =
   | { continue: true; additionalContext?: string }
   | undefined;
 
-export type StopEvent = { timestamp?: number };
+export type StopEvent = { timestamp?: number; stop_hook_active?: boolean };
 export type StopContext = { cwd: string };
 type StopFn = (event: StopEvent, context: StopContext) => Promise<StopDecision> | StopDecision;
 

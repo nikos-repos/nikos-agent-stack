@@ -18,7 +18,7 @@ const temp = (prefix) => {
   return path;
 };
 const stateRoot = temp("gates-wiring-state-");
-const agentRoot = temp("gates-wiring-agent-");
+const agentRoot = temp("gates wiring agent-");
 const commitScript = join(agentRoot, "skills/git-commit/scripts/smart_commit.sh");
 mkdirSync(join(commitScript, ".."), { recursive: true });
 writeFileSync(commitScript, "#!/bin/sh\nexit 0\n");
@@ -80,7 +80,15 @@ const schema = {
   safeParse(value) { return { success: true, data: value }; },
 };
 const zod = {
-  object: () => schema,
+  object: (shape = undefined) => shape ? {
+    ...schema,
+    safeParse(value) {
+      if (!value || typeof value !== "object") return { success: true, data: value };
+      const data = {};
+      for (const key of Object.keys(shape)) if (key in value) data[key] = value[key];
+      return { success: true, data };
+    },
+  } : schema,
   string: () => schema,
   array: () => schema,
   union: () => schema,
@@ -173,6 +181,98 @@ const recordClean = async (probe) => probe.tools.record_frustration.execute(
 );
 
 try {
+  // Optional friction coverage must never create a delivery continuation.
+  for (const level of ["low", "medium", "high"]) {
+    const probe = harness(repository(), level);
+    await start(probe);
+    await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-optional", input: { path: "src/a.txt" } }, probe.context);
+    const first = await finish(probe, "review complete");
+    const second = await finish(probe, "review complete");
+    assert(first === undefined && second === undefined, `${level}: absent main friction record must not force a continuation`);
+    assert(!probe.entries.some((entry) => entry.data.kind === "continuation"), `${level}: friction absence must not create an administrative chain`);
+    assert(probe.notices.some((notice) => notice.message.includes("missing_frustration_record")), `${level}: optional coverage warning remains observable`);
+  }
+
+  for (const level of ["low", "medium", "high"]) {
+    const probe = harness(repository(), level);
+    await start(probe);
+    const childFile = join(stateRoot, `child-${level}.jsonl`);
+    probe.events["task:subagent:lifecycle"]({ id: `child-${level}`, agent: "reviewer", status: "completed", sessionFile: childFile });
+    probe.events["task:subagent:event"]({ id: `child-${level}`, event: { type: "message_end", message: { role: "assistant", content: "<changed-files>\n</changed-files>" } } });
+    await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-child", input: { path: "src/a.txt" } }, probe.context);
+    await recordClean(probe);
+    const result = await finish(probe, "review complete");
+    assert(result === undefined, `${level}: missing child friction record must remain optional`);
+    assert(probe.notices.some((notice) => notice.message.includes("missing_frustration_record")), `${level}: a main record must not satisfy child-session coverage`);
+  }
+
+  {
+    const probe = harness(repository(), "medium");
+    await start(probe);
+    await probe.handlers.tool_call({ toolName: "ask", toolCallId: "ask-optional", input: {} }, probe.context);
+    const result = await finish(probe, "waiting for the user's answer");
+    assert(result === undefined, "no-change question must release without a friction record");
+    assert(probe.entries.some((entry) => entry.data.kind === "terminal" && entry.data.outcome === "skipped_user_question"), "optional friction must not prevent the ordinary user-question skip");
+  }
+
+  {
+    const probe = harness(repository(), "medium");
+    probe.session.branch = [{ type: "custom", customType: "omp.gate-checker.journal", data: { invalid: true } }];
+    await probe.handlers.session_start({}, probe.context);
+    await probe.handlers.tool_call({ toolName: "ask", toolCallId: "ask-recovery", input: {} }, probe.context);
+    const result = await finish(probe, "waiting for the user's answer");
+    assert(result?.additionalContext.includes("recovery_required"), "optional friction must not bypass real journal recovery after a user question");
+  }
+
+  {
+    const probe = harness(repository(), "medium", "false");
+    await start(probe);
+    const childFile = join(stateRoot, "missing-mixed-child.jsonl");
+    probe.events["task:subagent:lifecycle"]({ id: "missing-mixed-child", agent: "reviewer", status: "completed", sessionFile: childFile });
+    await writeChange(probe, "two\n");
+    const result = await finish(probe, "updated the file");
+    assert(result?.additionalContext.includes("verify_failed"), "missing optional coverage must not release failed verification");
+    assert(!result.additionalContext.includes("missing_frustration_record"), "optional friction must not enter substantive continuation instructions");
+    const records = readFileSync(process.env.OMP_GATE_FRUSTRATIONS, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const automatic = records.find((record) => record.session_file === probe.session.file && record.source === "auto" && record.evidence.some((item) => item.rule === "verify_failed"));
+    assert(automatic?.session_id === probe.session.id && automatic.request_id, "automatic material failure must preserve native session/request identity");
+    assert(!records.some((record) => record.session_file === childFile), "automatic main failure must not manufacture child coverage");
+  }
+
+  {
+    const probe = harness(repository(), "medium");
+    await start(probe);
+    const input = { agent_id: "main", primary_goal: "optional capture validation", complaint: "none", type: "none", severity: "low", evidence: [] };
+    const invalidClean = await probe.tools.record_frustration.execute("invalid-clean", { ...input, complaint: "actual friction" }, undefined, undefined, probe.context);
+    assert(invalidClean.isError === true, "optional records must retain clean-record validation");
+    const invalidType = await probe.tools.record_frustration.execute("invalid-type", { ...input, type: "not-in-taxonomy" }, undefined, undefined, probe.context);
+    assert(invalidType.isError === true, "optional records must retain taxonomy validation");
+    const invalidEvidence = await probe.tools.record_frustration.execute("invalid-evidence", { ...input, type: "tooling", complaint: "fixture error" }, undefined, undefined, probe.context);
+    assert(invalidEvidence.isError === true, "real optional friction must still require valid evidence");
+    const accepted = await probe.tools.record_frustration.execute("valid-optional", { ...input, session_file: "forged-child.jsonl", session_id: "forged-child", request_id: "forged-request", source: "auto" }, undefined, undefined, probe.context);
+    assert(accepted.isError !== true, "valid optional record should be accepted");
+    const records = readFileSync(process.env.OMP_GATE_FRUSTRATIONS, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    const stored = records.find((record) => record.primary_goal === input.primary_goal);
+    assert(stored?.session_file === probe.session.file && stored.session_id === probe.session.id && stored.source === "agent" && stored.request_id !== "forged-request", "optional record caller must not override server-bound session/request/source identity");
+  }
+
+  {
+    const { policyFor } = await import("./config.js");
+    for (const level of ["low", "medium", "high"]) {
+      const modes = policyFor(level);
+      assert(modes.scratchpad === "warn", `${level}: optional scratchpad policy must warn`);
+      assert(modes.runtime === (level === "low" ? "warn" : "block"), `${level}: runtime integrity policy must remain unchanged`);
+      assert(modes.citation === (level === "low" ? "warn" : "block"), `${level}: claim evidence policy must remain unchanged`);
+      assert(modes.verify === (level === "low" ? "warn" : "block"), `${level}: substantive verification policy must remain unchanged`);
+    }
+    assert(policyFor("off").scratchpad === "off", "disabled friction policy must remain off");
+    const probe = harness(repository(), "medium");
+    await start(probe);
+    const routed = await probe.handlers.tool_call({ toolName: "task", toolCallId: "optional-task", input: { task: "review" } }, probe.context);
+    assert(routed.input.task.includes("friction capture is optional"), "child instructions must describe friction capture as optional");
+    assert(routed.input.task.includes("changed-files"), "optional friction must preserve child claim/manifest guidance");
+  }
+
   {
     const probe = harness(repository(), "high", "false");
     await start(probe);
@@ -419,7 +519,24 @@ try {
     }, probe.context);
     assert(inspectlease({ cwd }).status === "free", "tool result must release the wrapper lease");
   }
-
+  {
+    resetQuestionnaireStop();
+    resetOmnipotenceStop();
+    const seen = [];
+    installOmnipotenceStop((event) => {
+      seen.push(event.stop_hook_active);
+      if (event.stop_hook_active) return;
+      return { decision: "block", reason: "pending effect" };
+    });
+    const probe = harness(repository(), "off");
+    const active = await probe.handlers.session_stop({ stop_hook_active: true }, probe.context);
+    assert(active === undefined && seen[0] === true, "active stop hook must suppress a repeated omnipotence block");
+    const inactive = await probe.handlers.session_stop({ stop_hook_active: false }, probe.context);
+    assert(inactive?.decision === "block" && seen[1] === false, "inactive stop hook must retain pending-effect blocking");
+    const absent = await probe.handlers.session_stop({}, probe.context);
+    assert(absent?.decision === "block" && seen[2] === undefined, "legacy events must retain pending-effect blocking");
+    resetOmnipotenceStop();
+  }
   {
     resetQuestionnaireStop();
     resetOmnipotenceStop();

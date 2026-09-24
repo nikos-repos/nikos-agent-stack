@@ -175,7 +175,7 @@ type RuleEvent = { rules?: Array<{ name: string }> };
 type LifecycleEvent = { id: string; parentToolCallId?: string; agent?: string; status?: string; sessionFile?: string };
 type SubagentEvent = { id: string; event: { type: string; message: { role: string; content: string | TextBlock[] } } };
 type AgentEndEvent = { willContinue?: true };
-type SessionEvent = { timestamp?: number };
+type SessionEvent = { timestamp?: number; stop_hook_active?: boolean };
 type BoundaryValue = ToolCallEvent | ToolResultEvent | ExecutionUpdateEvent | RuleEvent | LifecycleEvent | SubagentEvent | AgentEndEvent | SessionEvent;
 type BoundarySchema<T> = { safeParse(value: BoundaryValue): { success: true; data: T } | { success: false } };
 type DiffEvidence = { changed: Set<string>; added: AddedMap };
@@ -223,7 +223,7 @@ const TEST_RUNNER_RE = /(?:npm\s+(?:test|run\s+test)|npx\s+(?:jest|vitest|mocha|
 const MOD_CLAIM_RE = /(?:modif(?:ied|y)|updated?|changed?|edited?|added?\s+to|fixed?\s+in|refactored?|rewrote?|replaced?|removed?\s+(?:from|in)|deleted?\s+(?:from|in))\s+`([a-zA-Z0-9_./~-]+[/][a-zA-Z0-9_./~-]+\.[a-zA-Z]{1,8})`/gi;
 const SUBAGENT_REFERENCE_RE = /\b(sub-?agents?|reviewers?|review(?:ed|s)?\s+(?:by|agent)|delegat(?:e|ed|ion)|spawned\s+agents?|per\s+the\s+review|according\s+to\s+the\s+(?:review|agent)|the\s+agent\s+(?:reported|found|said|confirmed)|its?\s+report)\b/i;
 const COMMIT_BOUNDARY_RE = /(?:^|[;&|]\s*|&&\s*)git\s+commit\b(?![-_])/;
-const SMART_COMMIT_RE = /(['"]?)(?<![\w.-])((?:[^\s'"]*\/)?smart_commit\.sh)\1/;
+const SMART_COMMIT_RE = /(?<![\w./'"-])(?:'((?:[^']*\/)?smart_commit\.sh)'|"((?:[^"]*\/)?smart_commit\.sh)"|((?:[^\s'";&|]*\/)?smart_commit\.sh))(?![\w./-])/;
 const MAX_CONTINUATIONS = 3;
 const PROCESS_MAX_FILES = 8;
 
@@ -318,7 +318,8 @@ function rewriteSmartCommit(command: string, scriptPath: string): string | null 
   const match = SMART_COMMIT_RE.exec(command);
   if (!match) return null;
   const safe = scriptPath.replace(/'/g, "'\\''");
-  const script = match[2] === scriptPath ? match[0] : `'${safe}'`;
+  const matchedPath = match[1] ?? match[2] ?? match[3];
+  const script = matchedPath === scriptPath ? match[0] : `'${safe}'`;
   const result = command.replace(match[0], () => /--no-push\b/.test(command) ? script : `${script} --no-push`);
   return result === command ? null : result;
 }
@@ -450,7 +451,7 @@ function processCandidate(ev: TurnEvidence, changed: number): ProcessCandidate {
   return { matched: true, changed, testRan, reason: null };
 }
 function formatFailures(failures: GateFailure[]): string { return `[GATE CHECKER — deterministic post-turn gate]\n\nthe following machine-checked gates failed:\n\n${failures.map((failure, index) => `${index + 1}. ${failure.gate}/${failure.rule}\n   ${failure.detail}`).join("\n\n")}\n\nthese are deterministic checks, not model judgment. fix each failure before yielding. do not repeat the same response.`; }
-function checkFrustrations(records: object[], identities: Array<{ agent_id: string; session_file: string | null }>, repoRoot: string): GateFailure[] { return missingIdentities(records, identities, repoRoot).map((id) => ({ gate: "journal", rule: "missing_frustration_record", detail: `identity "${id}" has no frustration record for this session. call record_frustration with your assigned id and goal.` })); }
+function checkFrustrations(records: object[], identities: Array<{ agent_id: string; session_file: string | null }>, repoRoot: string): GateFailure[] { return missingIdentities(records, identities, repoRoot).map((id) => ({ gate: "journal", rule: "missing_frustration_record", detail: `identity "${id}" has no frustration record for this session. friction capture is optional; record it with record_frustration when useful.` })); }
 const GATE_NUDGE = [
   "[GATE CHECKER] your report MUST end with this exact block, listing every file you changed, one path per line:",
   MANIFEST_OPEN,
@@ -461,7 +462,7 @@ const GATE_NUDGE = [
   "",
   `Also: (1) do not leave forbidden markers (${"TO" + "DO"}: implement, ${"FIX" + "ME"}:, ${"Not" + "ImplementedError"}, unfinished comments) in lines you add; (2) do not claim test results you did not produce — the bash log is checked; (3) if you commit, use the git-commit skill script, not raw git commit.`,
   "",
-  "(4) call record_frustration with your assigned id and goal to log any friction — papercuts count even when nothing failed: confusing docs, dead ends, awkward tool output. use type \"none\" only when the whole session was friction-free; it requires complaint \"none\" and severity \"low\". every active identity needs one record for its session.",
+  "(4) friction capture is optional. you may call record_frustration with your assigned id and goal to log friction — papercuts count even when nothing failed: confusing docs, dead ends, awkward tool output. use type \"none\" only when the whole session was friction-free; it requires complaint \"none\" and severity \"low\". do not continue solely to create a friction record.",
   "",
 ].join("\n");
 
@@ -566,7 +567,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }),
   });
   const agentEndSchema = pi.zod.object({ willContinue: pi.zod.literal(true).optional() });
-  const eventSchema = pi.zod.object({});
+  const eventSchema = pi.zod.object({ stop_hook_active: booleanSchema.optional() });
   const leaseFields = (lease: LeaseRecord) => ({ path: lease.path, token: lease.token, owner_id: lease.owner_id, request_id: lease.request_id, session_id: lease.session_id, session_file: lease.session_file, agent_id: lease.agent_id, tool_call_id: lease.tool_call_id, tool_name: lease.tool_name, target: lease.target, fence: lease.fence });
   const releaseOperation = (toolCallId: string, reason: string): boolean => {
     const operation = activeOperations.get(toolCallId);
@@ -1101,8 +1102,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const state = deriveRequestState(context, assistantText, failures);
     collectDeliveryFailures(context, state, failures);
     recordIdentityCoverage(state, failures);
-    const missingRecord = failures.some(
-      (failure) => failure.rule === "missing_frustration_record",
+    const missingRecord = applyPolicy(failures, policy).some(
+      (failure) => failure.rule === "missing_frustration_record" && failure.severity === "block",
     );
     if (canSkipUserQuestion(
       evidence.askedUser,
