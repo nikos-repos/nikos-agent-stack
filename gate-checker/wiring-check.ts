@@ -312,6 +312,16 @@ try {
   }
 
   {
+    const probe = harness(repository(), "medium", "true");
+    await start(probe);
+    await writeChange(probe, "export const value = 1;\n", "write-new", "src/new.ts");
+    await probe.tools.interrogate.execute("interrogate-1", { unnecessary: "none", deleted: "none", simplified: "none" }, undefined, undefined, probe.context);
+    git(probe.cwd, "add", ".");
+    git(probe.cwd, "commit", "-q", "-m", "add new");
+    assert(await finish(probe, "added the file and committed it") === undefined, "committing after interrogate must not reopen the interrogation");
+  }
+
+  {
     const probe = harness(repository(), "low", "false");
     await start(probe);
     await writeChange(probe, "two\n");

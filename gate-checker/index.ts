@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
@@ -698,20 +698,30 @@ let unknownStateSequence = 0;
 function unknownState(): string {
   return `unknown:${Date.now()}:${unknownStateSequence++}`;
 }
-function treeStateKey(cwd: string, hasGit: boolean, touched: Map<string, string | null>): string {
-  if (hasGit) {
+function treeStateKey(cwd: string, baselineSha: string | null, touched: Map<string, string | null>): string {
+  if (baselineSha) {
+    // hash the current content of every path changed since the baseline, so committing the work keeps the same key.
     try {
-      const output = execSync(
-        "git rev-parse HEAD 2>/dev/null; git diff HEAD --binary 2>/dev/null; printf '\\0'; git ls-files -o --exclude-standard -z 2>/dev/null",
-        { cwd, encoding: "utf-8", timeout: 5000, maxBuffer: 8 * 1024 * 1024 },
-      );
-      const [gitState, ...raw] = output.split("\0");
-      if (!gitState.trim()) return unknownState();
-      const untracked = raw
-        .filter(Boolean)
-        .sort()
-        .map((path) => `${path}:${hashContent(readSnapshot(isAbsolute(path) ? path : resolvePath(cwd, path)) ?? "")}`);
-      return hashContent([gitState, ...untracked].join("\n"));
+      const git = (args: string[], input?: string): string =>
+        execFileSync("git", args, {
+          cwd,
+          input,
+          encoding: "utf-8",
+          timeout: 5000,
+          maxBuffer: 8 * 1024 * 1024,
+          stdio: ["pipe", "pipe", "ignore"],
+        });
+      const list = (args: string[]): string[] => git(args).split("\0").filter(Boolean);
+      const paths = [
+        ...new Set([
+          ...list(["diff", "--name-only", "-z", baselineSha]),
+          ...list(["ls-files", "-o", "--exclude-standard", "-z"]),
+        ]),
+      ].sort();
+      const files = paths.filter((path) => statSync(resolvePath(cwd, path), { throwIfNoEntry: false })?.isFile());
+      const hashes = files.length ? git(["hash-object", "--stdin-paths"], files.join("\n")).trim().split("\n") : [];
+      const hashOf = new Map(files.map((path, index) => [path, hashes[index]]));
+      return hashContent(paths.map((path) => `${path}:${hashOf.get(path) ?? "absent"}`).join("\n"));
     } catch {
       return unknownState();
     }
@@ -1199,7 +1209,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
   const restoreJournal = (context: ExtensionContext): void => {
     releaseAllOperations("journal_restore");
     const cwdRoot = reporoot(context.cwd);
-    releaseStaleSessionLease(evidence.repoRoot ?? cwdRoot, context.sessionManager?.getSessionFile?.(), "journal_restore_stale");
+    releaseStaleSessionLease(
+      evidence.repoRoot ?? cwdRoot,
+      context.sessionManager?.getSessionFile?.(),
+      "journal_restore_stale",
+    );
     const state = journalfrombranch(context.sessionManager?.getBranch?.() ?? []);
     if (state.status !== "active") {
       requestId = null;
@@ -1484,11 +1498,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       _onUpdate: (result: ToolResultPayload) => void,
       context: ExtensionContext,
     ): Promise<ToolResultPayload> => {
-      const generationHash = treeStateKey(
-        evidence.repoRoot ?? context.cwd,
-        evidence.baselineSha !== null,
-        evidence.preTouch,
-      );
+      const generationHash = treeStateKey(evidence.repoRoot ?? context.cwd, evidence.baselineSha, evidence.preTouch);
       evidence.interrogations.set(generationHash, params);
       ledger.append("gate_eval", {
         rules: ["interrogate"],
@@ -1621,7 +1631,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     if (state.canAdjudicate && state.changedCount > 0 && state.dayOneTrigger) {
-      const generationHash = treeStateKey(state.gitCwd, state.hasGit, evidence.preTouch);
+      const generationHash = treeStateKey(state.gitCwd, evidence.baselineSha, evidence.preTouch);
       if (!evidence.interrogations.has(generationHash)) {
         failures.push({
           gate: "completion",
@@ -1633,7 +1643,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     if (state.canAdjudicate && state.changedCount > 0) {
       if (policy.verify !== "off" && config.verifyCmd) {
-        const key = treeStateKey(state.gitCwd, state.hasGit, evidence.preTouch);
+        const key = treeStateKey(state.gitCwd, evidence.baselineSha, evidence.preTouch);
         if (!verifyCache || verifyCache.key !== key) {
           try {
             context.ui?.setStatus?.("gate", `running verify: ${config.verifyCmd}`);
