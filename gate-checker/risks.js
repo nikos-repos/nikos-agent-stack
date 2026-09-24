@@ -27,6 +27,7 @@ export function auditscope(scope) {
       add("risk.mode_change", "mode", file, `file mode changed from ${file.old_mode} to ${file.new_mode}`);
     if (file.binary) add("risk.binary", "binary", file, "binary content changed");
     if (file.submodule) add("risk.submodule", "submodule", file, "submodule pointer changed");
+    if (file.type === "nested_repo") add("risk.nested_repo", "nested_repo", file, "untracked nested git repository");
     for (const line of scope?.added?.[file.path] ?? [])
       if (destructive.test(line.text)) add("risk.destructive_operation", "destructive_operation", file, "destructive operation added", line.line);
   }

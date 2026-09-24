@@ -231,6 +231,18 @@ test("baseline dirt is journaled as hashes and diffed from the blob store", asyn
   assert(!result.additionalContext.includes("src/b.ts` line 2"), "baseline dirt must stay out of the request");
 });
 
+test("audit reports an untracked nested repository as nested_repo, not binary content", async () => {
+  const { resolvescope } = await import("./scope.js");
+  const { auditscope } = await import("./risks.js");
+  const cwd = repository();
+  mkdirSync(join(cwd, "nested"));
+  git(join(cwd, "nested"), "init", "-q");
+  const scope = resolvescope({ kind: "uncommitted", cwd });
+  const ids = auditscope(scope).findings.map((finding) => finding.id);
+  assert(scope.files.some((file) => file.type === "nested_repo"), "the nested repository must be typed nested_repo");
+  assert(ids.includes("risk.nested_repo") && !ids.includes("risk.binary"), "a nested repository must not be reported as binary content");
+});
+
 test("committing after interrogate keeps the interrogation", async () => {
   const probe = harness(repository(), "medium", "true");
   await start(probe);

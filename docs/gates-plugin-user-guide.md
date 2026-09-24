@@ -298,7 +298,7 @@ source: [journal reducer](../gate-checker/journal.js), [journal lifecycle](../ga
 | `recovery_required` | the request journal is malformed, stale, or policy-incompatible | start a fresh request |
 | `scope_unavailable` | git is present but the repository scope could not be resolved | repair the repository, then retry |
 
-advisory `risk.*` ids — `risk.auth_permissions`, `risk.dependencies`, `risk.migration`, `risk.public_contract`, `risk.file_deletion`, `risk.rename`, `risk.mode_change`, `risk.binary`, `risk.submodule`, `risk.destructive_operation` — are listed under [advisory risk rules](#advisory-risk-rules).
+advisory `risk.*` ids — `risk.auth_permissions`, `risk.dependencies`, `risk.migration`, `risk.public_contract`, `risk.file_deletion`, `risk.rename`, `risk.mode_change`, `risk.binary`, `risk.submodule`, `risk.nested_repo`, `risk.destructive_operation` — are listed under [advisory risk rules](#advisory-risk-rules).
 
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 
@@ -306,7 +306,7 @@ sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](
 
 ## advisory risk rules
 
-the request audit reports advisory findings when changed paths match authentication or permissions, dependency manifests or lockfiles, migrations or schemas, or public contract surfaces. it also reports tracked deletion, rename, mode change, binary content, submodule changes, and added destructive commands such as `drop table`, `truncate table`, `delete from`, or `rm -rf`.
+the request audit reports advisory findings when changed paths match authentication or permissions, dependency manifests or lockfiles, migrations or schemas, or public contract surfaces. it also reports tracked deletion, rename, mode change, binary content, submodule changes, untracked nested repositories, and added destructive commands such as `drop table`, `truncate table`, `delete from`, or `rm -rf`.
 
 these findings use stable `risk.*` ids and remain advisory at every enabled engagement level. no finding means that no deterministic rule matched; it does not prove that the change is safe.
 
@@ -452,7 +452,7 @@ at session stop, it combines:
 
 baseline dirt that never changes stays out of the request. a baseline-dirty path returns to the request as soon as its content or existence changes after the request started. tracked deletions and new untracked files are inside the request scope.
 
-an untracked nested repository counts as one opaque path, as git itself treats it. a baseline with more than 2,000 dirty paths is not captured: the request stays in git mode and reports `scope_unavailable` at session stop. gitignore generated or scratch trees to keep the baseline small.
+an untracked nested repository counts as one opaque path of type `nested_repo`, as git itself treats it, and `audit` reports it as advisory `risk.nested_repo`. a baseline with more than 2,000 dirty paths is not captured: the request stays in git mode and reports `scope_unavailable` at session stop. gitignore generated or scratch trees to keep the baseline small.
 
 source: [baseline and diff derivation](../gate-checker/index.ts), [request scope](../gate-checker/scope.js)
 

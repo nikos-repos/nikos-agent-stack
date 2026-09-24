@@ -173,7 +173,7 @@ function snapshot(repo_root, path, untracked = false) {
   try {
     const stat = lstatSync(absolute);
     // git lists an untracked nested repository as a directory; keep it opaque, as git does.
-    if (stat.isDirectory()) return { exists: true, hash: "directory", content: null, binary: true, untracked };
+    if (stat.isDirectory()) return { exists: true, hash: "directory", content: null, binary: true, directory: true, untracked };
     if (stat.isSymbolicLink()) {
       const target = readlinkSync(absolute);
       return { exists: true, hash: createHash("sha256").update(target).digest("hex"), content: null, binary: true, untracked };
@@ -195,7 +195,8 @@ function collect_untracked(repo_root, folder, records, added) {
   const raw = git(repo_root, ["ls-files", "--others", "--exclude-standard", "-z", ...path_args(folder)]);
   for (const path of raw.split("\0").filter(Boolean)) {
     const current = snapshot(repo_root, path, true);
-    records.set(path, { path, type: "untracked", staged: false, unstaged: true, old_path: null, old_mode: null, new_mode: null, binary: current.binary, submodule: false });
+    const nested = current.directory === true;
+    records.set(path, { path, type: nested ? "nested_repo" : "untracked", staged: false, unstaged: true, old_path: null, old_mode: null, new_mode: null, binary: current.binary && !nested, submodule: false });
     if (current.content !== null) {
       for (const [key, lines] of contentToAdded(path, current.content)) added.set(key, lines);
     } else if (!current.binary) throw new Error(`untracked text file is too large to adjudicate: ${path}`);
