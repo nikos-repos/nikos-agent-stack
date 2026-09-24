@@ -257,8 +257,7 @@ const modes: Record<orchestrationmode, true> = {
 	yolo: true,
 	forever: true,
 };
-const isrunprojectionevent = (type: string): boolean =>
-	type === "run_created" || type === "run_status" || type === "run_mode_migrated";
+const isrunprojectionevent = (type: string): boolean => type === "run_created" || type === "run_status";
 const profilescopes: Record<profilescope, true> = { user: true, project: true };
 const effectkinds: Record<effectkind, true> = {
 	task: true,
@@ -287,12 +286,6 @@ const transitions: Record<runstatus, readonly runstatus[]> = {
 	failed: [],
 	halted: [],
 };
-
-function decodehistoricalmode(value: string): orchestrationmode {
-	if (value === "call") return "babysit";
-	assertmode(value);
-	return value;
-}
 
 function now(): string {
 	return new Date().toISOString();
@@ -449,7 +442,7 @@ function runprojection(row: runrow): projectionrecord {
 		profile: projectionjson(row.profile_json, `run ${row.id} profile`),
 		userprofileversion: row.user_profile_version,
 		projectprofileversion: row.project_profile_version,
-		mode: decodehistoricalmode(row.mode),
+		mode: row.mode,
 		status: row.status,
 		input: projectionjson(row.input_json, `run ${row.id} input`),
 		output: projectionjson(row.output_json, `run ${row.id} output`),
@@ -494,7 +487,7 @@ function eventrunprojection(payload: Record<string, jsonvalue>): projectionrecor
 		profile: payload.profile === undefined ? { schema: 1 } : payload.profile,
 		userprofileversion: payload.userprofileversion === undefined ? null : payload.userprofileversion,
 		projectprofileversion: payload.projectprofileversion === undefined ? null : payload.projectprofileversion,
-		mode: typeof payload.mode === "string" ? decodehistoricalmode(payload.mode) : payload.mode,
+		mode: payload.mode,
 		status: payload.status,
 		input: payload.input,
 		output: payload.output === undefined ? null : payload.output,
@@ -820,214 +813,10 @@ export class orchestrationstore {
 
 	private migrate(): void {
 		const versionrow = this.data.query("pragma user_version").get() as { user_version: number };
-		if (versionrow.user_version > 8)
-			throw new Error(`database schema ${versionrow.user_version} is newer than supported 8`);
-		// a current schema opens without replaying history: projection drift is doctor's to report
-		// and repair's to fix, and blocking the open here would lock repair out of the very store it fixes.
 		if (versionrow.user_version === 8) return;
-		if (versionrow.user_version > 0) {
-			const issues = this.eventprojectionissues();
-			if (issues.length > 0) {
-				throw new Error(`database migration blocked: ${issues.join("; ")}`);
-			}
-		}
-		if (versionrow.user_version === 7) {
-			const backup = `${this.path}.migration-v7-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.transact(() => {
-				const tables = new Set(
-					(this.data.query("select name from sqlite_master where type = 'table'").all() as Array<{ name: string }>).map(
-						(row) => row.name,
-					),
-				);
-				const durablecolumns: Record<string, readonly string[]> = {
-					runs: [
-						"id",
-						"session_id",
-						"process_id",
-						"process_version",
-						"process_hash",
-						"blueprint_name",
-						"blueprint_version",
-						"profile_json",
-						"user_profile_version",
-						"project_profile_version",
-						"mode",
-						"status",
-						"input_json",
-						"output_json",
-						"blocked_reason",
-						"max_turns",
-						"turns",
-						"fence",
-						"lease_owner",
-						"lease_epoch",
-						"lease_expires_at",
-						"created_at",
-						"updated_at",
-					],
-					effects: [
-						"id",
-						"run_id",
-						"effect_key",
-						"kind",
-						"input_json",
-						"input_hash",
-						"status",
-						"fence",
-						"value_json",
-						"error_json",
-						"dispatched_at",
-						"dispatching_at",
-						"created_at",
-						"updated_at",
-					],
-					events: ["id", "run_id", "seq", "type", "payload_json", "previous_hash", "hash", "created_at"],
-					sessions: ["session_id", "run_id"],
-					profiles: ["scope", "project_root", "version", "document_json", "source_hash", "updated_at"],
-					profile_versions: ["scope", "project_root", "version", "document_json", "source_hash", "updated_at"],
-				};
-				const hasdurableorchestration = Object.entries(durablecolumns).every(([table, requiredcolumns]) => {
-					if (!tables.has(table)) return false;
-					const columns = new Set(
-						(this.data.query(`pragma table_info(${table})`).all() as Array<{ name: string }>).map(
-							(column) => column.name,
-						),
-					);
-					return requiredcolumns.every((column) => columns.has(column));
-				});
-				if (hasdurableorchestration) {
-					const columns = durablecolumns.runs;
-					if (columns.includes("mode")) {
-						const callruns = this.data.query("select * from runs where mode = 'call' order by id").all() as runrow[];
-						for (const row of callruns) {
-							this.data.query("update runs set mode = 'babysit', updated_at = ? where id = ?").run(now(), row.id);
-							const migrated = this.requiredrun(row.id);
-							this.appendevent(row.id, "run_mode_migrated", jsonvalueof({ ...migrated, previousmode: "call" }));
-						}
-						const remaining = this.data.query("select count(*) as count from runs where mode = 'call'").get() as {
-							count: number;
-						};
-						if (Number(remaining.count) !== 0) throw new Error("database migration 8 left call runs");
-					}
-					this.data.exec("pragma user_version = 8");
-					const report = this.doctor();
-					if (!report.ok) throw new Error(`database migration 8 verification failed: ${report.issues.join("; ")}`);
-					return;
-				}
-				this.data.exec("pragma user_version = 8");
-			});
-			return;
-		}
-		if (versionrow.user_version === 1) {
-			const backup = `${this.path}.migration-v1-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.data.exec(`
-				create table profile_versions (
-					scope text not null,
-					project_root text not null,
-					version integer not null,
-					document_json text not null,
-					source_hash text not null,
-					updated_at text not null,
-					primary key(scope, project_root, version)
-				);
-				insert into profile_versions(scope, project_root, version, document_json, source_hash, updated_at)
-					select scope, project_root, version, document_json, source_hash, updated_at from profiles;
-				pragma user_version = 2;
-			`);
-			const migrated = this.data
-				.query("select name from sqlite_master where type = 'table' and name = 'profile_versions'")
-				.get() as { name: string } | null;
-			if (migrated?.name !== "profile_versions") throw new Error("database migration 2 verification failed");
-			this.migrate();
-			return;
-		}
-		if (versionrow.user_version === 2) {
-			const backup = `${this.path}.migration-v2-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.data.exec(`
-				alter table runs add column blueprint_name text;
-				alter table runs add column blueprint_version text;
-				pragma user_version = 3;
-			`);
-			const columns = this.data.query("pragma table_info(runs)").all() as Array<{ name: string }>;
-			if (
-				!columns.some((column) => column.name === "blueprint_name") ||
-				!columns.some((column) => column.name === "blueprint_version")
-			) {
-				throw new Error("database migration 3 verification failed");
-			}
-			this.migrate();
-			return;
-		}
-		if (versionrow.user_version === 3) {
-			const backup = `${this.path}.migration-v3-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.data.exec(`
-				alter table effects add column dispatched_at text;
-				pragma user_version = 4;
-			`);
-			const columns = this.data.query("pragma table_info(effects)").all() as Array<{ name: string }>;
-			if (!columns.some((column) => column.name === "dispatched_at")) {
-				throw new Error("database migration 4 verification failed");
-			}
-			this.migrate();
-			return;
-		}
-		if (versionrow.user_version === 4) {
-			const backup = `${this.path}.migration-v4-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.data.exec(`
-				alter table effects add column dispatching_at text;
-				pragma user_version = 5;
-			`);
-			const columns = this.data.query("pragma table_info(effects)").all() as Array<{ name: string }>;
-			if (!columns.some((column) => column.name === "dispatching_at")) {
-				throw new Error("database migration 5 verification failed");
-			}
-			this.migrate();
-			return;
-		}
-		if (versionrow.user_version === 5) {
-			const backup = `${this.path}.migration-v5-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.data.exec(`
-				alter table runs add column profile_json text not null default '{"schema":1}';
-				alter table runs add column user_profile_version integer;
-				alter table runs add column project_profile_version integer;
-				pragma user_version = 6;
-			`);
-			const columns = this.data.query("pragma table_info(runs)").all() as Array<{ name: string }>;
-			if (
-				!columns.some((column) => column.name === "profile_json") ||
-				!columns.some((column) => column.name === "user_profile_version") ||
-				!columns.some((column) => column.name === "project_profile_version")
-			) {
-				throw new Error("database migration 6 verification failed");
-			}
-			this.migrate();
-			return;
-		}
-		if (versionrow.user_version === 6) {
-			const backup = `${this.path}.migration-v6-${Date.now()}`;
-			this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
-			this.data.exec(`
-				alter table runs add column lease_owner text;
-				alter table runs add column lease_epoch integer not null default 0;
-				alter table runs add column lease_expires_at integer;
-				pragma user_version = 7;
-			`);
-			const columns = this.data.query("pragma table_info(runs)").all() as Array<{ name: string }>;
-			if (
-				!columns.some((column) => column.name === "lease_owner") ||
-				!columns.some((column) => column.name === "lease_epoch") ||
-				!columns.some((column) => column.name === "lease_expires_at")
-			) {
-				throw new Error("database migration 7 verification failed");
-			}
-			this.migrate();
-			return;
+		// ponytail: no upgrade ladder; every known store is already at 8. an older one is recreated, not migrated.
+		if (versionrow.user_version !== 0) {
+			throw new Error(`database schema ${versionrow.user_version} is unsupported; expected 8`);
 		}
 		this.data.exec(`
 			create table runs (
@@ -1120,8 +909,6 @@ export class orchestrationstore {
 			create unique index one_active_blueprint on blueprints(name) where active = 1;
 			pragma user_version = 8;
 		`);
-		const issues = this.eventprojectionissues();
-		if (issues.length > 0) throw new Error(`database migration verification failed: ${issues.join("; ")}`);
 	}
 
 	private transact<result>(operation: () => result): result {
@@ -2059,7 +1846,7 @@ export class orchestrationstore {
 		if (version.user_version !== 8) {
 			return {
 				ok: false,
-				issues: [`database schema ${version.user_version} requires migration to 8`],
+				issues: [`database schema ${version.user_version} is unsupported; expected 8`],
 			};
 		}
 		const integrity = this.data.query("pragma integrity_check").all() as Array<{ integrity_check: string }>;
@@ -2300,7 +2087,8 @@ export class orchestrationstore {
 					const payload = objectrecord(payloadvalue, "event payload");
 					const id = stringfield(payload, "id", "event payload");
 					if (id !== row.run_id) throw new Error(`event ${row.id} run identity mismatch`);
-					const mode = decodehistoricalmode(stringfield(payload, "mode", "event payload"));
+					const mode = stringfield(payload, "mode", "event payload");
+					assertmode(mode);
 					const status = stringfield(payload, "status", "event payload");
 					assertstatus(status);
 					this.data

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { defineprocess } from "./contracts.ts";
 import { orchestrationengine } from "./engine.ts";
@@ -74,42 +74,6 @@ describe("versioned orchestration profiles", () => {
 				unknown: true,
 			}),
 		).toThrow("profile.unknown: unknown field");
-		store.close();
-	});
-
-	test("schema one profiles migrate with a backup and retained history", () => {
-		const root = mkdtempSync(join(tmpdir(), "omnipotence-profile-migration-"));
-		roots.push(root);
-		const path = join(root, "state.sqlite");
-		const legacy = new Database(path, { create: true });
-		legacy.exec(`
-			create table runs (id text primary key);
-			create table effects (id text primary key);
-			create table profiles (
-				scope text not null,
-				project_root text not null,
-				version integer not null,
-				document_json text not null,
-				source_hash text not null,
-				updated_at text not null,
-				primary key(scope, project_root)
-			);
-			insert into profiles values (
-				'user', '', 1, '{"instructions":["legacy"],"schema":1}', 'legacy-hash', '2026-08-20T00:00:00.000Z'
-			);
-			pragma user_version = 1;
-		`);
-		legacy.close();
-
-		const store = new orchestrationstore(path);
-		const profiles = new profileservice(store);
-		const migrated = new Database(path);
-		expect(migrated.query("pragma user_version").get()).toEqual({ user_version: 8 });
-		migrated.close();
-		expect(profiles.history("user", "").map((entry) => entry.version)).toEqual([1]);
-		expect(profiles.write("user", "", { schema: 1, instructions: ["current"] }).version).toBe(2);
-		expect(profiles.history("user", "").map((entry) => entry.version)).toEqual([1, 2]);
-		expect(readdirSync(root).some((name) => name.includes(".migration-v1-"))).toBe(true);
 		store.close();
 	});
 

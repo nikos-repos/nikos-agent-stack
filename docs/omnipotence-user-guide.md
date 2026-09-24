@@ -392,7 +392,7 @@ source: [index.ts](../omnipotence/index.ts), [engine.ts](../omnipotence/engine.t
 
 `omnipotence doctor` opens the database read-only and checks sqlite integrity, schema version, event hash chains, run and effect projections, session bindings, profile hashes and saved versions, and installed blueprint manifests, files, and registry hashes. it combines database and blueprint issues in one report.
 
-when an older supported database opens for writing, the store verifies its events and projections and makes a timestamped backup before upgrading. a newer schema is rejected. a failed verification blocks the open instead of changing state.
+the store opens only schema 8 databases, and creates one when the file is new. any other schema is rejected with no upgrade attempt. opening never replays history, so a store with projection drift still opens for `doctor` to report it and `repair` to fix it.
 
 `omnipotence --dry-run repair` reports the database path without writing. `omnipotence repair` first creates a timestamped `.backup-<time>` copy, verifies event rows, rebuilds run and effect projections from events, rebuilds session bindings, restores current profiles from saved profile versions, appends a repair event, and runs doctor again. repair does not copy or repair blueprint files; they live under the separate blueprint root.
 
