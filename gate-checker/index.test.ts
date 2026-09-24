@@ -103,22 +103,12 @@ const harness = (cwd, level, verifyCmd = null, leaseEnabled = false) => {
       notify: (message, levelName) => notices.push({ message, level: levelName }),
       setStatus: (key, text) => statuses.push({ key, text }),
     },
-    invokeTool: async (params) => {
-      if (params.path && params.content) writeFileSync(join(cwd, params.path), params.content);
-      return { content: [{ type: "text", text: "invoked" }], isError: false };
-    },
   };
   gateChecker({
     zod,
     on: (name, handler) => { handlers[name] = handler; },
     registerCommand: (name, value) => { commands[name] = value.handler; },
     registerTool: (tool) => { tools[tool.name] = tool; },
-    getAllTools: () => leaseEnabled ? [{
-      name: "write",
-      description: "native write",
-      parameters: zod.object({ path: zod.string(), content: zod.string() }),
-      sourceInfo: { source: "builtin" },
-    }] : [],
     events: { on: (name, handler) => { events[name] = handler; } },
     appendEntry: (customType, data) => entries.push({ customType, data }),
   });
@@ -449,21 +439,28 @@ test("the lease protocol recovers dead claimants and stale holders without losin
   assert(releaselease(recovered) === true, "recovered initializer successor must release");
 });
 
-test("the write wrapper holds the lease until the tool result", async () => {
+test("one turn's mutation calls share the lease from the first tool call to the last tool result", async () => {
   const cwd = repository();
   const probe = harness(cwd, "medium", "true", true);
   await start(probe);
-  const input = { path: "src/a.txt", content: "leased\n" };
-  await probe.tools.write.execute("lease-wrapper", input, undefined, undefined, probe.context);
-  assert(inspectlease({ cwd }).status === "held", "extension wrapper must hold a lease during mutation");
-  await probe.handlers.tool_result({
-    toolName: "write",
-    toolCallId: "lease-wrapper",
+  const write = { path: "src/a.txt", content: "leased\n" };
+  const bash = { command: "cat src/a.txt" };
+  const result = (toolName, toolCallId, input) => probe.handlers.tool_result({
+    toolName,
+    toolCallId,
     input,
-    content: [{ type: "text", text: "written" }],
+    content: [{ type: "text", text: "done" }],
     isError: false,
   }, probe.context);
-  assert(inspectlease({ cwd }).status === "free", "tool result must release the wrapper lease");
+  // omp emits tool_call for every call of a turn before it runs any of them.
+  const first = await probe.handlers.tool_call({ toolName: "write", toolCallId: "lease-write", input: write }, probe.context);
+  const second = await probe.handlers.tool_call({ toolName: "bash", toolCallId: "lease-bash", input: bash }, probe.context);
+  assert(first?.block !== true && second?.block !== true, "calls of one turn must not wait on their own session's lease");
+  assert(inspectlease({ cwd }).status === "held", "the tool call must hold a lease during mutation");
+  await result("write", "lease-write", write);
+  assert(inspectlease({ cwd }).status === "held", "the lease must stay held while a sharing call still runs");
+  await result("bash", "lease-bash", bash);
+  assert(inspectlease({ cwd }).status === "free", "the last tool result must release the lease");
 });
 
 test("stop_hook_active reaches the omnipotence stop decision", async () => {

@@ -1171,7 +1171,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   pi.on("session_start", (event, context) => {
     if (!parseEvent(eventSchema, event)) return;
-    mutationLease.registerWrappers();
     restoreJournal(context);
     const status = requestId
       ? `${armingStatus()} · resumed`
@@ -1197,7 +1196,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   pi.on("agent_start", (event, context) => {
     if (!parseEvent(eventSchema, event)) return;
-    mutationLease.registerWrappers();
     if (continuationCount > 0) return;
     mutationLease.releaseOrphaned("agent_start");
     evidence = freshEvidence();
@@ -1253,6 +1251,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
         block: true,
         reason: `raw git commit bypasses the git-commit skill. stage the changes for this commit, then run: bash ${shellQuote(COMMIT_SCRIPT_PATH)} '<type(scope): message>'`,
       };
+    const leaseBlock = await mutationLease.onToolCall(parsed, context);
+    if (leaseBlock) return { block: true, reason: leaseBlock };
     // a returned input replaces the tool's arguments, and the parsed view is schema-stripped:
     // spread the raw input so fields this extension does not model (agent, isolated, env) survive.
     if (parsed.toolName === "task") {

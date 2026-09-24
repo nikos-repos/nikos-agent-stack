@@ -175,7 +175,8 @@ function asyncJobId(details?: ToolDetails): string | null {
 }
 
 export type MutationLease = {
-  registerWrappers(): void;
+  // returns the block reason when a lease conflict stops the call, or null when it may run.
+  onToolCall(event: OperationCall, context: ExtensionContext): Promise<string | null>;
   onToolResult(event: ToolResultNotice, context: ExtensionContext): void;
   onExecutionUpdate(toolCallId: string, details: ToolDetails | undefined): void;
   releaseAll(reason: string): void;
@@ -195,13 +196,13 @@ export function createMutationLease(
       .toLowerCase(),
   );
   const activeOperations = new Map<string, ActiveOperation>();
-  let builtinWrappersRegistered = false;
   const releaseOperation = (toolCallId: string, reason: string): boolean => {
     const operation = activeOperations.get(toolCallId);
     if (!operation) return false;
     activeOperations.delete(toolCallId);
     clearInterval(operation.timer);
     if (operation.pollTimer) clearInterval(operation.pollTimer);
+    if ([...activeOperations.values()].some((other) => other.lease === operation.lease)) return false;
     let released = false;
     try {
       released = Boolean(releaselease(operation.lease));
@@ -276,26 +277,32 @@ export function createMutationLease(
     const acquisitionOptions = Number.isFinite(waitMs)
       ? { ...metadata, acquisition_wait_ms: Math.max(0, waitMs) }
       : metadata;
-    ledger.append("lease_wait_started", { ...metadata, ts: Date.now() });
+    // every call of one turn reaches tool_call before any of them runs, so a call that overlaps
+    // an operation this session still holds shares that lease instead of waiting on itself.
+    const shared = activeOperations.values().next().value?.lease;
     let result: LeaseRecord;
-    try {
-      result = await acquirelease(acquisitionOptions);
-    } catch (error) {
-      return `mutation lease could not be acquired: ${error instanceof Error ? error.message : String(error)}`;
-    }
-    if (result.acquired !== true) {
-      const holder = result.record?.session_file ?? null;
-      let reason = "";
+    if (shared) result = shared;
+    else {
+      ledger.append("lease_wait_started", { ...metadata, ts: Date.now() });
       try {
-        reason = formatleasestatus(result, {
-          waited_ms: result.waited_ms ?? 0,
-          relation: resolveLeaseRelation(sessionFile, holder),
-          cwd: scope.cwd,
-        });
-      } catch {}
-      if (!reason) reason = result.error ?? "mutation lease is unavailable";
-      if (result.timed_out === true) ledger.append("lease_wait_timed_out", { ...metadata, reason, ts: Date.now() });
-      return reason;
+        result = await acquirelease(acquisitionOptions);
+      } catch (error) {
+        return `mutation lease could not be acquired: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      if (result.acquired !== true) {
+        const holder = result.record?.session_file ?? null;
+        let reason = "";
+        try {
+          reason = formatleasestatus(result, {
+            waited_ms: result.waited_ms ?? 0,
+            relation: resolveLeaseRelation(sessionFile, holder),
+            cwd: scope.cwd,
+          });
+        } catch {}
+        if (!reason) reason = result.error ?? "mutation lease is unavailable";
+        if (result.timed_out === true) ledger.append("lease_wait_timed_out", { ...metadata, reason, ts: Date.now() });
+        return reason;
+      }
     }
     const timer = setInterval(() => {
       const operation = activeOperations.get(event.toolCallId);
@@ -319,51 +326,10 @@ export function createMutationLease(
       target: scope.target,
       backgroundRunning: false,
     });
+    if (shared) return null;
     ledger.append("lease_acquired", { ...leasefields(result), recovered: result.recovered, ts: Date.now() });
     if (result.recovered === true) ledger.append("lease_recovered", { ...leasefields(result), ts: Date.now() });
     return null;
-  };
-  const registerBuiltinWrappers = (): void => {
-    if (builtinWrappersRegistered) return;
-    let configuredTools: ReturnType<ExtensionAPI["getAllTools"]> = [];
-    try {
-      configuredTools = pi.getAllTools?.() ?? [];
-    } catch {}
-    let registered = false;
-    for (const candidate of configuredTools) {
-      if (
-        !["write", "edit", "bash"].includes(candidate.name) ||
-        candidate.sourceInfo?.source !== "builtin" ||
-        !candidate.description ||
-        !candidate.parameters
-      )
-        continue;
-      const name = candidate.name;
-      pi.registerTool({
-        name,
-        label: name,
-        description: candidate.description,
-        parameters: candidate.parameters,
-        approval: name === "bash" ? "exec" : "write",
-        execute: async (toolCallId, params, signal, onUpdate, context) => {
-          // omp validated params against this built-in's own schema before calling the wrapper.
-          const input = params as ToolInput;
-          const event: OperationCall = {
-            toolName: name,
-            toolCallId,
-            input,
-            sessionId: context.sessionManager?.getSessionId?.(),
-          };
-          const scope = leaseScope(event, context, gate.repoRoot());
-          const blocked = scope ? await acquireOperation(event, context, scope) : null;
-          if (blocked) throw new Error(blocked);
-          if (!context.invokeTool) throw new Error(`native ${name} tool is unavailable`);
-          return context.invokeTool(input, { signal, onUpdate });
-        },
-      });
-      registered = true;
-    }
-    builtinWrappersRegistered = registered;
   };
   const leaseStatusReport = (context: ExtensionContext): string => {
     const cwd = gate.repoRoot() ?? context.cwd;
@@ -438,7 +404,10 @@ export function createMutationLease(
   });
 
   return {
-    registerWrappers: registerBuiltinWrappers,
+    async onToolCall(event, context) {
+      const scope = leaseScope(event, context, gate.repoRoot());
+      return scope ? acquireOperation(event, context, scope) : null;
+    },
     onToolResult(event, context) {
       const operation = activeOperations.get(event.toolCallId);
       if (!operation) return;
