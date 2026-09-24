@@ -93,7 +93,7 @@ export function validateRecord(input, options = {}) {
     const ts = input.ts === undefined ? new Date().toISOString() : input.ts;
     if (!timestamp(ts)) return { ok: false, error: "ts must be a valid timestamp" };
     const record = { ts, request_id, session_file, session_id, agent_id, primary_goal, complaint, type, severity, evidence,
-      source: options.source === "auto" ? "auto" : "agent" };
+      source: "agent" };
     if (nonempty(repoRoot)) record.repo_root = repoRoot;
     if (isText(options.cwd)) record.cwd = options.cwd;
     return validStoredRecord(record, repoRoot)
@@ -125,35 +125,4 @@ export function readRecords(path = FRUSTRATION_PATH, options = {}) {
   } catch {
     return [];
   }
-}
-
-export function missingIdentities(records, identities, repoRoot) {
-  const covered = new Set(records.filter((record) => validStoredRecord(record, taxonomyRoot(record, repoRoot)))
-    .map((record) => record.session_file));
-  const missing = [];
-  for (const identity of identities) {
-    const agent_id = isText(identity) ? identity : isRecord(identity) ? identity.agent_id : null;
-    const session_file = isText(identity) || !isRecord(identity) ? null : identity.session_file;
-    if (isText(agent_id) && (!isText(session_file) || !session_file || !covered.has(session_file))) missing.push(agent_id);
-  }
-  return missing;
-}
-
-export function automaticGateRecord(fields) {
-  const record = {
-    ts: new Date().toISOString(),
-    request_id: fields.request_id,
-    agent_id: isText(fields.agent_id) ? fields.agent_id : "main",
-    session_file: fields.session_file,
-    session_id: fields.session_id,
-    primary_goal: isText(fields.primary_goal) ? fields.primary_goal : "complete the active request",
-    complaint: fields.detail,
-    type: "workflow",
-    severity: fields.blocking ? "high" : "medium",
-    evidence: [{ kind: "gate", event_id: isText(fields.event_id) && fields.event_id ? fields.event_id : randomUUID(), rule: fields.rule }],
-    source: "auto",
-  };
-  if (isText(fields.repo_root)) record.repo_root = fields.repo_root;
-  if (isText(fields.cwd)) record.cwd = fields.cwd;
-  return record;
 }

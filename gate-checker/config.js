@@ -12,26 +12,22 @@ const policy_table = {
   off: {
     enabled: false, inline: false,
     completion: "off", citation: "off", snapshot: "off", manifest: "off",
-    subagentClaim: "off", verify: "off", complexity: "off", commit: "off",
-    scratchpad: "off", runtime: "off",
+    subagentClaim: "off", verify: "off", complexity: "off", commit: "off", runtime: "off",
   },
   low: {
     enabled: true, inline: true,
     completion: "warn", citation: "warn", snapshot: "off", manifest: "off",
-    subagentClaim: "warn", verify: "warn", complexity: "warn", commit: "off",
-    scratchpad: "warn", runtime: "warn",
+    subagentClaim: "warn", verify: "warn", complexity: "warn", commit: "off", runtime: "warn",
   },
   medium: {
     enabled: true, inline: true,
     completion: "block", citation: "block", snapshot: "warn", manifest: "auto",
-    subagentClaim: "block", verify: "block", complexity: "warn", commit: "off",
-    scratchpad: "warn", runtime: "block",
+    subagentClaim: "block", verify: "block", complexity: "warn", commit: "off", runtime: "block",
   },
   high: {
     enabled: true, inline: true,
     completion: "block", citation: "block", snapshot: "block", manifest: "block",
-    subagentClaim: "block", verify: "block", complexity: "warn", commit: "block",
-    scratchpad: "warn", runtime: "block",
+    subagentClaim: "block", verify: "block", complexity: "warn", commit: "block", runtime: "block",
   },
 };
 
@@ -55,7 +51,6 @@ export const RULE_FAMILY = {
   uncommitted_changes: "commit",
   recovery_required: "runtime",
   scope_unavailable: "runtime",
-  missing_frustration_record: "scratchpad",
   "no-absolute-home-path": "completion",
   missing_interrogation: "completion",
 };

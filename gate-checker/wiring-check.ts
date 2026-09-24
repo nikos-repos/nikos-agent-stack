@@ -169,54 +169,15 @@ const writeChange = async (probe, text, id = "write-1", path = "src/a.txt") => {
     isError: false,
   }, probe.context);
 };
-const recordClean = async (probe) => probe.tools.record_frustration.execute(
-  "friction-1",
-  {
-    agent_id: "main",
-    primary_goal: "run gate wiring check",
-    complaint: "none",
-    type: "none",
-    severity: "low",
-    evidence: [],
-  },
-  undefined,
-  undefined,
-  probe.context,
-);
 
 try {
-  // Optional friction coverage must never create a delivery continuation.
-  for (const level of ["low", "medium", "high"]) {
-    const probe = harness(repository(), level);
-    await start(probe);
-    await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-optional", input: { path: "src/a.txt" } }, probe.context);
-    const first = await finish(probe, "review complete");
-    const second = await finish(probe, "review complete");
-    assert(first === undefined && second === undefined, `${level}: absent main friction record must not force a continuation`);
-    assert(!probe.entries.some((entry) => entry.data.kind === "continuation"), `${level}: friction absence must not create an administrative chain`);
-    assert(probe.notices.some((notice) => notice.message.includes("missing_frustration_record")), `${level}: optional coverage warning remains observable`);
-  }
-
-  for (const level of ["low", "medium", "high"]) {
-    const probe = harness(repository(), level);
-    await start(probe);
-    const childFile = join(stateRoot, `child-${level}.jsonl`);
-    probe.events["task:subagent:lifecycle"]({ id: `child-${level}`, agent: "reviewer", status: "completed", sessionFile: childFile });
-    probe.events["task:subagent:event"]({ id: `child-${level}`, event: { type: "message_end", message: { role: "assistant", content: "<changed-files>\n</changed-files>" } } });
-    await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-child", input: { path: "src/a.txt" } }, probe.context);
-    await recordClean(probe);
-    const result = await finish(probe, "review complete");
-    assert(result === undefined, `${level}: missing child friction record must remain optional`);
-    assert(probe.notices.some((notice) => notice.message.includes("missing_frustration_record")), `${level}: a main record must not satisfy child-session coverage`);
-  }
-
   {
     const probe = harness(repository(), "medium");
     await start(probe);
     await probe.handlers.tool_call({ toolName: "ask", toolCallId: "ask-optional", input: {} }, probe.context);
     const result = await finish(probe, "waiting for the user's answer");
-    assert(result === undefined, "no-change question must release without a friction record");
-    assert(probe.entries.some((entry) => entry.data.kind === "terminal" && entry.data.outcome === "skipped_user_question"), "optional friction must not prevent the ordinary user-question skip");
+    assert(result === undefined, "a no-change user question must release");
+    assert(probe.entries.some((entry) => entry.data.kind === "terminal" && entry.data.outcome === "skipped_user_question"), "a no-change user question must close as skipped_user_question");
   }
 
   {
@@ -225,7 +186,7 @@ try {
     await probe.handlers.session_start({}, probe.context);
     await probe.handlers.tool_call({ toolName: "ask", toolCallId: "ask-recovery", input: {} }, probe.context);
     const result = await finish(probe, "waiting for the user's answer");
-    assert(result?.additionalContext.includes("recovery_required"), "optional friction must not bypass real journal recovery after a user question");
+    assert(result?.additionalContext.includes("recovery_required"), "a user question must not bypass journal recovery");
   }
 
   {
@@ -235,21 +196,6 @@ try {
     await start(probe);
     await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-restored", input: { path: "src/a.txt" } }, probe.context);
     assert(await finish(probe, "looked again") === undefined, "a request left open by a crash must not force recovery once a later request closed");
-  }
-
-  {
-    const probe = harness(repository(), "medium", "false");
-    await start(probe);
-    const childFile = join(stateRoot, "missing-mixed-child.jsonl");
-    probe.events["task:subagent:lifecycle"]({ id: "missing-mixed-child", agent: "reviewer", status: "completed", sessionFile: childFile });
-    await writeChange(probe, "two\n");
-    const result = await finish(probe, "updated the file");
-    assert(result?.additionalContext.includes("verify_failed"), "missing optional coverage must not release failed verification");
-    assert(!result.additionalContext.includes("missing_frustration_record"), "optional friction must not enter substantive continuation instructions");
-    const records = readFileSync(process.env.OMP_GATE_FRUSTRATIONS, "utf8").trim().split("\n").map((line) => JSON.parse(line));
-    const automatic = records.find((record) => record.session_file === probe.session.file && record.source === "auto" && record.evidence.some((item) => item.rule === "verify_failed"));
-    assert(automatic?.session_id === probe.session.id && automatic.request_id, "automatic material failure must preserve native session/request identity");
-    assert(!records.some((record) => record.session_file === childFile), "automatic main failure must not manufacture child coverage");
   }
 
   {
@@ -270,23 +216,6 @@ try {
   }
 
   {
-    const { policyFor } = await import("./config.js");
-    for (const level of ["low", "medium", "high"]) {
-      const modes = policyFor(level);
-      assert(modes.scratchpad === "warn", `${level}: optional scratchpad policy must warn`);
-      assert(modes.runtime === (level === "low" ? "warn" : "block"), `${level}: runtime integrity policy must remain unchanged`);
-      assert(modes.citation === (level === "low" ? "warn" : "block"), `${level}: claim evidence policy must remain unchanged`);
-      assert(modes.verify === (level === "low" ? "warn" : "block"), `${level}: substantive verification policy must remain unchanged`);
-    }
-    assert(policyFor("off").scratchpad === "off", "disabled friction policy must remain off");
-    const probe = harness(repository(), "medium");
-    await start(probe);
-    const routed = await probe.handlers.tool_call({ toolName: "task", toolCallId: "optional-task", input: { task: "review" } }, probe.context);
-    assert(routed.input.task.includes("friction capture is optional"), "child instructions must describe friction capture as optional");
-    assert(routed.input.task.includes("changed-files"), "optional friction must preserve child claim/manifest guidance");
-  }
-
-  {
     const probe = harness(repository(), "high", "false");
     await start(probe);
     await writeChange(probe, "two\n");
@@ -303,7 +232,6 @@ try {
     const probe = harness(cwd, "medium", "true");
     await start(probe);
     await writeChange(probe, "two\n");
-    await recordClean(probe);
     const result = await finish(probe, "updated the file");
     assert(result === undefined, "medium must release verified uncommitted work");
     assert(probe.entries.find((entry) => entry.data.kind === "request_start")?.data.baseline_sha, "an untracked nested repository must not switch the request to no-git mode");
@@ -410,19 +338,6 @@ try {
     }, probe.context);
     execFileSync("sh", ["-c", scoped.input.command], { cwd: probe.cwd, stdio: "pipe" });
     assert(git(probe.cwd, "diff", "--cached", "--name-only") === selectedPath, "scoped commit routing must stage only the selected path");
-  }
-
-  {
-    const probe = harness(repository(), "medium");
-    await start(probe);
-    await probe.handlers.tool_call({
-      toolName: "ask",
-      toolCallId: "ask-1",
-      input: {},
-    }, probe.context);
-    await recordClean(probe);
-    const result = await finish(probe, "waiting for the user's answer");
-    assert(result === undefined, "a recorded no-change user question must release");
   }
 
   {

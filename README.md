@@ -151,7 +151,6 @@ rule families:
 - `subagentClaim`: subagent claims checked against the diff.
 - `verify`: the configured verification command must pass.
 - `commit`: the working tree must be committed.
-- `scratchpad`: optional validated friction capture; missing session coverage warns.
 
 engagement levels:
 
@@ -171,10 +170,10 @@ engagement levels:
 
 | level    | behavior                                                                                                                         |
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `low`    | delivery findings and missing scratchpad coverage warn. for exploration and non-git work.                                |
-| `medium` | default. completion, citation, subagent-claim, verification, runtime-integrity, interrogation, and repeated home-path failures block. missing scratchpad coverage warns; the commit gate stays off. |
+| `low`    | delivery findings warn. for exploration and non-git work.                                                                        |
+| `medium` | default. completion, citation, subagent-claim, verification, runtime-integrity, interrogation, and repeated home-path failures block. the commit gate stays off. |
 | `high`   | medium policy plus blocking snapshot, manifest, and commit checks. complexity findings remain warnings.                              |
-| `off`    | delivery checks, scratchpad enforcement, and gate outcome telemetry stop. request journal bookkeeping and the no-git diagnostic can still close and describe the active request. set with `/gates-disable`. |
+| `off`    | delivery checks and gate outcome telemetry stop. request journal bookkeeping and the no-git diagnostic can still close and describe the active request. set with `/gates-disable`. |
 
 slash level changes take effect in the running session and persist to `~/.omp/gate-checker/config.json`. direct config edits are loaded only when omp starts: restart omp before using `/gates-engage` after an external edit, or set the relevant `OMP_*` environment before the session. precedence is the config file, then `OMP_GATES_LEVEL`, then `OMP_DELIVERY_GATES`: any nonempty value except `0`, `false`, or `off` selects `high`; those three values and an unset variable fall through to the default `medium`. `OMP_VERIFY_CMD` and `OMP_COMPLEXITY_CMD` supply commands when the config file has none. `OMP_GATE_CONFIG`, `OMP_GATE_LEDGER`, and `OMP_GATE_FRUSTRATIONS` relocate persisted paths. the mutation lease is enabled at startup by default; set `OMP_GATE_MUTATION_LEASE` before startup to `0`, `false`, or `off` to disable it. `OMP_GATE_MUTATION_LEASE_WAIT_MS` sets its acquisition wait. unset and all other lease-enable values enable it. other delivery gates remain independent.
 
@@ -186,11 +185,11 @@ a repository can add its own forbidden markers in `.omp/gates-markers.txt`, one 
 
 enabled sessions append records to `~/.omp/gate-checker/frustrations.jsonl`, or the path in `OMP_GATE_FRUSTRATIONS`. call the native `record_frustration` tool with `agent_id`, `primary_goal`, `complaint`, `type`, `severity`, and `evidence`.
 
-the server derives `session_file` and `session_id` from the active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and each child session file comes from native task provenance. caller input cannot override these fields or the server-controlled `source`: tool records use `agent`, automatic gate records use `auto`, and older records without the field appear as `legacy` in stats.
+the server derives `session_file` and `session_id` from the calling session and assigns `request_id` as server-local diagnostic metadata. caller input cannot override these fields or the server-controlled `source`: tool records use `agent`, records written by earlier versions may use `auto`, and records without the field appear as `legacy` in stats.
 
 fixed types are `tooling`, `environment`, `requirements`, `workflow`, `test`, `dependency`, `performance`, `other`, and `none`; fixed severities are `low`, `medium`, `high`, and `blocker`. a project can extend both lists in `.omp/gates-frustrations.json`. real friction needs nonempty `gate`, `snapshot`, or `command` evidence. a friction-free session uses `type: "none"`, `complaint: "none"`, `severity: "low"`, and may send an empty evidence array; the extension discards caller evidence and injects one trusted `clean_turn` gate entry.
 
-the extension writes machine-authored scratchpad records for warning and blocking gate outcomes. those records satisfy main-session coverage in the same stop, never a child session. an agent may optionally append its own perspective. a missing main or child session record warns at every enabled level and never forces a continuation. if an agent files `none` after a failed tool result or a continuation forced by another blocking rule, the extension writes the non-blocking `clean_under_errors` telemetry event. missing-record warnings do not count as friction.
+friction capture is optional: no gate checks whether a session filed a record. if an agent files `none` after a failed tool result or a continuation forced by another blocking rule, the extension writes the non-blocking `clean_under_errors` telemetry event.
 
 command-line gate commands use the same predicates as the extension:
 
@@ -255,7 +254,7 @@ gates:
 
 - enforcement runs at `session_stop`; inline marker feedback runs at `tool_result`. at level `off` the `tool_call` handler does nothing at all.
 - a no-tool request skips final checks only when it also has no final assistant text and no journal recovery.
-- a request that asked the user is released when it changed no file and has no journal recovery; optional scratchpad coverage does not delay that release.
+- a request that asked the user is released when it changed no file and has no journal recovery.
 - a continuation chain is capped by the runtime, and a no-progress chain aborts. neither is on the engagement dial.
 - files already dirty at agent start are subtracted from the request diff by design.
 - without git, the gate checker falls back to first-touch content hashing. the changed-file and added-line sets stay complete, but the commit gate cannot apply.
@@ -283,7 +282,7 @@ terra advisor:
 | [`plugin.test.ts`](plugin.test.ts)                                                                                                        | asserts the packaged public surface                                                   |
 | [`gate-checker/index.ts`](gate-checker/index.ts)                                                                                          | gate extension: lifecycle hooks, evidence capture, enforcement, and commands          |
 | [`gate-checker/config.js`](gate-checker/config.js)                                                                                        | engagement dial, level policies, and persisted configuration                          |
-| [`gate-checker/frustrations.js`](gate-checker/frustrations.js)                                                                            | validated scratchpad records, identity coverage, taxonomy, and automatic gate records |
+| [`gate-checker/frustrations.js`](gate-checker/frustrations.js)                                                                            | validated scratchpad records and taxonomy |
 | [`gate-checker/predicates.js`](gate-checker/predicates.js)                                                                                | shared deterministic gate predicates                                                  |
 | [`gate-checker/scope.js`](gate-checker/scope.js)                                                                                          | canonical repository scopes and baseline capture                                      |
 | [`gate-checker/risks.js`](gate-checker/risks.js)                                                                                          | change-risk classification for audited scopes                                         |

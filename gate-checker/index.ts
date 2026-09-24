@@ -36,13 +36,7 @@ import {
   releaselease,
   releasestalelease,
 } from "./lease.js";
-import {
-  appendRecord as appendFrustration,
-  automaticGateRecord,
-  missingIdentities,
-  readRecords as readFrustrations,
-  validateRecord as validateFrustration,
-} from "./frustrations.js";
+import { appendRecord as appendFrustration, validateRecord as validateFrustration } from "./frustrations.js";
 import { installadvisor } from "../advisor/install.js";
 import { questionnaireStop } from "../ask-questionnaire/stop-decision.ts";
 import { omnipotenceStop } from "../omnipotence/stop-decision.ts";
@@ -263,8 +257,6 @@ type TerminalFields = { release_reason?: string };
 type RequestState = {
   assistantText: string;
   cwd: string;
-  sessionFile?: string;
-  sessionId?: string;
   taxonomyRoot: string;
   hasGit: boolean;
   gitCwd: string;
@@ -558,13 +550,8 @@ function getLastAssistantText(ctx: ExtensionContext): string | null {
 function shouldSkipNoTools(hadToolCalls: boolean, assistantText: string, journalRecovery: string | null): boolean {
   return !hadToolCalls && !assistantText && !journalRecovery;
 }
-function canSkipUserQuestion(
-  askedUser: boolean,
-  changedCount: number,
-  journalRecovery: string | null,
-  missingFrustration: boolean,
-): boolean {
-  return askedUser && changedCount === 0 && !journalRecovery && !missingFrustration;
+function canSkipUserQuestion(askedUser: boolean, changedCount: number, journalRecovery: string | null): boolean {
+  return askedUser && changedCount === 0 && !journalRecovery;
 }
 function absolutePathPreserving(base: string, child: string): string {
   if (isAbsolute(child)) return child;
@@ -835,17 +822,6 @@ function processCandidate(ev: TurnEvidence, changed: number): ProcessCandidate {
 function formatFailures(failures: GateFailure[]): string {
   return `[GATE CHECKER — deterministic post-turn gate]\n\nthe following machine-checked gates failed:\n\n${failures.map((failure, index) => `${index + 1}. ${failure.gate}/${failure.rule}\n   ${failure.detail}`).join("\n\n")}\n\nthese are deterministic checks, not model judgment. fix each failure before yielding. do not repeat the same response.`;
 }
-function checkFrustrations(
-  records: object[],
-  identities: Array<{ agent_id: string; session_file: string | null }>,
-  repoRoot: string,
-): GateFailure[] {
-  return missingIdentities(records, identities, repoRoot).map((id) => ({
-    gate: "journal",
-    rule: "missing_frustration_record",
-    detail: `identity "${id}" has no frustration record for this session. friction capture is optional; record it with record_frustration when useful.`,
-  }));
-}
 const GATE_NUDGE = [
   "[GATE CHECKER] your report MUST end with this exact block, listing every file you changed, one path per line:",
   MANIFEST_OPEN,
@@ -856,7 +832,7 @@ const GATE_NUDGE = [
   "",
   `Also: (1) do not leave forbidden markers (${"TO" + "DO"}: implement, ${"FIX" + "ME"}:, ${"Not" + "ImplementedError"}, unfinished comments) in lines you add; (2) do not claim test results you did not produce — the bash log is checked; (3) if you commit, use the git-commit skill script, not raw git commit.`,
   "",
-  '(4) friction capture is optional. you may call record_frustration with your assigned id and goal to log friction — papercuts count even when nothing failed: confusing docs, dead ends, awkward tool output. use type "none" only when the whole session was friction-free; it requires complaint "none" and severity "low". do not continue solely to create a friction record.',
+  '(4) optional: call record_frustration with your assigned id and goal to log friction — papercuts count even when nothing failed: confusing docs, dead ends, awkward tool output. use type "none" only when the whole session was friction-free; it requires complaint "none" and severity "low".',
   "",
 ].join("\n");
 
@@ -1471,7 +1447,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
         cwd: context.cwd,
         sessionFile: context.sessionManager?.getSessionFile?.(),
         sessionId: context.sessionManager?.getSessionId?.(),
-        source: "agent",
       });
       if (!result.ok) return { isError: true, content: [{ type: "text", text: `validation error: ${result.error}` }] };
       const appended = appendFrustration(result.record, undefined, { repoRoot: taxonomyRoot });
@@ -1524,8 +1499,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     failures: GateFailure[],
   ): RequestState => {
     const cwd = context.cwd;
-    const sessionFile = context.sessionManager?.getSessionFile?.();
-    const sessionId = context.sessionManager?.getSessionId?.();
     const taxonomyRoot = evidence.repoRoot ?? cwd;
     const hasGit = evidence.baselineSha !== null;
     const gitCwd = evidence.repoRoot ?? cwd;
@@ -1599,8 +1572,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     return {
       assistantText,
       cwd,
-      sessionFile,
-      sessionId,
       taxonomyRoot,
       hasGit,
       gitCwd,
@@ -1704,47 +1675,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
   };
 
-  const recordIdentityCoverage = (state: RequestState, failures: GateFailure[]): void => {
-    const records = readFrustrations(undefined, { repoRoot: state.taxonomyRoot });
-    if (requestId) {
-      for (const failure of applyPolicy(failures, policy)) {
-        const severity = failure.severity ?? "block";
-        if (failure.rule === "missing_frustration_record") continue;
-        const validated = validateFrustration(
-          automaticGateRecord({
-            request_id: requestId,
-            rule: failure.rule,
-            detail: failure.detail,
-            blocking: severity === "block",
-            repo_root: state.taxonomyRoot,
-            cwd: state.cwd,
-            session_file: state.sessionFile,
-            session_id: state.sessionId,
-          }),
-          {
-            repoRoot: state.taxonomyRoot,
-            requestId,
-            cwd: state.cwd,
-            sessionFile: state.sessionFile,
-            sessionId: state.sessionId,
-            source: "auto",
-          },
-        );
-        if (validated.ok && appendFrustration(validated.record, undefined, { repoRoot: state.taxonomyRoot }).ok) {
-          records.push(validated.record);
-        }
-      }
-    }
-    const identities: Array<{ agent_id: string; session_file: string | null }> = [
-      { agent_id: "main", session_file: state.sessionFile ?? null },
-      ...evidence.subagents.map((subagent) => ({
-        agent_id: subagent.id || "subagent",
-        session_file: subagent.session_file,
-      })),
-    ];
-    failures.push(...checkFrustrations(records, identities, state.taxonomyRoot));
-  };
-
   const settleRequest = (
     context: ExtensionContext,
     state: RequestState,
@@ -1838,9 +1768,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return;
     }
 
-    if (blocking.some((failure) => failure.rule !== "missing_frustration_record")) {
-      evidence.hadblockingfailure = true;
-    }
+    evidence.hadblockingfailure = true;
     const rules = blocking.map((failure) => failure.rule);
     continuationCount++;
     ledger.append("gate_eval", {
@@ -1928,11 +1856,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
     const state = deriveRequestState(context, assistantText, failures);
     collectDeliveryFailures(context, state, failures);
-    recordIdentityCoverage(state, failures);
-    const missingRecord = applyPolicy(failures, policy).some(
-      (failure) => failure.rule === "missing_frustration_record" && failure.severity === "block",
-    );
-    if (canSkipUserQuestion(evidence.askedUser, state.changedCount, journalRecovery, missingRecord)) {
+    if (canSkipUserQuestion(evidence.askedUser, state.changedCount, journalRecovery)) {
       terminalJournal("skipped_user_question");
       continuationCount = 0;
       return;

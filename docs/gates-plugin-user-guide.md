@@ -120,7 +120,7 @@ source: [declared extension entries and package contents](../package.json)
 /gates-engage
 ```
 
-with no argument, this command prints the active level, the marker, claim, manifest, subagent, snapshot, verification, complexity, commit, runtime, and runaway status lines, plus the configuration source. it prints no separate lines for the inline notice, scratchpad coverage, `no-absolute-home-path`, missing interrogation, or advisory risk; see [engagement levels](#engagement-levels) for those modes.
+with no argument, this command prints the active level, the marker, claim, manifest, subagent, snapshot, verification, complexity, commit, runtime, and runaway status lines, plus the configuration source. it prints no separate lines for the inline notice, `no-absolute-home-path`, missing interrogation, or advisory risk; see [engagement levels](#engagement-levels) for those modes.
 
 ### use the normal coding profile
 
@@ -128,7 +128,7 @@ with no argument, this command prints the active level, the marker, claim, manif
 /gates-engage medium
 ```
 
-medium blocks unfinished added lines, home paths left after a `no-absolute-home-path` interruption, unsupported file or test claims, contradicted subagent reports, missing interrogation, missing test evidence, failing verification, runtime or scope recovery failures. missing scratchpad coverage warns. it does not require a commit.
+medium blocks unfinished added lines, home paths left after a `no-absolute-home-path` interruption, unsupported file or test claims, contradicted subagent reports, missing interrogation, missing test evidence, failing verification, runtime or scope recovery failures. it does not require a commit.
 
 ### use strict delivery checks
 
@@ -136,7 +136,7 @@ medium blocks unfinished added lines, home paths left after a `no-absolute-home-
 /gates-engage high
 ```
 
-high blocks the completion, citation, snapshot, manifest, subagent-claim, verification, commit, and runtime families. missing scratchpad coverage warns. a configured complexity command stays warning-only at every level, and scope risk findings stay advisory at every level. it blocks a failing configured verification command, but it does not invent a verifier. configure verification with `OMP_VERIFY_CMD` before a session or with `verifyCmd` in persisted configuration; trailing command text is rejected.
+high blocks the completion, citation, snapshot, manifest, subagent-claim, verification, commit, and runtime families. a configured complexity command stays warning-only at every level, and scope risk findings stay advisory at every level. it blocks a failing configured verification command, but it does not invent a verifier. configure verification with `OMP_VERIFY_CMD` before a session or with `verifyCmd` in persisted configuration; trailing command text is rejected.
 
 ### use warnings only
 
@@ -144,7 +144,7 @@ high blocks the completion, citation, snapshot, manifest, subagent-claim, verifi
 /gates-engage low
 ```
 
-low keeps delivery findings and missing scratchpad coverage advisory.
+low keeps delivery findings advisory.
 
 ### disable gate checks
 
@@ -152,7 +152,7 @@ low keeps delivery findings and missing scratchpad coverage advisory.
 /gates-disable
 ```
 
-`/gates-disable` stops enforcement and scratchpad checks. the extension still opens a `request_start` journal entry and a terminal journal entry for each request, and still records a `no_git` ledger entry when the working directory is not a git repository.
+`/gates-disable` stops enforcement. the extension still opens a `request_start` journal entry and a terminal journal entry for each request, and still records a `no_git` ledger entry when the working directory is not a git repository.
 
 slash level changes apply in the current session and persist for later sessions. direct edits to persisted configuration are not reloaded by a live slash call: restart omp before a slash level change after an edit, or set the relevant `OMP_*` environment before the session.
 
@@ -184,7 +184,6 @@ source: [command registration and live policy updates](../gate-checker/index.ts)
 | configured verification command | off | warn | block | block |
 | configured complexity command on changed paths (`complexity_failed`) | off | warn | warn | warn |
 | clean tracked working tree | off | off | off | block |
-| optional scratchpad coverage | off | warn | warn | warn |
 | session-stop runtime findings, such as journal recovery or an unreadable scope | off | warn | block | block |
 | telemetry | off | on | on | on |
 | stalemate release and continuation cap | not applicable | on | on | on |
@@ -222,7 +221,6 @@ session stop
   -> derive changed files and added lines
   -> run configured verification and commit gates
   -> check claims, manifests, snapshots, and markers
-  -> check scratchpad identity coverage and write automatic gate records
   -> warn, release, or force a continuation
 ```
 
@@ -264,7 +262,7 @@ final checks do not run when:
 - the active level is off.
 - the request made no tool calls, has no final assistant text, and has no journal recovery.
 - no final assistant text exists, the request did not use the user-question tool, changed no file, had no tool error, and no journal recovery exists.
-- the request used the user-question tool, changed no file, and has no journal recovery. optional scratchpad coverage does not delay release.
+- the request used the user-question tool, changed no file, and has no journal recovery.
 
 a `write` or `edit`, or any failed tool call, keeps the final checks running even with no final assistant text.
 
@@ -298,7 +296,6 @@ source: [journal reducer](../gate-checker/journal.js), [journal lifecycle](../ga
 | `no_test_run` | medium or high changed files with no configured verifier and no observed passing test runner | run the project test command or set a verify command |
 | `complexity_failed` | the configured complexity command failed on the changed paths | warning only |
 | `uncommitted_changes` | high mode finds tracked unstaged or staged changes | commit the logical unit or lower the engagement level |
-| `missing_frustration_record` | an active main or subagent server session has no valid scratchpad record | optional: call `record_frustration` when useful; absence never forces continuation |
 | `recovery_required` | the request journal is malformed, stale, or policy-incompatible | start a fresh request |
 | `scope_unavailable` | git is present but the repository scope could not be resolved | repair the repository, then retry |
 
@@ -306,7 +303,7 @@ advisory `risk.*` ids — `risk.auth_permissions`, `risk.dependencies`, `risk.mi
 
 file-claim detection targets modification verbs followed by a backticked path that contains a slash and file extension. test-claim detection recognizes common statements such as “tests passed” and common runners for node, python, rust, go, ruby, java, and deno.
 
-sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](../gate-checker/index.ts), [marker predicate](../gate-checker/predicates.js), [scratchpad validation](../gate-checker/frustrations.js)
+sources: [rule mapping](../gate-checker/config.js), [claim and snapshot checks](../gate-checker/index.ts), [marker predicate](../gate-checker/predicates.js)
 
 ## advisory risk rules
 
@@ -553,7 +550,7 @@ source: [commit routing implementation](../gate-checker/index.ts)
 
 ## subagent contract
 
-before every `task` call, the extension injects instructions that require a changed-file manifest and truthful test and modification claims. scratchpad coverage uses server-bound session files, not task-input correlation.
+before every `task` call, the extension injects instructions that require a changed-file manifest and truthful test and modification claims.
 
 ### prose report form
 
@@ -590,7 +587,7 @@ source: [subagent injection and citation checks](../gate-checker/index.ts), [man
 
 ## scratchpad records
 
-at `low`, `medium`, and `high`, friction capture is optional. missing main or child session coverage warns and never forces a continuation. `off` performs no scratchpad check or write.
+friction capture is optional. the `record_frustration` tool appends a record when an agent wants to log friction; no gate checks whether a session has one.
 
 ### storage and required caller fields
 
@@ -611,7 +608,7 @@ set `OMP_GATE_FRUSTRATIONS` before the session to relocate it. call the native `
 | `severity` | one accepted taxonomy severity; type `none` requires `low` |
 | `evidence` | valid `gate`, `snapshot`, or `command` evidence for real friction; may be empty for type `none` |
 
-the server derives `session_file` and `session_id` from each active session and assigns `request_id` as server-local diagnostic metadata. `session_file` is the authoritative coverage key for main and subagents, and child session files arrive through native task provenance. `request_id` never participates in cross-session coverage. caller input cannot select or override these fields or `source`. the extension stores tool records with `source: "agent"` and automatic gate records with `source: "auto"`. stats classify every other source value as `legacy`.
+the server derives `session_file` and `session_id` from the calling session and assigns `request_id` as server-local diagnostic metadata. caller input cannot select or override these fields or `source`. tool records carry `source: "agent"`. stats also count `auto` records written by earlier versions and classify every other source value as `legacy`.
 
 ### taxonomy
 
@@ -630,7 +627,7 @@ the extension loads this file from the git repository root. without a git root, 
 
 ### clean self-certification
 
-a friction-free session may optionally record that outcome. submit:
+a friction-free session can record that outcome. submit:
 
 ```json
 {
@@ -645,13 +642,9 @@ a friction-free session may optionally record that outcome. submit:
 
 for type `none`, the extension ignores caller evidence and injects exactly one trusted `clean_turn` gate entry. stored validation enforces complaint `none`, severity `low`, and that trusted evidence shape.
 
-if a `none` record follows any failed tool result or a continuation forced by another blocking rule, the record remains valid and the ledger receives `clean_under_errors`. this event is telemetry only; it never re-prompts the agent. a missing-record warning does not count as friction.
+if a `none` record follows any failed tool result or a continuation forced by another blocking rule, the record remains valid and the ledger receives `clean_under_errors`. this event is telemetry only; it never re-prompts the agent.
 
-### automatic gate records
-
-the extension writes a machine-authored record for every applied warning or blocking outcome except `missing_frustration_record`. missing coverage stays visible as an optional warning until a valid record exists, so the coverage rule cannot manufacture its own evidence. its gate evidence names the exact rule and event, and `source` is `auto`. it satisfies main-session coverage in that same `session_stop`, but never a child session because each child has a different server session identity. an agent can append a separate `source: "agent"` record with its own perspective.
-
-source: [scratchpad tool and identity coverage](../gate-checker/index.ts), [record validation and taxonomy](../gate-checker/frustrations.js), [level policy](../gate-checker/config.js)
+source: [scratchpad tool](../gate-checker/index.ts), [record validation and taxonomy](../gate-checker/frustrations.js)
 
 ## command-line tools
 
