@@ -567,7 +567,7 @@ accepted manifest keys are `changed`, `changedFiles`, `changed_files`, and `mani
 
 subagent adjudication starts only when the parent response refers to delegated or reviewed work. if the parent does not rely on a subagent report, parent claims and the actual diff still receive normal checks. each report is judged once per request, including across forced continuations.
 
-the extension reads native `task` result details and lifecycle events. it records the agent id, task call id, terminal status, duration, model, session file, result artifact, patch, branch metadata, and structured changed-file manifest when the native result provides them. a text manifest remains the fallback. the extension does not register or replace `task`.
+the extension reads each subagent report and its structured changed-file manifest from native `task` result details and subagent message events; a text manifest remains the fallback. a finished child's lifecycle event only triggers stale-lease recovery for that child session. the extension does not register or replace `task`.
 
 source: [subagent injection and citation checks](../gate-checker/index.ts), [manifest parser](../gate-checker/predicates.js)
 

@@ -24,7 +24,7 @@ import {
 import * as ledger from "./ledger.js";
 import { CONFIG_PATH, LEVELS, RULE_FAMILY, describeLevel, loadConfig, policyFor, saveConfig } from "./config.js";
 import { capturebaseline, reporoot, resolvescope } from "./scope.js";
-import { mergeprovenance, provenancefromdetails, provenancefromevent, provenancefromlifecycle } from "./provenance.js";
+import { mergeprovenance, provenancefromdetails, provenancefromevent } from "./provenance.js";
 import { journal_type, journal_version, journalfrombranch } from "./journal.js";
 import { auditscope } from "./risks.js";
 import {
@@ -78,22 +78,7 @@ type StructuredManifest = {
   changed_files?: string[];
   manifest?: string[];
 };
-type AgentResult = {
-  id: string;
-  agent?: string;
-  exitCode?: number;
-  error?: string;
-  abortReason?: string;
-  durationMs?: number;
-  resolvedModel?: string;
-  output?: string;
-  outputPath?: string;
-  patchPath?: string;
-  branchName?: string;
-  branchBaseSha?: string;
-  aborted?: boolean;
-  structuredOutput?: { data?: StructuredManifest };
-};
+type AgentResult = { id: string; output?: string; structuredOutput?: { data?: StructuredManifest } };
 type ToolDetails = {
   diff?: string;
   async?: { state?: string; jobId?: string };
@@ -127,24 +112,7 @@ type AsyncJobSnapshot = { running?: AsyncJob[]; recent?: AsyncJob[] };
 type SessionStopResult = { continue?: boolean; additionalContext?: string; decision?: "block"; reason?: string };
 type ToolCallResult = { block?: boolean; reason?: string; input?: ToolInput };
 type InterrogationAnswers = { unnecessary: string; deleted: string; simplified: string };
-type SubagentEvidence = {
-  task_call_id: string | null;
-  id: string;
-  agent: string | null;
-  status: string;
-  exit_code: number | null;
-  error: string | null;
-  duration_ms: number | null;
-  model: string | null;
-  session_file: string | null;
-  output_path: string | null;
-  patch_path: string | null;
-  branch_name: string | null;
-  branch_base_sha: string | null;
-  report: string;
-  manifest: string[] | null;
-  manifest_source: string | null;
-};
+type SubagentEvidence = { id: string; report: string; manifest: string[] | null };
 type GateFailure = {
   gate: "citation" | "completion" | "verify" | "commit" | "journal" | "risk";
   rule: string;
@@ -216,7 +184,7 @@ type ToolResultEvent = {
 };
 type ExecutionUpdateEvent = { toolCallId: string; partialResult: { details?: ToolDetails } };
 type RuleEvent = { rules?: Array<{ name: string }> };
-type LifecycleEvent = { id: string; parentToolCallId?: string; agent?: string; status?: string; sessionFile?: string };
+type LifecycleEvent = { id: string; status?: string; sessionFile?: string };
 type SubagentEvent = { id: string; event: { type: string; message: { role: string; content: string | TextBlock[] } } };
 type AgentEndEvent = { willContinue?: true };
 type SessionEvent = { timestamp?: number; stop_hook_active?: boolean };
@@ -817,18 +785,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   const resultItemSchema = pi.zod.object({
     id: pi.zod.string(),
-    agent: pi.zod.string().optional(),
-    exitCode: pi.zod.number().optional(),
-    error: pi.zod.string().optional(),
-    abortReason: pi.zod.string().optional(),
-    aborted: booleanSchema.optional(),
-    durationMs: pi.zod.number().optional(),
-    resolvedModel: pi.zod.string().optional(),
     output: pi.zod.string().optional(),
-    outputPath: pi.zod.string().optional(),
-    patchPath: pi.zod.string().optional(),
-    branchName: pi.zod.string().optional(),
-    branchBaseSha: pi.zod.string().optional(),
     structuredOutput: pi.zod.object({ data: manifestDataSchema.optional() }).optional(),
   });
   const detailsSchema = pi.zod.object({
@@ -858,8 +815,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   const lifecycleSchema = pi.zod.object({
     id: pi.zod.string(),
-    parentToolCallId: pi.zod.string().optional(),
-    agent: pi.zod.string().optional(),
     status: pi.zod.string().optional(),
     sessionFile: pi.zod.string().optional(),
   });
@@ -1782,11 +1737,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
   });
   events.on("task:subagent:lifecycle", (payload: LifecycleEvent) => {
     const parsed = parseEvent(lifecycleSchema, payload);
-    if (!parsed) return;
-    const record = provenancefromlifecycle(parsed);
-    recordProvenance(record);
-    if (record && ["completed", "failed", "aborted"].includes(record.status) && record.session_file)
-      releaseStaleSessionLease(evidence.repoRoot, record.session_file, "child_lifecycle");
+    if (parsed?.sessionFile && ["completed", "failed", "aborted"].includes(parsed.status ?? ""))
+      releaseStaleSessionLease(evidence.repoRoot, parsed.sessionFile, "child_lifecycle");
   });
   pi.on("agent_end", (event: AgentEndEvent) => {
     const parsed = parseEvent(agentEndSchema, event);
@@ -1926,31 +1878,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (parsed.toolName === "bash")
       evidence.bashCommands.push({ cmd: parsed.input.command ?? "", isError: parsed.isError });
     if (parsed.toolName === "task" && !parsed.isError) {
-      const records = provenancefromdetails(parsed.toolCallId, parsed.details);
+      const records = provenancefromdetails(parsed.details);
       for (const record of records) recordProvenance(record);
       if (!records.length && !parsed.details?.async) {
         const report = extractText(parsed.content);
-        if (report) {
-          const manifest = extractManifest(report);
-          recordProvenance({
-            task_call_id: parsed.toolCallId,
-            id: `legacy:${parsed.toolCallId}`,
-            agent: null,
-            status: "completed",
-            exit_code: 0,
-            error: null,
-            duration_ms: null,
-            model: null,
-            session_file: null,
-            output_path: null,
-            patch_path: null,
-            branch_name: null,
-            branch_base_sha: null,
-            report,
-            manifest,
-            manifest_source: manifest === null ? null : "report",
-          });
-        }
+        if (report) recordProvenance({ id: `legacy:${parsed.toolCallId}`, report, manifest: extractManifest(report) });
       }
     }
   });
