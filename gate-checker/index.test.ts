@@ -214,6 +214,23 @@ test("medium releases verified work next to an untracked nested repository", asy
   assert(probe.entries.some((entry) => entry.data.kind === "terminal"), "journal must record terminal outcome");
 });
 
+test("baseline dirt is journaled as hashes and diffed from the blob store", async () => {
+  const cwd = repository();
+  writeFileSync(join(cwd, "src/b.ts"), "export const b = 1;\n");
+  git(cwd, "add", ".");
+  git(cwd, "commit", "-q", "-m", "add b");
+  const before = `export const b = 1;\n// ${"FIX" + "ME"}: left before the request\n`;
+  writeFileSync(join(cwd, "src/b.ts"), before);
+  const probe = harness(cwd, "medium", "true");
+  await start(probe);
+  const journaled = probe.entries.find((entry) => entry.data.kind === "request_start")?.data.baseline_snapshots["src/b.ts"];
+  assert(journaled?.hash && !("content" in journaled), "the journal must carry the baseline hash, never the content");
+  writeFileSync(join(cwd, "src/b.ts"), `${before}// ${"TO" + "DO"}: implement\n`);
+  const result = await finish(probe, "updated the file");
+  assert(result?.additionalContext.includes("src/b.ts` line 3"), "the line added during the request must be judged");
+  assert(!result.additionalContext.includes("src/b.ts` line 2"), "baseline dirt must stay out of the request");
+});
+
 test("committing after interrogate keeps the interrogation", async () => {
   const probe = harness(repository(), "medium", "true");
   await start(probe);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { closeSync, lstatSync, openSync, readFileSync, readlinkSync, readSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, readSync, renameSync, writeFileSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import { contentToAdded, diffByLineSet, parseDiffAdditions, isRecord, isText } from "./predicates.js";
 
 const max_buffer = 64 * 1024 * 1024;
@@ -142,6 +142,32 @@ function hash_file(absolute) {
   } finally { closeSync(fd); }
   return { hash: hash.digest("hex"), binary };
 }
+// baseline text lives in a content-addressed store under the git common dir, so the request journal carries
+// only hashes. ponytail: blobs are never pruned; prune by age if the store ever grows large.
+function blob_store(repo_root) {
+  const common = git(repo_root, ["rev-parse", "--git-common-dir"]).trim();
+  return join(resolvePath(repo_root, common), "omp-gates", "blobs");
+}
+function put_blob(store, hash, content) {
+  const path = join(store, hash);
+  if (existsSync(path)) return;
+  mkdirSync(store, { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, content, "utf8");
+  renameSync(temporary, path);
+}
+function get_blob(store, hash) {
+  try { return readFileSync(join(store, hash), "utf8"); }
+  catch (error) {
+    if (String(error?.code ?? "").toLowerCase() === "enoent") throw new Error(`baseline content ${hash} is missing from ${store}`);
+    throw error;
+  }
+}
+// what the journal records for one baseline-dirty path: identity, never content.
+function stored(snap) {
+  return { exists: snap.exists, hash: snap.hash, binary: snap.binary, untracked: snap.untracked,
+    large: snap.exists && !snap.binary && snap.content === null };
+}
 function snapshot(repo_root, path, untracked = false) {
   const absolute = resolvePath(repo_root, path);
   try {
@@ -203,6 +229,12 @@ export function capturebaseline(cwd = ".") {
     const fields = git(repo_root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).split("\0");
     const dirty = new Set();
     const snapshots = {};
+    const store = blob_store(repo_root);
+    const record = (path, untracked) => {
+      const snap = snapshot(repo_root, path, untracked);
+      if (snap.content !== null) put_blob(store, snap.hash, snap.content);
+      snapshots[path] = stored(snap);
+    };
     for (let i = 0; i < fields.length - 1; i++) {
       const field = fields[i];
       if (field.length < 4) continue;
@@ -211,11 +243,11 @@ export function capturebaseline(cwd = ".") {
       const status = field.slice(0, 2);
       const path = field.slice(3);
       dirty.add(path);
-      snapshots[path] = snapshot(repo_root, path, status === "??");
+      record(path, status === "??");
       if (/[rc]/i.test(status) && fields[i + 1]) {
         const old_path = fields[++i];
         dirty.add(old_path);
-        snapshots[old_path] = snapshot(repo_root, old_path, false);
+        record(old_path, false);
       }
     }
     return { sha, dirty, snapshots, repo_root, error: null };
@@ -246,6 +278,7 @@ export function resolvescope(options) {
   }
   const excluded = options.baseline_dirty || new Set();
   const snapshots = options.baseline_snapshots || {};
+  let store = null;
   for (const path of excluded) {
     const observed = records.get(path);
     records.delete(path);
@@ -254,7 +287,7 @@ export function resolvescope(options) {
     if (!before || !matches_folder(path, options.folder)) continue;
     const after = snapshot(repo_root, path, before.untracked);
     if (before.exists === after.exists && before.hash === after.hash) continue;
-    if ((before.exists && before.content === null && !before.binary) || (after.exists && after.content === null && !after.binary))
+    if (before.large || (after.exists && after.content === null && !after.binary))
       throw new Error(`baseline-dirty text file is too large to adjudicate: ${path}`);
     records.set(path, {
       path,
@@ -264,8 +297,9 @@ export function resolvescope(options) {
       new_mode: observed?.new_mode ?? null, binary: after.binary, submodule: observed?.submodule ?? false,
     });
     if (!after.exists || after.content === null) continue;
-    const additions = before.exists && before.content !== null
-      ? diffByLineSet(path, before.content, after.content) : contentToAdded(path, after.content);
+    const before_content = before.exists && !before.binary ? get_blob(store ??= blob_store(repo_root), before.hash) : null;
+    const additions = before_content !== null
+      ? diffByLineSet(path, before_content, after.content) : contentToAdded(path, after.content);
     for (const [key, lines] of additions) added.set(key, lines);
   }
   const files = [...records.values()].sort((left, right) => left.path.localeCompare(right.path));

@@ -271,7 +271,7 @@ source: [session-stop early returns and change gate](../gate-checker/index.ts)
 
 ### request journal
 
-the extension writes `omp.gate-checker.journal` custom session entries for request start, repository binding, verification, continuation, and terminal outcome. it reconstructs active request state after session start, branch, and tree navigation from the latest `request_start` onward, so a request left open by a crash does not affect later requests. a malformed, stale, or policy-incompatible latest request closes as `recovery_required` instead of guessing the request state.
+the extension writes `omp.gate-checker.journal` custom session entries for request start, repository binding, verification, continuation, and terminal outcome. it reconstructs active request state after session start, branch, and tree navigation from the latest `request_start` onward, so a request left open by a crash does not affect later requests. a malformed, stale, or policy-incompatible latest request closes as `recovery_required` instead of guessing the request state. baseline-dirty files enter the journal as hashes only; their text is stored once per content hash under `<git common dir>/omp-gates/blobs`, and a restored request diffs against that store. blobs are not pruned.
 
 terminal outcomes are `passed`, `passed_with_warnings`, or `released_with_failures`. an unresolved release carries `stalemate` or `continuation_cap`; disabled and non-work-bearing requests carry an explicit skip reason. a release with unresolved findings is never reported as a pass. request start and terminal bookkeeping still close the request when the engagement level is off, although delivery checks and gate telemetry are disabled.
 
