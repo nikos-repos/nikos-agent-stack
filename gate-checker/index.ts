@@ -542,9 +542,10 @@ export default function gateChecker(pi: ExtensionAPI): void {
     input: toolInputSchema,
     sessionId: pi.zod.string().optional(),
   });
+  // results mix text with image and other blocks; one non-text block must not reject the whole event.
   const contentSchema = pi.zod.union([
     pi.zod.string(),
-    pi.zod.array(pi.zod.object({ type: pi.zod.literal("text"), text: pi.zod.string() })),
+    pi.zod.array(pi.zod.object({ type: pi.zod.string(), text: pi.zod.string().optional() })),
   ]);
   const booleanSchema = pi.zod.union([pi.zod.literal(true), pi.zod.literal(false)]);
   const manifestDataSchema = pi.zod.object({

@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+// the same zod omp hands extensions as pi.zod: it strips unknown keys and rejects shapes the schemas do not allow.
+import * as zod from "@oh-my-pi/omptype/zod";
 
 // end-to-end probes: each test drives the extension's registered handlers the way omp does and checks the
 // observable decision, journal, ledger, or lease state.
@@ -73,32 +75,6 @@ const config = (level, verifyCmd = null) => {
   writeFileSync(process.env.OMP_GATE_CONFIG, `${JSON.stringify(value)}\n`);
 };
 
-const schema = {
-  describe() { return this; },
-  min() { return this; },
-  optional() { return this; },
-  safeParse(value) { return { success: true, data: value }; },
-};
-// strips unknown keys at every depth, like omp's zod.
-const zod = {
-  object: (shape) => ({
-    ...schema,
-    safeParse(value) {
-      if (!value || typeof value !== "object") return { success: true, data: value };
-      const data = {};
-      for (const [key, field] of Object.entries(shape)) if (key in value) data[key] = field.safeParse(value[key]).data;
-      return { success: true, data };
-    },
-  }),
-  string: () => schema,
-  array: (item) => ({
-    ...schema,
-    safeParse(value) { return { success: true, data: Array.isArray(value) ? value.map((entry) => item.safeParse(entry).data) : value }; },
-  }),
-  union: () => schema,
-  number: () => schema,
-  literal: () => schema,
-};
 
 const harness = (cwd, level, verifyCmd = null, leaseEnabled = false) => {
   process.env.OMP_GATE_MUTATION_LEASE = leaseEnabled ? "on" : "off";
@@ -140,7 +116,7 @@ const harness = (cwd, level, verifyCmd = null, leaseEnabled = false) => {
     getAllTools: () => leaseEnabled ? [{
       name: "write",
       description: "native write",
-      parameters: schema,
+      parameters: zod.object({ path: zod.string(), content: zod.string() }),
       sourceInfo: { source: "builtin" },
     }] : [],
     events: { on: (name, handler) => { events[name] = handler; } },
@@ -288,7 +264,10 @@ test("task calls keep native arguments and subagent manifests must match the dif
     toolName: "task",
     toolCallId: "task-1",
     input: taskInput,
-    content: [{ type: "text", text: "changed `src/missing.ts`\n<changed-files>\nsrc/missing.ts\n</changed-files>" }],
+    content: [
+      { type: "text", text: "changed `src/missing.ts`\n<changed-files>\nsrc/missing.ts\n</changed-files>" },
+      { type: "image", data: "aGk=", mimeType: "image/png" },
+    ],
     isError: false,
   }, probe.context);
   const result = await finish(probe, "the subagent reported its change");
