@@ -42,7 +42,7 @@ sources: [package manifest](../package.json), [extension entry point](../gate-ch
 the stack installs through the native omp plugin manager. the plugin name is
 `nikos-agent-stack`. all actions use `omp plugin <action> [target]`.
 
-bun `>=1.2.22` is required. the extensions run as typescript through bun, and the command-line interface uses the bun shebang.
+bun `>=1.3.14` is required, matching `engines.bun` in the package manifest. the extensions run as typescript through bun, and the command-line interface uses the bun shebang.
 
 ### install
 
