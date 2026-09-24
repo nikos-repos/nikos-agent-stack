@@ -288,13 +288,16 @@ try {
   }
 
   {
-    const probe = harness(repository(), "medium", "true");
+    const cwd = repository();
+    mkdirSync(join(cwd, "nested"));
+    git(join(cwd, "nested"), "init", "-q");
+    const probe = harness(cwd, "medium", "true");
     await start(probe);
     await writeChange(probe, "two\n");
     await recordClean(probe);
     const result = await finish(probe, "updated the file");
     assert(result === undefined, "medium must release verified uncommitted work");
-    assert(probe.entries.some((entry) => entry.data.kind === "request_start"), "journal must record request_start");
+    assert(probe.entries.find((entry) => entry.data.kind === "request_start")?.data.baseline_sha, "an untracked nested repository must not switch the request to no-git mode");
     assert(probe.entries.some((entry) => entry.data.kind === "verify"), "journal must record verification");
     assert(probe.entries.some((entry) => entry.data.kind === "terminal"), "journal must record terminal outcome");
   }

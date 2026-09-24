@@ -23,7 +23,7 @@ import {
 } from "./predicates.js";
 import * as ledger from "./ledger.js";
 import { CONFIG_PATH, LEVELS, RULE_FAMILY, describeLevel, loadConfig, policyFor, saveConfig } from "./config.js";
-import { capturebaseline, resolvescope } from "./scope.js";
+import { capturebaseline, reporoot, resolvescope } from "./scope.js";
 import { mergeprovenance, provenancefromdetails, provenancefromevent, provenancefromlifecycle } from "./provenance.js";
 import { journal_type, journal_version, journalfrombranch } from "./journal.js";
 import { auditscope } from "./risks.js";
@@ -167,6 +167,7 @@ type TurnEvidence = {
   baselineSha: string | null;
   baselineDirty: Set<string>;
   baselineSnapshots: object;
+  baselineError: string | null;
   repoRoot: string | null;
   preTouch: Map<string, string | null>;
   warnedRepoRoots: Set<string>;
@@ -307,6 +308,7 @@ function freshEvidence(): TurnEvidence {
     baselineSha: null,
     baselineDirty: new Set(),
     baselineSnapshots: {},
+    baselineError: null,
     repoRoot: null,
     preTouch: new Map(),
     warnedRepoRoots: new Set(),
@@ -1165,6 +1167,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       evidence.baselineSha = baseline.sha;
       evidence.baselineDirty = baseline.dirty;
       evidence.baselineSnapshots = baseline.snapshots;
+      evidence.baselineError = baseline.error;
       evidence.repoRoot = baseline.repo_root;
       appendJournal("repository_bound", {
         repo_root: baseline.repo_root,
@@ -1181,7 +1184,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   const reportRepositoryLimit = (input: ToolInput, context: ExtensionContext): void => {
     if (!evidence.repoRoot || (!input.cwd && !input.path && !input.paths)) return;
     for (const candidate of repositoryCandidates(input, context.cwd)) {
-      const root = capturebaseline(candidate).repo_root;
+      const root = reporoot(candidate);
       if (!root || root === evidence.repoRoot || evidence.warnedRepoRoots.has(root)) continue;
       evidence.warnedRepoRoots.add(root);
       try {
@@ -1195,8 +1198,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
   };
   const restoreJournal = (context: ExtensionContext): void => {
     releaseAllOperations("journal_restore");
-    const currentRoot = evidence.repoRoot ?? capturebaseline(context.cwd).repo_root;
-    releaseStaleSessionLease(currentRoot, context.sessionManager?.getSessionFile?.(), "journal_restore_stale");
+    const cwdRoot = reporoot(context.cwd);
+    releaseStaleSessionLease(evidence.repoRoot ?? cwdRoot, context.sessionManager?.getSessionFile?.(), "journal_restore_stale");
     const state = journalfrombranch(context.sessionManager?.getBranch?.() ?? []);
     if (state.status !== "active") {
       requestId = null;
@@ -1210,10 +1213,9 @@ export default function gateChecker(pi: ExtensionAPI): void {
         } catch {}
       return;
     }
-    const current = capturebaseline(context.cwd);
     if (
       state.policy_fingerprint !== policyFingerprint() ||
-      (current.repo_root && current.repo_root !== state.repo_root) ||
+      (cwdRoot && cwdRoot !== state.repo_root) ||
       state.baseline_sha === null
     ) {
       requestId = null;
@@ -1523,6 +1525,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     if (hasGit) {
       try {
+        if (evidence.baselineError) throw new Error(evidence.baselineError);
         const scope = resolvescope({
           kind: "request",
           cwd: gitCwd,
@@ -1948,7 +1951,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     restoreJournal(context);
     const status = requestId
       ? `${armingStatus()} · resumed`
-      : policy.enabled && capturebaseline(context.cwd).sha === null
+      : policy.enabled && reporoot(context.cwd) === null
         ? `${armingStatus()} · low: no git`
         : armingStatus();
     try {
@@ -1980,6 +1983,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     evidence.baselineDirty = baseline.dirty;
     evidence.repoRoot = baseline.repo_root;
     evidence.baselineSnapshots = baseline.snapshots;
+    evidence.baselineError = baseline.error;
     requestId = randomUUID();
     appendJournal("request_start", {
       repo_root: baseline.repo_root ?? context.cwd,

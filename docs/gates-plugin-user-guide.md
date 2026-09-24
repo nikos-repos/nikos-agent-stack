@@ -456,6 +456,8 @@ at session stop, it combines:
 
 baseline dirt that never changes stays out of the request. a baseline-dirty path returns to the request as soon as its content or existence changes after the request started. tracked deletions and new untracked files are inside the request scope.
 
+an untracked nested repository counts as one opaque path, as git itself treats it. a baseline with more than 2,000 dirty paths is not captured: the request stays in git mode and reports `scope_unavailable` at session stop. gitignore generated or scratch trees to keep the baseline small.
+
 source: [baseline and diff derivation](../gate-checker/index.ts), [request scope](../gate-checker/scope.js)
 
 ### low: no git

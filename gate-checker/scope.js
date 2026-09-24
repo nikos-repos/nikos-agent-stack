@@ -5,6 +5,8 @@ import { resolve as resolvePath } from "node:path";
 import { contentToAdded, diffByLineSet, parseDiffAdditions, isRecord, isText } from "./predicates.js";
 
 const max_buffer = 64 * 1024 * 1024;
+// ponytail: count ceiling on snapshotted baseline dirt; add a byte budget if a few huge dirty files ever matter.
+const max_baseline_paths = 2_000;
 const scope_kinds = new Set(["request", "uncommitted", "base", "commit"]);
 
 function git(cwd, args, input) {
@@ -145,6 +147,8 @@ function snapshot(repo_root, path, untracked = false) {
   const absolute = resolvePath(repo_root, path);
   try {
     const stat = lstatSync(absolute);
+    // git lists an untracked nested repository as a directory; keep it opaque, as git does.
+    if (stat.isDirectory()) return { exists: true, hash: "directory", content: null, binary: true, untracked };
     if (stat.isSymbolicLink()) {
       const target = readlinkSync(absolute);
       return { exists: true, hash: createHash("sha256").update(target).digest("hex"), content: null, binary: true, untracked };
@@ -184,16 +188,27 @@ function matches_folder(path, folder) {
   return path === normalized || path.startsWith(`${normalized}/`);
 }
 
+export function reporoot(cwd = ".") {
+  try { return git(cwd, ["rev-parse", "--show-toplevel"]).trim() || null; }
+  catch { return null; }
+}
+
+// only a missing repository or commit means no git; any later failure keeps git mode and reports `error`.
 export function capturebaseline(cwd = ".") {
+  const none = { sha: null, dirty: new Set(), snapshots: {}, repo_root: null, error: null };
+  const repo_root = reporoot(cwd);
+  if (!repo_root) return none;
+  let sha;
+  try { sha = resolve_ref(repo_root, "HEAD"); } catch { return none; }
   try {
-    const repo_root = git(cwd, ["rev-parse", "--show-toplevel"]).trim();
-    const sha = resolve_ref(repo_root, "HEAD");
     const fields = git(repo_root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]).split("\0");
     const dirty = new Set();
     const snapshots = {};
     for (let i = 0; i < fields.length - 1; i++) {
       const field = fields[i];
       if (field.length < 4) continue;
+      if (dirty.size >= max_baseline_paths)
+        throw new Error(`more than ${max_baseline_paths} dirty paths; gitignore generated or scratch trees`);
       const status = field.slice(0, 2);
       const path = field.slice(3);
       dirty.add(path);
@@ -204,9 +219,10 @@ export function capturebaseline(cwd = ".") {
         snapshots[old_path] = snapshot(repo_root, old_path, false);
       }
     }
-    return { sha, dirty, snapshots, repo_root };
-  } catch {
-    return { sha: null, dirty: new Set(), snapshots: {}, repo_root: null };
+    return { sha, dirty, snapshots, repo_root, error: null };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { sha, dirty: new Set(), snapshots: {}, repo_root, error: `request baseline unavailable: ${detail}` };
   }
 }
 
