@@ -8,11 +8,6 @@ docs/factory-workflow-anti-mutation-controls-plan-hardened.md
 # maintainer-only docs: local review artifacts, never pushed
 docs/maintainers/
 
-# omp-orca bridge: local planning artifacts, never pushed
-omp-orca bridge/
-*omp-orca-bridge*
-*omp-orca bridge*
-
 # stray dir from a botched shell expansion; holds a live sqlite db
 $D/
 
