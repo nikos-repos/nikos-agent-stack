@@ -259,7 +259,7 @@ for a local checkout, run this from the repository root:
 omp plugin link .
 ```
 
-the package requires bun `>=1.2.22`. restart omp after install or link because omp discovers extension entries at startup.
+the package requires bun `>=1.3.14`. restart omp after install or link because omp discovers extension entries at startup.
 
 for package lifecycle operations, use:
 

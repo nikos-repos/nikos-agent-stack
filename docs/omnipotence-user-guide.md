@@ -9,7 +9,7 @@ source: [package.json](../package.json), [api.ts](../omnipotence/api.ts), [engin
 you need:
 
 - omp with plugin support and a session id.
-- bun `>=1.2.22`.
+- bun `>=1.3.14`.
 - no babysitter package or runtime dependency.
 
 the package provides the standalone `omnipotence` command, the `nikos-agent-stack/omnipotence` authoring api, and the omp extension. git is not a runtime or installation requirement.

@@ -6,7 +6,7 @@ source: [package](../package.json), [command registration](../gate-checker/index
 
 ## prerequisites
 
-for the omp flow, use an omp installation with plugin support and the `omp plugin` command. use bun 1.2.22 or later for this package.
+for the omp flow, use an omp installation with plugin support and the `omp plugin` command. use bun 1.3.14 or later for this package.
 
 the `nikos-gates` command is optional. the package exposes it as a shell bin, and `gate-checker/gate-cli.js` starts with `#!/usr/bin/env bun`. to use this command, make `bun` and the global bun bin directory available on `PATH`:
 
