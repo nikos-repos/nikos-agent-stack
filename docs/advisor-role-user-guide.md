@@ -77,11 +77,19 @@ the packaged profile passes the same validation and contains exactly one advisor
 
 the merge keeps every existing top-level key. it rebuilds `advisors` by keeping entries whose normalized name is not `terra`, then appending the packaged terra entry. name normalization lowercases a name, replaces each run of non-letter and non-digit characters with `-`, and trims `-` characters. a rerun therefore replaces every normalized terra entry, including a customized terra object or extra terra fields, with the shipped profile. other advisor entries remain in the list.
 
-the installer creates the target directory when needed. it writes the new yaml to a file in a sibling temporary directory named `.watchdog-*`, renames that file over the selected target, and removes the temporary directory. this is the installer’s atomic replacement path.
+the installer creates the target directory when needed. if the serialized result is identical to the existing UTF-8 text, it leaves the file alone. otherwise, before replacing an existing file, it saves the original UTF-8 text, including comments, under the same basename in a unique sibling `.watchdog-backup-*` directory. the backup directory is private and its file has mode `0600`. a failed backup prevents replacement; a completed backup remains available if replacement later fails.
+
+it writes the new yaml to a file in a sibling temporary directory named `.watchdog-*`, renames that file over the selected target, and removes the temporary directory. this is the installer’s atomic replacement path. serialization preserves parsed peer settings, but may change formatting and remove comments from the active file; retain the backup for recovery.
 
 yaml parse errors, validation errors, packaged-profile errors, directory errors, write errors, and rename errors stop installation. on failure, the commands do not print a success result; temporary-directory cleanup runs after a temporary directory exists. `/advisor-install` reports the error in the omp ui. `nikos-advisor install` writes the error to stderr and returns exit code `2`.
 
 source: [installer](../advisor/install.js), [command registration](../advisor/index.ts), [shell installer](../advisor/cli.js)
+
+### restore a compatible retained profile
+
+keep the selected backup and the compatible retained package before changing profiles. to select an earlier packaged terra profile, invoke `nikos-advisor install` from that retained package's `advisor/cli.js` with `PI_CODING_AGENT_DIR` set to the intended agent directory. inspect the resulting terra entry and preserved peer settings. running the new package's installer again reselects the new profile; it is not rollback.
+
+when the original comments or formatting are needed, restore the retained pre-merge file after checking that doing so will not overwrite later user edits. a subsequent installer merge can serialize it again. use a new omp session to inspect the restored selection; do not restart an active session merely to activate it. profile selection does not change historical run, approval, or effect records.
 
 ## shipped terra profile
 

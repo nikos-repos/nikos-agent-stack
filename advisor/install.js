@@ -86,7 +86,15 @@ function replacewatchdog(file, contents) {
     rmSync(temporary, { recursive: true, force: true });
   }
 }
-
+function backupwatchdog(file, contents) {
+  const temporary = mkdtempSync(join(dirname(file), ".watchdog-backup-"));
+  try {
+    writeFileSync(join(temporary, basename(file)), contents, { encoding: "utf8", mode: 0o600 });
+  } catch (error) {
+    rmSync(temporary, { recursive: true, force: true });
+    throw error;
+  }
+}
 function normalizedname(name) {
   return name
     .toLowerCase()
@@ -97,21 +105,20 @@ function normalizedname(name) {
 export function installadvisor() {
   const directory = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
   const file = watchdogpath(directory);
-  const document = existsSync(file)
-    ? validatewatchdog(Bun.YAML.parse(readFileSync(file, "utf8")), "existing")
-    : {};
+  const current = existsSync(file) ? readFileSync(file, "utf8") : null;
+  const document = current === null ? {} : validatewatchdog(Bun.YAML.parse(current), "existing");
   const terra = packagedterra();
+  const contents = Bun.YAML.stringify({
+    ...document,
+    advisors: [
+      ...(document.advisors ?? []).filter((advisor) => normalizedname(advisor.name) !== "terra"),
+      terra,
+    ],
+  });
 
   mkdirSync(directory, { recursive: true });
-  replacewatchdog(
-    file,
-    Bun.YAML.stringify({
-      ...document,
-      advisors: [
-        ...(document.advisors ?? []).filter((advisor) => normalizedname(advisor.name) !== "terra"),
-        terra,
-      ],
-    }),
-  );
+  if (current === contents) return file;
+  if (current !== null) backupwatchdog(file, current);
+  replacewatchdog(file, contents);
   return file;
 }
