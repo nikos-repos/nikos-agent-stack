@@ -13,10 +13,11 @@ export function reducejournal(events) {
     continuation: 0, failure_hash: null, verify_ids: [], outcome: null, release_reason: null,
   };
   if (!Array.isArray(events)) return recovery("malformed journal event");
-  for (const event of events) {
+  // only the latest request matters: a request left open by a crash must not poison every later restore.
+  const latest = events.findLastIndex((event) => isRecord(event) && event.kind === "request_start");
+  for (const event of events.slice(Math.max(0, latest))) {
     if (!valid(event)) return recovery("malformed journal event");
     if (event.kind === "request_start") {
-      if (state.status === "active") return recovery("overlapping journal requests");
       if (!isText(event.repo_root) || !Array.isArray(event.baseline_dirty) || !isText(event.policy_fingerprint))
         return recovery("invalid request baseline");
       state = {

@@ -229,6 +229,15 @@ try {
   }
 
   {
+    const probe = harness(repository(), "medium");
+    const entry = (data) => ({ type: "custom", customType: "omp.gate-checker.journal", data: { version: 1, repo_root: probe.cwd, baseline_sha: null, baseline_dirty: [], policy_fingerprint: "old", ...data } });
+    probe.session.branch = [entry({ kind: "request_start", request_id: "crashed" }), entry({ kind: "request_start", request_id: "later" }), entry({ kind: "terminal", request_id: "later", outcome: "passed" })];
+    await start(probe);
+    await probe.handlers.tool_call({ toolName: "read", toolCallId: "read-restored", input: { path: "src/a.txt" } }, probe.context);
+    assert(await finish(probe, "looked again") === undefined, "a request left open by a crash must not force recovery once a later request closed");
+  }
+
+  {
     const probe = harness(repository(), "medium", "false");
     await start(probe);
     const childFile = join(stateRoot, "missing-mixed-child.jsonl");
