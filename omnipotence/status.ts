@@ -23,7 +23,7 @@ function runphase(effects: readonly effectrecord[] | undefined): string | null {
 	for (const effect of effects ?? []) {
 		if (effect.status !== "requested") continue;
 		const match = /^phase\/([a-z0-9-]+)\//u.exec(effect.key);
-		if (match) return match[1] as string;
+		if (match) return match[1];
 	}
 	return null;
 }

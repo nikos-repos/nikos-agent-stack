@@ -71,7 +71,7 @@ export default function askQuestionnaire(pi: ExtensionAPI): void {
 		},
 	});
 
-	installQuestionnaireStop(async () => {
+	installQuestionnaireStop(() => {
 		if (!pending) return undefined;
 		return { continue: true, additionalContext: pending.reason };
 	});

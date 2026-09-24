@@ -26,7 +26,7 @@ function findplanfile(root: string): string | null {
 		if (existsSync(candidate)) return candidate;
 	}
 	const markdown = directoryentries(root).filter((name) => name.toLowerCase().endsWith(".md"));
-	return markdown.length === 1 ? join(root, markdown[0] as string) : null;
+	return markdown.length === 1 ? join(root, markdown[0]) : null;
 }
 
 function pathkind(target: string): "directory" | "file" | null {

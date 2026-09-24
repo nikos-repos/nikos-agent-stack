@@ -79,7 +79,7 @@ describe("built-in orchestration modes", () => {
 		if (budgetrun.status !== "waiting") throw new Error("expected budget effect");
 		expect(budgetrun.run.maxturns).toBe(1);
 		expect(budgetrun.run.turns).toBe(1);
-		const budgeteffect = budgetrun.effects[0]!;
+		const budgeteffect = budgetrun.effects[0];
 		const blocked = await engine.posteffect({
 			rootrunid: budgetrun.run.id,
 			runid: budgeteffect.runid,
@@ -107,7 +107,7 @@ describe("built-in orchestration modes", () => {
 			input: {},
 		});
 		if (uncertainrun.status !== "waiting") throw new Error("expected uncertain effect");
-		const uncertaineffect = uncertainrun.effects[0]!;
+		const uncertaineffect = uncertainrun.effects[0];
 		const uncertain = await engine.posteffect({
 			rootrunid: uncertainrun.run.id,
 			runid: uncertaineffect.runid,

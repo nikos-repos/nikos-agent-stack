@@ -310,7 +310,7 @@ test("task calls keep native arguments and subagent manifests must match the dif
   const routed = await probe.handlers.tool_call({ toolName: "task", toolCallId: "task-1", input: taskInput }, probe.context);
   assert(routed, "task tool call must return a routing result");
   assert(routed.input.task.includes("changed-files"), "task calls must receive the gate contract");
-  assert(routed.input.agent === "reviewer" && routed.input.isolated === true, "the revised task input must keep unmodeled native arguments");
+  assert(routed.input.agent === "reviewer" && routed.input.isolated, "the revised task input must keep unmodeled native arguments");
   await probe.handlers.tool_result({
     toolName: "task",
     toolCallId: "task-1",
@@ -370,8 +370,8 @@ test("the lease protocol recovers dead claimants and stale holders without losin
   assert(heartbeatlease(lease, {
     now: lease.heartbeat_at + 3_000,
     dead_pid_grace_ms: 2_000,
-  }) === true, "heartbeat must reclaim a dead contender claim");
-  assert(releaselease(lease) === true, "mutation lease must release its owner");
+  }), "heartbeat must reclaim a dead contender claim");
+  assert(releaselease(lease), "mutation lease must release its owner");
   assert(inspectlease({ cwd }).status === "free", "released mutation lease must be free");
   const stale = await acquirelease({
     cwd,
@@ -398,7 +398,7 @@ test("the lease protocol recovers dead claimants and stale holders without losin
   assert(releasestalelease(stale, {
     now: stale.heartbeat_at + 2_000,
     stale_heartbeat_ms: 1_000,
-  }) === true, "expired heartbeat must release even while the holder pid remains live");
+  }), "expired heartbeat must release even while the holder pid remains live");
   assert(inspectlease({ cwd }).status === "free", "stale recovery must clear the held lease");
   const successor = await acquirelease({
     cwd,
@@ -413,9 +413,9 @@ test("the lease protocol recovers dead claimants and stale holders without losin
     acquisition_wait_ms: 0,
   });
   assert(successor.acquired === true, "successor must acquire after stale recovery");
-  assert(releaselease(stale) === false, "stale owner must not release its successor");
+  assert(!releaselease(stale), "stale owner must not release its successor");
   assert(inspectlease({ cwd }).record.token === successor.token, "successor fencing token must remain current");
-  assert(releaselease(successor) === true, "successor must release its own lease");
+  assert(releaselease(successor), "successor must release its own lease");
   const scope = identity(cwd);
   const pausedPath = join(scope.common_dir, "omp-gates", "leases", scope.key);
   mkdirSync(pausedPath, { recursive: true });
@@ -459,7 +459,7 @@ test("the lease protocol recovers dead claimants and stale holders without losin
   });
   assert(recovered.acquired === true && recovered.recovered === true, "dead initializer must be reclaimed");
   assert(recovered.token !== "paused-initializer", "recovered initializer must publish a new generation token");
-  assert(releaselease(recovered) === true, "recovered initializer successor must release");
+  assert(releaselease(recovered), "recovered initializer successor must release");
 });
 
 test("one turn's mutation calls share the lease from the first tool call to the last tool result", async () => {

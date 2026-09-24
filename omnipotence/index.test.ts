@@ -551,8 +551,8 @@ describe("omnipotence omp extension", () => {
 		if (!run) throw new Error("expected failed-schedule run");
 		expect(run.status).toBe("blocked");
 		const [effect] = store.listeffects(run.id);
-		expect(effect?.status).toBe("requested");
-		expect(effect?.dispatchedat).toBeNull();
+		expect(effect.status).toBe("requested");
+		expect(effect.dispatchedat).toBeNull();
 		expect(run.blockedreason).toBe("hidden-turn scheduling failed: client rejected hidden turn");
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
@@ -690,8 +690,8 @@ describe("omnipotence omp extension", () => {
 		await completed.promise;
 		const store = new orchestrationstore(paths.dbpath);
 		const [run] = store.listruns();
-		expect(run?.status).toBe("completed");
-		expect(run?.output).toEqual({ done: true });
+		expect(run.status).toBe("completed");
+		expect(run.output).toEqual({ done: true });
 		expect(store.getsessionrun("session-sleep")).toBeNull();
 		await fire(fake.handlers, "session_shutdown", { type: "session_shutdown" }, ctx);
 		store.close();
@@ -717,8 +717,8 @@ describe("omnipotence omp extension", () => {
 		expect(run.mode).toBe("forever");
 		const [effect] = store.listeffects(run.id);
 		expect(run.status).toBe("waiting_for_user");
-		expect(effect?.kind).toBe("breakpoint");
-		expect(effect?.dispatchedat).toBeNull();
+		expect(effect.kind).toBe("breakpoint");
+		expect(effect.dispatchedat).toBeNull();
 		expect(
 			await omnipotenceStop({ stop_hook_active: false }, ctx),
 		).toBeUndefined();

@@ -75,7 +75,7 @@ async function startsnapshotrun(engine: orchestrationengine, processid: string) 
 type startedsnapshot = Extract<advanceresult, { status: "waiting" }>;
 
 function effectref(started: startedsnapshot) {
-	const effect = started.effects[0]!;
+	const effect = started.effects[0];
 	return { runid: effect.runid, effectid: effect.id, fence: effect.fence, inputhash: effect.inputhash };
 }
 
@@ -113,7 +113,7 @@ describe("deterministic process engine", () => {
 		).toBe("beta-pack");
 		store.close();
 	});
-	test("start rejects sparse input before storing a run", async () => {
+	test("start rejects sparse input before storing a run", () => {
 		const { store, engine } = openengine();
 		let processcalls = 0;
 		engine.register(
@@ -188,7 +188,7 @@ describe("deterministic process engine", () => {
 		expect(replay.status).toBe("waiting");
 		expect(hookcalls).toBe(1);
 
-		const work = started.effects[0]!;
+		const work = started.effects[0];
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: work.runid,
@@ -487,10 +487,10 @@ describe("deterministic process engine", () => {
 
 		const reviewed = await engine.posteffect({
 			rootrunid: started.run.id,
-			runid: started.effects[0]!.runid,
-			effectid: started.effects[0]!.id,
-			fence: started.effects[0]!.fence,
-			inputhash: started.effects[0]!.inputhash,
+			runid: started.effects[0].runid,
+			effectid: started.effects[0].id,
+			fence: started.effects[0].fence,
+			inputhash: started.effects[0].inputhash,
 			status: "ok",
 			value: { approved: true },
 		});
@@ -501,10 +501,10 @@ describe("deterministic process engine", () => {
 		expect(resolvedhooks).toBe(1);
 		const repeated = await engine.posteffect({
 			rootrunid: started.run.id,
-			runid: started.effects[0]!.runid,
-			effectid: started.effects[0]!.id,
-			fence: started.effects[0]!.fence,
-			inputhash: started.effects[0]!.inputhash,
+			runid: started.effects[0].runid,
+			effectid: started.effects[0].id,
+			fence: started.effects[0].fence,
+			inputhash: started.effects[0].inputhash,
 			status: "ok",
 			value: { approved: true },
 		});
@@ -514,10 +514,10 @@ describe("deterministic process engine", () => {
 
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
-			runid: reviewed.effects[0]!.runid,
-			effectid: reviewed.effects[0]!.id,
-			fence: reviewed.effects[0]!.fence,
-			inputhash: reviewed.effects[0]!.inputhash,
+			runid: reviewed.effects[0].runid,
+			effectid: reviewed.effects[0].id,
+			fence: reviewed.effects[0].fence,
+			inputhash: reviewed.effects[0].inputhash,
 			status: "ok",
 			value: { delivered: true },
 		});
@@ -629,7 +629,7 @@ describe("deterministic process engine", () => {
 		if (started.status !== "waiting") throw new Error("expected waiting result");
 		expect(started.effects.map((effect) => effect.key)).toEqual(["checks/tests", "checks/review"]);
 
-		const first = started.effects[0]!;
+		const first = started.effects[0];
 		const partial = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: first.runid,
@@ -642,7 +642,7 @@ describe("deterministic process engine", () => {
 		if (partial.status !== "waiting") throw new Error("expected partial waiting result");
 		expect(partial.effects.map((effect) => effect.key)).toEqual(["checks/review"]);
 
-		const second = partial.effects[0]!;
+		const second = partial.effects[0];
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: second.runid,
@@ -755,7 +755,7 @@ describe("deterministic process engine", () => {
 		});
 		if (started.status !== "waiting") throw new Error("expected first limited effect");
 		expect(started.effects.map((effect) => effect.key)).toEqual(["limited/first"]);
-		const first = started.effects[0]!;
+		const first = started.effects[0];
 		const next = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: first.runid,
@@ -805,7 +805,7 @@ describe("deterministic process engine", () => {
 		expect(started.effects[0]?.key).toBe("child-work");
 		expect(started.effects[0]?.runid).not.toBe(started.run.id);
 
-		const childrunid = started.effects[0]!.runid;
+		const childrunid = started.effects[0].runid;
 		const external = new Database(path);
 		external.query("delete from effects where run_id = ?").run(childrunid);
 		external.query("delete from events where run_id = ?").run(childrunid);
@@ -816,7 +816,7 @@ describe("deterministic process engine", () => {
 		if (replayed.status !== "waiting") throw new Error("expected recreated child effect");
 		expect(replayed.effects[0]?.runid).toBe(childrunid);
 
-		const leaf = replayed.effects[0]!;
+		const leaf = replayed.effects[0];
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: leaf.runid,
@@ -870,7 +870,7 @@ describe("deterministic process engine", () => {
 		});
 		expect(top.status).toBe("waiting");
 		if (top.status !== "waiting") throw new Error("expected top-level child work");
-		const topwork = top.effects[0]!;
+		const topwork = top.effects[0];
 		const topcompleted = await engine.posteffect({
 			rootrunid: top.run.id,
 			runid: topwork.runid,
@@ -893,7 +893,7 @@ describe("deterministic process engine", () => {
 		});
 		expect(started.status).toBe("waiting");
 		if (started.status !== "waiting") throw new Error("expected subprocess child work");
-		const childwork = started.effects[0]!;
+		const childwork = started.effects[0];
 		const expected = {
 			runid: started.run.id,
 			effectkey: "child",
@@ -980,7 +980,7 @@ describe("deterministic process engine", () => {
 		store.close();
 	});
 
-	test("rejects malformed ownership before an engine effect post mutates state", async () => {
+	test("rejects malformed ownership before an engine effect post mutates state", () => {
 		const { store, engine } = openengine();
 		let hookcalls = 0;
 		engine.hooks.register(
@@ -1038,7 +1038,7 @@ describe("deterministic process engine", () => {
 		store.close();
 	});
 
-	test("rejects duplicate ownership before an engine effect post mutates state", async () => {
+	test("rejects duplicate ownership before an engine effect post mutates state", () => {
 		const { store, engine } = openengine();
 		registersnapshotprocess(engine, "delivery.ownership-duplicate");
 		registersnapshotprocess(engine, "delivery.ownership-child");
@@ -1156,7 +1156,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected leaf waiting result");
-		const leaf = started.effects[0]!;
+		const leaf = started.effects[0];
 		const rootchild = store.geteffectbykey(started.run.id, "nested");
 		if (!rootchild) throw new Error("expected root subprocess effect");
 		const child = store.listruns().find((candidate) => candidate.id !== started.run.id && candidate.id !== leaf.runid);
@@ -1208,7 +1208,7 @@ describe("deterministic process engine", () => {
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
 
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		const blocked = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: effect.runid,
@@ -1251,7 +1251,7 @@ describe("deterministic process engine", () => {
 		expect(started.run.turns).toBe(1);
 		expect(started.run.maxturns).toBe(1);
 
-		const first = started.effects[0]!;
+		const first = started.effects[0];
 		const middle = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: first.runid,
@@ -1266,7 +1266,7 @@ describe("deterministic process engine", () => {
 		expect(middle.run.turns).toBe(2);
 		expect(middle.run.maxturns).toBe(1);
 
-		const second = middle.effects[0]!;
+		const second = middle.effects[0];
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: second.runid,
@@ -1389,7 +1389,7 @@ describe("deterministic process engine", () => {
 		expect(child.maxturns).toBe(1);
 		expect(child.turns).toBe(1);
 
-		const first = started.effects[0]!;
+		const first = started.effects[0];
 		const middle = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: first.runid,
@@ -1404,7 +1404,7 @@ describe("deterministic process engine", () => {
 		expect(store.getrun(child.id)?.turns).toBe(2);
 		expect(store.getrun(child.id)?.maxturns).toBe(1);
 
-		const second = middle.effects[0]!;
+		const second = middle.effects[0];
 		const completed = await engine.posteffect({
 			rootrunid: started.run.id,
 			runid: second.runid,
@@ -1452,7 +1452,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (forever.status !== "waiting") throw new Error("expected legacy forever effect");
-		const legacyeffect = forever.effects[0]!;
+		const legacyeffect = forever.effects[0];
 		store.transitionrun(forever.run.id, "blocked", null, "turn budget 1 exhausted");
 		const recovered = await engine.advance(forever.run.id);
 		if (recovered.status !== "waiting") throw new Error("expected legacy budget recovery");
@@ -1497,7 +1497,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (nonbudget.status !== "waiting") throw new Error("expected non-budget effect");
-		const nonbudgeteffect = nonbudget.effects[0]!;
+		const nonbudgeteffect = nonbudget.effects[0];
 		store.transitionrun(nonbudget.run.id, "blocked", null, "operator paused");
 		const stillblocked = await engine.advance(nonbudget.run.id);
 		expect(stillblocked.status).toBe("blocked");
@@ -1585,7 +1585,7 @@ describe("deterministic process engine", () => {
 		if (waiting.status !== "waiting") throw new Error("expected breakpoint");
 		expect(waiting.run.status).toBe("waiting_for_user");
 		expect(waiting.effects.map((effect) => effect.key)).toEqual(["approval"]);
-		const approval = waiting.effects[0]!;
+		const approval = waiting.effects[0];
 		const completed = await engine.posteffect({
 			rootrunid: waiting.run.id,
 			runid: approval.runid,
@@ -1635,7 +1635,7 @@ describe("deterministic process engine", () => {
 		if (first.status !== "waiting" || second.status !== "waiting") {
 			throw new Error("expected two waiting runs");
 		}
-		const effect = second.effects[0]!;
+		const effect = second.effects[0];
 		expect(
 			engine.commiteffect({
 				rootrunid: first.run.id,
@@ -1670,7 +1670,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected leased effect");
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		await engine.commiteffect({
 			rootrunid: started.run.id,
 			runid: effect.runid,
@@ -1731,7 +1731,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		store.posteffect({
 			runid: effect.runid,
 			effectid: effect.id,
@@ -1884,7 +1884,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		store.posteffect({
 			runid: effect.runid,
 			effectid: effect.id,
@@ -1982,7 +1982,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected child effect");
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		const child = store.getrun(effect.runid);
 		if (!child) throw new Error("expected child run");
 		const uncertain = store.posteffect({
@@ -2257,7 +2257,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		const blocked = await engine.commiteffect({
 			rootrunid: started.run.id,
 			runid: effect.runid,
@@ -2270,7 +2270,7 @@ describe("deterministic process engine", () => {
 		expect(blocked.status).toBe("blocked");
 		const before = store.listhookdeliveries(effect.runid, effect.id);
 		expect(before).toHaveLength(1);
-		const delivery = before[0]!;
+		const delivery = before[0];
 		const inputbytes = stablejson(delivery.input);
 		const effectbefore = store.geteffect(effect.runid, effect.id);
 		if (!effectbefore) throw new Error("expected resolved effect");
@@ -2343,7 +2343,7 @@ describe("deterministic process engine", () => {
 			input: {},
 		});
 		if (started.status !== "waiting") throw new Error("expected waiting result");
-		const effect = started.effects[0]!;
+		const effect = started.effects[0];
 		const blocked = await engine.commiteffect({
 			rootrunid: started.run.id,
 			runid: effect.runid,

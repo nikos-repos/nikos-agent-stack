@@ -339,10 +339,10 @@ function inlineAdditions(toolName: string, path: string, input: ToolInput, detai
   return input.content !== undefined ? contentToAdded(path, input.content) : null;
 }
 function getLastAssistantText(ctx: ExtensionContext): string | null {
-  const branch = ctx.sessionManager?.getBranch?.() ?? [];
+  const branch = ctx.sessionManager.getBranch();
   for (let index = branch.length - 1; index >= 0; index--) {
     const entry = branch[index];
-    if (entry.type === "message" && entry.message?.role === "assistant") return extractText(entry.message.content);
+    if (entry.type === "message" && entry.message.role === "assistant") return extractText(entry.message.content);
   }
   return null;
 }
@@ -453,7 +453,7 @@ function runComplexityGate(cwd: string, command: string, changedFiles: Set<strin
       maxBuffer: 32 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const detail = complexityOutput(String(output));
+    const detail = complexityOutput(output);
     return detail
       ? {
           gate: "risk",
@@ -633,7 +633,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         baseline_snapshots: baseline.snapshots,
       });
       try {
-        context.ui?.setStatus?.("gate", armingStatus());
+        context.ui.setStatus("gate", armingStatus());
       } catch {}
       return;
     }
@@ -658,15 +658,15 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const cwdRoot = reporoot(context.cwd);
     mutationLease.releaseStaleSession(
       evidence.repoRoot ?? cwdRoot,
-      context.sessionManager?.getSessionFile?.(),
+      context.sessionManager.getSessionFile(),
       "journal_restore_stale",
     );
-    const state = journalfrombranch(context.sessionManager?.getBranch?.() ?? []);
+    const state = journalfrombranch(context.sessionManager.getBranch());
     if (state.status !== "active") {
       forgetRequest(state.status === "recovery_required" ? (state.reason ?? "gate journal recovery required") : null);
       if (journalRecovery)
         try {
-          context.ui?.setStatus?.("gate", "⚠ gate journal recovery required");
+          context.ui.setStatus("gate", "⚠ gate journal recovery required");
         } catch {}
       return;
     }
@@ -677,7 +677,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     ) {
       forgetRequest("the restored request lacks complete adjudication evidence; start a fresh request");
       try {
-        context.ui?.setStatus?.("gate", "⚠ stale gate journal closed");
+        context.ui.setStatus("gate", "⚠ stale gate journal closed");
       } catch {}
       return;
     }
@@ -717,7 +717,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
   };
   const applyLevel = (level: string, context: ExtensionContext): void => {
     if (!LEVELS.includes(level)) {
-      context.ui?.notify?.(`unknown level "${level}". use low, medium, or high.`, "error");
+      context.ui.notify(`unknown level "${level}". use low, medium, or high.`, "error");
       return;
     }
     config = { ...config, level };
@@ -726,15 +726,15 @@ export default function gateChecker(pi: ExtensionAPI): void {
     lastBlockingKey = null;
     try {
       const saved = saveConfig(level, config.verifyCmd, config.complexityCmd);
-      if (!saved.ok) context.ui?.notify?.(`could not save gate config: ${saved.error}`, "error");
+      if (!saved.ok) context.ui.notify(`could not save gate config: ${saved.error}`, "error");
     } catch (error) {
-      context.ui?.notify?.(`could not save gate config: ${String(error)}`, "error");
+      context.ui.notify(`could not save gate config: ${String(error)}`, "error");
     }
-    context.ui?.notify?.(
+    context.ui.notify(
       `${describeLevel(level, config.verifyCmd, config.complexityCmd)}\nsource: ${CONFIG_PATH}`,
       "info",
     );
-    context.ui?.setStatus?.("gate", armingStatus());
+    context.ui.setStatus("gate", armingStatus());
   };
 
   pi.registerCommand("gates-engage", {
@@ -747,14 +747,14 @@ export default function gateChecker(pi: ExtensionAPI): void {
     handler: async (args, context) => {
       const parts = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
       if (!parts.length) {
-        context.ui?.notify?.(
+        context.ui.notify(
           `${describeLevel(config.level, config.verifyCmd, config.complexityCmd)}\nsource: ${CONFIG_PATH}`,
           "info",
         );
         return;
       }
       if (parts.length > 1) {
-        context.ui?.notify?.(
+        context.ui.notify(
           "trailing text cannot set a verification command; use OMP_VERIFY_CMD or the persisted config",
           "error",
         );
@@ -762,7 +762,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       }
       const level = parts[0];
       if (level === "off" || !LEVELS.includes(level)) {
-        context.ui?.notify?.(
+        context.ui.notify(
           `unknown level "${level}". use low, medium, or high. to turn the gates off entirely use /gates-disable.`,
           "error",
         );
@@ -814,8 +814,8 @@ export default function gateChecker(pi: ExtensionAPI): void {
         repoRoot: taxonomyRoot,
         requestId: requestId ?? undefined,
         cwd: context.cwd,
-        sessionFile: context.sessionManager?.getSessionFile?.(),
-        sessionId: context.sessionManager?.getSessionId?.(),
+        sessionFile: context.sessionManager.getSessionFile(),
+        sessionId: context.sessionManager.getSessionId(),
       });
       if (!result.ok) return { isError: true, content: [{ type: "text", text: `validation error: ${result.error}` }] };
       const appended = appendFrustration(result.record, undefined, { repoRoot: taxonomyRoot });
@@ -975,7 +975,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         const key = treeStateKey(state.gitCwd, evidence.baselineSha, evidence.preTouch);
         if (!verifyCache || verifyCache.key !== key) {
           try {
-            context.ui?.setStatus?.("gate", `running verify: ${config.verifyCmd}`);
+            context.ui.setStatus("gate", `running verify: ${config.verifyCmd}`);
           } catch {}
           const failure = runVerifyGate(state.hasGit ? state.gitCwd : state.cwd, config.verifyCmd);
           verifyCache = failure ? null : { key };
@@ -1004,7 +1004,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
       if (policy.complexity !== "off" && config.complexityCmd) {
         try {
-          context.ui?.setStatus?.("gate", `running complexity: ${config.complexityCmd}`);
+          context.ui.setStatus("gate", `running complexity: ${config.complexityCmd}`);
         } catch {}
         const failure = runComplexityGate(state.gitCwd, config.complexityCmd, state.changedFiles);
         if (failure) failures.push(failure);
@@ -1039,7 +1039,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         cwd: state.cwd,
       });
       try {
-        context.ui?.notify?.(
+        context.ui.notify(
           `gate checker: ${warnings.length} warning(s) — ${warnings.map((failure) => failure.rule).join(", ")}`,
           "info",
         );
@@ -1057,11 +1057,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (blockingKey && continuationCount > 0 && blockingKey === lastBlockingKey) {
       try {
         const rules = [...new Set(blocking.map((failure) => failure.rule))].join(", ");
-        context.ui?.notify?.(
+        context.ui.notify(
           `gate checker: ${blocking.length} failure(s) unchanged after a retry — releasing. rules: ${rules}`,
           "warning",
         );
-        context.ui?.setStatus?.("gate", `⚠ ${blocking.length} failure(s) — released with failures (stalemate)`);
+        context.ui.setStatus("gate", `⚠ ${blocking.length} failure(s) — released with failures (stalemate)`);
       } catch {}
       ledger.append("chain_end", {
         outcome: "released_with_failures",
@@ -1079,7 +1079,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     if (!blocking.length) {
       try {
-        context.ui?.setStatus?.("gate", state.hasGit ? "✓ gates passed" : "✓ gates passed · low: no git");
+        context.ui.setStatus("gate", state.hasGit ? "✓ gates passed" : "✓ gates passed · low: no git");
       } catch {}
       if (continuationCount > 0) {
         ledger.append("chain_end", {
@@ -1109,11 +1109,11 @@ export default function gateChecker(pi: ExtensionAPI): void {
 
     if (continuationCount > MAX_CONTINUATIONS) {
       try {
-        context.ui?.notify?.(
+        context.ui.notify(
           `gate checker: ${blocking.length} unresolved failure(s) after ${continuationCount} continuations — review manually`,
           "warning",
         );
-        context.ui?.setStatus?.("gate", `⚠ ${blocking.length} failures — released with failures (continuation cap)`);
+        context.ui.setStatus("gate", `⚠ ${blocking.length} failures — released with failures (continuation cap)`);
       } catch {}
       ledger.append("chain_end", {
         outcome: "released_with_failures",
@@ -1129,7 +1129,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     }
 
     try {
-      context.ui?.setStatus?.(
+      context.ui.setStatus(
         "gate",
         `⚠ ${blocking.length} gate failure(s) — forcing continuation (${continuationCount}/${MAX_CONTINUATIONS})`,
       );
@@ -1137,7 +1137,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     return { continue: true, additionalContext: formatFailures(blocking) };
   };
 
-  const completionDecision = async (context: ExtensionContext): Promise<Continuation | void> => {
+  const completionDecision = (context: ExtensionContext): Continuation | void => {
     if (!policy.enabled) {
       terminalJournal("skipped_disabled");
       return;
@@ -1185,7 +1185,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         ? `${armingStatus()} · low: no git`
         : armingStatus();
     try {
-      context.ui?.setStatus?.("gate", status);
+      context.ui.setStatus("gate", status);
     } catch {}
   });
   pi.on("session_branch", (event, context) => {
@@ -1222,12 +1222,12 @@ export default function gateChecker(pi: ExtensionAPI): void {
     });
     if (baseline.sha === null) {
       try {
-        context.ui?.setStatus?.("gate", `${armingStatus()} · low: no git`);
+        context.ui.setStatus("gate", `${armingStatus()} · low: no git`);
       } catch {}
       ledger.append("no_git", { reason: "no-git-repo", cwd: context.cwd });
     } else
       try {
-        context.ui?.setStatus?.("gate", armingStatus());
+        context.ui.setStatus("gate", armingStatus());
       } catch {}
   });
   pi.on("tool_call", async (event, context) => {
@@ -1252,7 +1252,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       parsed.toolName === "bash" &&
       commitRoutingEnabled &&
       COMMIT_BOUNDARY_RE.test(command) &&
-      !/--amend/.test(command)
+      !command.includes("--amend")
     )
       return {
         block: true,
@@ -1268,7 +1268,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
       return { input: { ...event.input, task: `${GATE_NUDGE}${parsed.input.task ?? ""}` } };
     }
   });
-  pi.on("tool_result", async (event, context) => {
+  pi.on("tool_result", (event, context) => {
     const parsed = parseEvent(toolResultSchema, event);
     if (!parsed) return;
     mutationLease.onToolResult(parsed, context);
@@ -1319,7 +1319,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     const parsed = parseEvent(eventSchema, event);
     if (!parsed) return;
     return (
-      (await completionDecision(context)) ??
+      completionDecision(context) ??
       (await questionnaireStop(parsed, context)) ??
       (await omnipotenceStop(parsed, context))
     );

@@ -7,17 +7,17 @@ export default function advisor(pi: ExtensionAPI): void {
     description: "install or update the bundled terra advisor",
     handler: async (args, context) => {
       if (args.trim()) {
-        context.ui?.notify?.("/advisor-install accepts no arguments", "error");
+        context.ui.notify("/advisor-install accepts no arguments", "error");
         return;
       }
       try {
         const file = installadvisor();
-        context.ui?.notify?.(
+        context.ui.notify(
           `advisor install: installed terra at ${file}\nstart a new omp session to activate terra`,
           "info",
         );
       } catch (error) {
-        context.ui?.notify?.(`advisor install: ${error instanceof Error ? error.message : String(error)}`, "error");
+        context.ui.notify(`advisor install: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
     },
   });

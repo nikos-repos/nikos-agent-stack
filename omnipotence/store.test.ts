@@ -684,7 +684,7 @@ describe("authoritative orchestration store", () => {
 		const { store, path } = openstore();
 		store.close();
 		const external = new Database(path);
-		external.exec("pragma user_version = 6");
+		external.run("pragma user_version = 6");
 		external.close();
 		expect(() => new orchestrationstore(path)).toThrow("database schema 6 is unsupported; expected 8");
 		const check = new Database(path, { readonly: true });

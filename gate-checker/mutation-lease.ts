@@ -132,7 +132,7 @@ function operationAgentId(sessionFile: string | null | undefined, sessionId?: st
   return stem === "main" || (sessionId && (stem === sessionId || stem.endsWith(`_${sessionId}`))) ? "main" : null;
 }
 function materializedSessionFile(value: string | null | undefined): string | null {
-  if (!value || !value.trim() || !existsSync(value)) return null;
+  if (!value?.trim() || !existsSync(value)) return null;
   try {
     const resolved = resolvePath(realpathSync(value));
     return statSync(resolved).isFile() ? resolved : null;
@@ -191,7 +191,7 @@ export function createMutationLease(
 ): MutationLease {
   const leaseOwnerId = randomUUID();
   let leaseEnabled = !["0", "false", "off"].includes(
-    String(process.env.OMP_GATE_MUTATION_LEASE ?? "")
+    (process.env.OMP_GATE_MUTATION_LEASE ?? "")
       .trim()
       .toLowerCase(),
   );
@@ -205,7 +205,7 @@ export function createMutationLease(
     if ([...activeOperations.values()].some((other) => other.lease === operation.lease)) return false;
     let released = false;
     try {
-      released = Boolean(releaselease(operation.lease));
+      released = releaselease(operation.lease);
     } catch {}
     ledger.append("lease_released", { ...leasefields(operation.lease), reason, released });
     return released;
@@ -217,7 +217,7 @@ export function createMutationLease(
     for (const [id, operation] of activeOperations) if (!operation.backgroundRunning) releaseOperation(id, reason);
   };
   const pollAsyncOperation = (toolCallId: string, operation: ActiveOperation, context: ExtensionContext): void => {
-    if (operation.pollTimer || !context.getAsyncJobSnapshot || !operation.asyncJobId) return;
+    if (operation.pollTimer || !operation.asyncJobId) return;
     const poll = (): void => {
       if (activeOperations.get(toolCallId) !== operation) return;
       let snapshot: ReturnType<ExtensionContext["getAsyncJobSnapshot"]> = null;
@@ -227,14 +227,14 @@ export function createMutationLease(
         return;
       }
       if (!snapshot) return;
-      const running = snapshot.running?.find((job) => job.id === operation.asyncJobId);
-      if (running && (running.status ?? "running").trim().toLowerCase() === "running") return;
-      const recent = snapshot.recent?.find((job) => job.id === operation.asyncJobId);
-      const status = recent?.status?.trim().toLowerCase() ?? "";
+      const running = snapshot.running.find((job) => job.id === operation.asyncJobId);
+      if (running?.status.trim().toLowerCase() === "running") return;
+      const recent = snapshot.recent.find((job) => job.id === operation.asyncJobId);
+      const status = recent?.status.trim().toLowerCase() ?? "";
       releaseOperation(toolCallId, status && status !== "running" ? `async_${status}` : "async_completed");
     };
     operation.pollTimer = setInterval(poll, 50);
-    operation.pollTimer.unref?.();
+    operation.pollTimer.unref();
     poll();
   };
   const releaseStaleSessionLease = (
@@ -248,7 +248,7 @@ export function createMutationLease(
       const record = status.record;
       if (status.status !== "held" || status.stale !== true || !record || record.session_file !== sessionFile) return;
       ledger.append("lease_heartbeat_stale", { ...leasefields(record), reason, ts: Date.now() });
-      const released = Boolean(releasestalelease(record, { cwd: repoRoot }));
+      const released = releasestalelease(record, { cwd: repoRoot });
       ledger.append("lease_released", { ...leasefields(record), reason, released });
       if (released) ledger.append("lease_recovered", { ...leasefields(record), reason, ts: Date.now() });
     } catch {}
@@ -259,8 +259,8 @@ export function createMutationLease(
     scope: LeaseScope,
   ): Promise<string | null> => {
     if (!leaseEnabled || !gate.enabled() || !event.toolCallId || activeOperations.has(event.toolCallId)) return null;
-    const sessionId = event.sessionId ?? context.sessionManager?.getSessionId?.() ?? "";
-    const sessionFile = context.sessionManager?.getSessionFile?.() ?? null;
+    const sessionId = event.sessionId ?? context.sessionManager.getSessionId();
+    const sessionFile = context.sessionManager.getSessionFile() ?? null;
     if (!sessionId || !sessionFile) return "mutation lease requires the active session id and session file";
     const metadata = {
       cwd: scope.cwd,
@@ -312,13 +312,13 @@ export function createMutationLease(
         if (heartbeatlease(result)) return;
         let stale = false;
         try {
-          stale = inspectlease({ cwd: result.repo_root ?? scope.cwd }).stale === true;
+          stale = inspectlease({ cwd: result.repo_root ?? scope.cwd }).stale;
         } catch {}
         if (stale) ledger.append("lease_heartbeat_stale", { ...leasefields(result), ts: Date.now() });
         releaseOperation(event.toolCallId, stale ? "heartbeat_stale" : "heartbeat_lost");
       } catch {}
     }, heartbeatintervalms);
-    timer.unref?.();
+    timer.unref();
     activeOperations.set(event.toolCallId, {
       lease: result,
       timer,
@@ -349,7 +349,7 @@ export function createMutationLease(
     let formatted = "";
     try {
       formatted = formatleasestatus(status, {
-        relation: resolveLeaseRelation(context.sessionManager?.getSessionFile?.(), record?.session_file),
+        relation: resolveLeaseRelation(context.sessionManager.getSessionFile(), record?.session_file),
         cwd,
       });
     } catch {}
@@ -365,20 +365,20 @@ export function createMutationLease(
     handler: async (args: string, context: ExtensionContext): Promise<void> => {
       const command = args.trim().toLowerCase() || "status";
       if (command === "status") {
-        context.ui?.notify?.(leaseStatusReport(context), "info");
+        context.ui.notify(leaseStatusReport(context), "info");
         return;
       }
       if (command === "on") {
         leaseEnabled = true;
-        context.ui?.notify?.(leaseStatusReport(context), "info");
+        context.ui.notify(leaseStatusReport(context), "info");
         return;
       }
       if (command !== "off") {
-        context.ui?.notify?.("usage: /gates-lease status|on|off", "error");
+        context.ui.notify("usage: /gates-lease status|on|off", "error");
         return;
       }
       if (activeOperations.size) {
-        context.ui?.notify?.("cannot disable mutation lease while an operation is active", "error");
+        context.ui.notify("cannot disable mutation lease while an operation is active", "error");
         return;
       }
       const cwd = gate.repoRoot() ?? context.cwd;
@@ -386,17 +386,17 @@ export function createMutationLease(
         const status: LeaseStatus = inspectlease({ cwd });
         const record = status.record;
         if (status.status === "held" && record?.owner_id === leaseOwnerId) {
-          const released = Boolean(releaselease(record, { cwd }));
+          const released = releaselease(record, { cwd });
           if (!released) {
-            context.ui?.notify?.("cannot disable mutation lease: current lease could not be released", "error");
+            context.ui.notify("cannot disable mutation lease: current lease could not be released", "error");
             return;
           }
           ledger.append("lease_manual_release", { ...leasefields(record), mode: "off", ts: Date.now() });
         }
         leaseEnabled = false;
-        context.ui?.notify?.(leaseStatusReport(context), "info");
+        context.ui.notify(leaseStatusReport(context), "info");
       } catch (error) {
-        context.ui?.notify?.(
+        context.ui.notify(
           `cannot disable mutation lease: ${error instanceof Error ? error.message : String(error)}`,
           "error",
         );

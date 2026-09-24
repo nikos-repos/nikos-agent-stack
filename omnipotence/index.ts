@@ -198,7 +198,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		return run;
 	};
 
-	async function schedulesleep(rootrunid: string, effect: effectrecord): Promise<boolean> {
+	function schedulesleep(rootrunid: string, effect: effectrecord): boolean {
 		const existing = sleeptimers.get(effect.id);
 		if (closed || existing?.fence === effect.fence) return false;
 		if (existing) clearTimeout(existing.timer);
@@ -233,7 +233,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				}
 				await finish();
 			}, delay);
-			timer.unref?.();
+			timer.unref();
 			sleeptimers.set(effect.id, { timer, fence: effect.fence });
 		};
 		const finish = async (): Promise<void> => {
@@ -248,7 +248,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 					value: null,
 				});
 				if (closed) return;
-				await schedule(result);
+				schedule(result);
 				if (closed) return;
 			} catch (error) {
 				if (closed) return;
@@ -274,7 +274,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		return true;
 	}
 
-	async function schedule(result: advanceresult): Promise<boolean> {
+	function schedule(result: advanceresult): boolean {
 		if (closed) return false;
 		if (result.status !== "waiting") {
 			appendstate(result);
@@ -283,9 +283,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		let scheduled = false;
 		const requested = result.effects.filter((effect) => effect.status === "requested");
 		for (const effect of requested.filter((entry) => entry.kind === "sleep")) {
-			if (closed) return scheduled;
-			const sleepscheduled = await schedulesleep(result.run.id, effect);
-			if (closed) return scheduled;
+			const sleepscheduled = schedulesleep(result.run.id, effect);
 			scheduled = sleepscheduled || scheduled;
 		}
 		const external = requested.filter((effect) => !iscontrol(effect) && isundispatched(effect));
@@ -304,7 +302,6 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				}
 			};
 			for (const effect of external) {
-				if (closed) return scheduled;
 				try {
 					const claim = store.claimeffectdispatching(effect.runid, effect.id, effect.fence);
 					if (claim.claimed) claimed.push(claim.effect);
@@ -384,7 +381,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			const result = await engine.start(
 				engine.prepare({ ...request, sessionid: sessionid(context), mode, cwd: context.cwd }, profiles),
 			);
-			await schedule(result);
+			schedule(result);
 			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined);
 		};
 
@@ -414,7 +411,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				return;
 			}
 			const existing = fresh ? null : store.getprojectrun(request.projectroot);
-			if (existing && existing.status === "blocked") {
+			if (existing?.status === "blocked") {
 				say(
 					context,
 					`${runlabel(existing)} is stuck: ${existing.blockedreason ?? "blocked"}. run /factory --fresh to start a new run and retire it.`,
@@ -425,7 +422,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			if (existing) {
 				if (existing.sessionid !== sessionid(context)) store.bindsession(sessionid(context), existing.id, true);
 				const resumed = await engine.resume(existing.id);
-				await schedule(resumed);
+				schedule(resumed);
 				if (!stale(resumed)) announce(context, resumed.run, waiting(resumed) ? resumed.effects : undefined, "continuing");
 				return;
 			}
@@ -443,7 +440,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 					profiles,
 				),
 			);
-			await schedule(result);
+			schedule(result);
 			const opened = `${request.entry.kind} · ${basename(request.projectroot)}`;
 			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined, opened);
 		},
@@ -456,7 +453,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 			if (!run) throw new Error("this session has no active omnipotence run");
 			const text = args.trim();
 			const result = await engine.resume(run.id, text ? commandjson(text, "resume input") : undefined);
-			await schedule(result);
+			schedule(result);
 			if (!stale(result)) announce(context, result.run, waiting(result) ? result.effects : undefined);
 		},
 	});
@@ -542,7 +539,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 				reason: `active omnipotence run ${result.run.id} has unknown scheduling outcome for effect ${dispatching.id}`,
 			};
 		}
-		if (await schedule(result)) return;
+		if (schedule(result)) return;
 		if (stale(result)) return;
 		if (event.stop_hook_active) return;
 		const missing = result.effects.find((effect) => effect.status === "requested" && !iscontrol(effect));
@@ -570,7 +567,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		for (const effect of result.effects) {
 			if (effect.status !== "requested") continue;
 			if (effect.kind === "sleep") {
-				await schedulesleep(run.id, effect);
+				schedulesleep(run.id, effect);
 				continue;
 			}
 			if (effect.kind === "breakpoint") continue;
@@ -605,7 +602,7 @@ export default function omnipotence(pi: ExtensionAPI): void {
 		}
 		const recovered = store.getrun(run.id);
 		if (!unsafe && recovered && recovered.status !== "blocked" && !isterminal(recovered.status)) {
-			await schedule(result);
+			schedule(result);
 		}
 		if (recovered) pi.appendEntry(stateentry, { runid: recovered.id, status: recovered.status });
 	};

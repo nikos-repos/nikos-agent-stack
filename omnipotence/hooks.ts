@@ -131,7 +131,7 @@ export class hookregistry {
 		if (
 			selected.blueprintname === undefined &&
 			candidates.length > 1 &&
-			compareversions(hook.version, candidates[1]!.version) === 0
+			compareversions(hook.version, candidates[1].version) === 0
 		) {
 			throw new Error(`hook ${hookid}@${hook.version} is ambiguous across blueprints`);
 		}

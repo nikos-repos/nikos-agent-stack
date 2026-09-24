@@ -685,11 +685,11 @@ export class orchestrationstore {
 			readonly: options.readonly,
 			strict: true,
 		});
-		this.data.exec("pragma foreign_keys = on");
+		this.data.run("pragma foreign_keys = on");
 		if (options.readonly) return;
-		this.data.exec("pragma journal_mode = wal");
-		this.data.exec("pragma synchronous = full");
-		this.data.exec("pragma busy_timeout = 5000");
+		this.data.run("pragma journal_mode = wal");
+		this.data.run("pragma synchronous = full");
+		this.data.run("pragma busy_timeout = 5000");
 		this.migrate();
 	}
 
@@ -773,7 +773,7 @@ export class orchestrationstore {
 		if (versionrow.user_version !== 0) {
 			throw new Error(`database schema ${versionrow.user_version} is unsupported; expected 8`);
 		}
-		this.data.exec(`
+		this.data.run(`
 			create table runs (
 				id text primary key,
 				session_id text,
@@ -867,13 +867,13 @@ export class orchestrationstore {
 	}
 
 	private transact<result>(operation: () => result): result {
-		this.data.exec("begin immediate");
+		this.data.run("begin immediate");
 		try {
 			const result = operation();
-			this.data.exec("commit");
+			this.data.run("commit");
 			return result;
 		} catch (error) {
-			this.data.exec("rollback");
+			this.data.run("rollback");
 			throw error;
 		}
 	}
@@ -895,7 +895,7 @@ export class orchestrationstore {
 			)
 			.run(runid, seq, type, payloadjson, previoushash, hash, createdat);
 		const idrow = this.data.query("select last_insert_rowid() as id").get() as { id: number };
-		return { id: Number(idrow.id), runid, seq, type, payload, previoushash, hash, createdat };
+		return { id: idrow.id, runid, seq, type, payload, previoushash, hash, createdat };
 	}
 
 	createrun(input: createruninput): runrecord {
@@ -1341,7 +1341,7 @@ export class orchestrationstore {
 				if (!replacement) throw new Error(`blueprint ${name}@${replacementversion} is not installed`);
 			}
 			const result = this.data.query("delete from blueprints where name = ? and version = ?").run(name, version);
-			if (Number(result.changes) === 0) return false;
+			if (result.changes === 0) return false;
 			if (replacementversion) {
 				this.data.query("update blueprints set active = 0 where name = ?").run(name);
 				this.data
@@ -1701,7 +1701,7 @@ export class orchestrationstore {
 					where id = ? and lease_owner = ? and lease_epoch = ?`,
 				)
 				.run(runid, owner, epoch);
-			return Number(result.changes) > 0;
+			return result.changes > 0;
 		});
 	}
 
@@ -1907,7 +1907,7 @@ export class orchestrationstore {
 
 	repair(): { backup: string; report: doctorreport } {
 		const backup = `${this.path}.backup-${Date.now()}`;
-		this.data.exec(`vacuum into '${backup.replaceAll("'", "''")}'`);
+		this.data.run(`vacuum into '${backup.replaceAll("'", "''")}'`);
 		const replay = this.replayevents();
 		if (replay.issues.length > 0) {
 			throw new Error(`repair event verification failed: ${replay.issues.join("; ")}`);

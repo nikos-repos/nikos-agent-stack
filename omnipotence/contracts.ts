@@ -444,10 +444,10 @@ export function compareversions(left: string, right: string): number {
 		const separator = version.indexOf("-");
 		return separator === -1 ? [] : version.slice(separator + 1).split(".");
 	};
-	const leftcore = left.slice(0, left.indexOf("-") === -1 ? undefined : left.indexOf("-")).split(".");
-	const rightcore = right.slice(0, right.indexOf("-") === -1 ? undefined : right.indexOf("-")).split(".");
+	const leftcore = left.slice(0, !left.includes("-") ? undefined : left.indexOf("-")).split(".");
+	const rightcore = right.slice(0, !right.includes("-") ? undefined : right.indexOf("-")).split(".");
 	for (let index = 0; index < leftcore.length; index += 1) {
-		const comparison = comparedecimal(leftcore[index]!, rightcore[index]!);
+		const comparison = comparedecimal(leftcore[index], rightcore[index]);
 		if (comparison !== 0) return comparison;
 	}
 
@@ -457,7 +457,7 @@ export function compareversions(left: string, right: string): number {
 		return leftprerelease.length === rightprerelease.length ? 0 : leftprerelease.length === 0 ? 1 : -1;
 	}
 	for (let index = 0; index < Math.min(leftprerelease.length, rightprerelease.length); index += 1) {
-		const comparison = compareidentifier(leftprerelease[index]!, rightprerelease[index]!);
+		const comparison = compareidentifier(leftprerelease[index], rightprerelease[index]);
 		if (comparison !== 0) return comparison;
 	}
 	return leftprerelease.length - rightprerelease.length;

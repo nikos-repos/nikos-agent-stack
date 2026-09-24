@@ -71,7 +71,7 @@ test("loader retains inactive blueprint versions pinned by active runs", async (
 	store.close();
 });
 
-test("loader rejects an incompatible legacy active blueprint", async () => {
+test("loader rejects an incompatible legacy active blueprint", () => {
 	const root = mkdtempSync(join(tmpdir(), "omnipotence-loader-"));
 	roots.push(root);
 	const store = new orchestrationstore(join(root, "state.sqlite"));

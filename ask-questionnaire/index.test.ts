@@ -73,7 +73,7 @@ class FakeApi {
 	}
 }
 
-async function harness() {
+function harness() {
 	const api = new FakeApi();
 	// The fake implements only the methods exercised by this extension.
 	askQuestionnaire(api as unknown as ExtensionAPI);
@@ -101,7 +101,7 @@ beforeEach(() => {
 // --- declaration and blocking ----------------------------------------------
 
 test("a declared questionnaire allows read-only tools and blocks writes", async () => {
-	const api = await harness();
+	const api = harness();
 	const reason = "settle the product scope before discovery starts";
 	await openQuestionnaire(api, "factory-discovery", reason);
 
@@ -117,7 +117,7 @@ test("a declared questionnaire allows read-only tools and blocks writes", async 
 });
 
 test("with no declaration, an ordinary coding turn arms nothing", async () => {
-	const api = await harness();
+	const api = harness();
 	await api.run("input", { type: "input", text: "refactor the login module", source: "interactive" });
 
 	const write = await callTool(api, "write");
@@ -126,7 +126,7 @@ test("with no declaration, an ordinary coding turn arms nothing", async () => {
 });
 
 test("a different owner is refused and leaves the pending questionnaire unchanged", async () => {
-	const api = await harness();
+	const api = harness();
 	const reason = "settle the project constraints";
 	await openQuestionnaire(api, "factory-discovery", reason);
 
@@ -139,7 +139,7 @@ test("a different owner is refused and leaves the pending questionnaire unchange
 });
 
 test("a same-owner retry leaves owner and reason byte-identical", async () => {
-	const api = await harness();
+	const api = harness();
 	const reason = "settle the project constraints";
 	await openQuestionnaire(api, "factory-discovery", reason);
 
@@ -157,7 +157,7 @@ test("a same-owner retry leaves owner and reason byte-identical", async () => {
 // --- guidance injection -----------------------------------------------------
 
 test("before_agent_start injects the declaring reason only while pending", async () => {
-	const api = await harness();
+	const api = harness();
 
 	const beforeArm = await api.run<{ message?: { content: string } }>("before_agent_start", { type: "before_agent_start", prompt: "hello" });
 	expect(beforeArm).toBeUndefined();
@@ -175,7 +175,7 @@ test("before_agent_start injects the declaring reason only while pending", async
 // --- ask result clearing ----------------------------------------------------
 
 test("a failed ask keeps the questionnaire pending", async () => {
-	const api = await harness();
+	const api = harness();
 	const reason = "settle the project constraints";
 	await openQuestionnaire(api, "factory-discovery", reason);
 
@@ -188,7 +188,7 @@ test("a failed ask keeps the questionnaire pending", async () => {
 });
 
 test("a successful ask clears the questionnaire and unblocks tools", async () => {
-	const api = await harness();
+	const api = harness();
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 
 	await toolResult(api, "ask", false);
@@ -199,7 +199,7 @@ test("a successful ask clears the questionnaire and unblocks tools", async () =>
 });
 
 test("a non-ask tool result never clears the questionnaire", async () => {
-	const api = await harness();
+	const api = harness();
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 
 	await toolResult(api, "bash", false);
@@ -211,7 +211,7 @@ test("a non-ask tool result never clears the questionnaire", async () => {
 // --- continuation decision --------------------------------------------------
 
 test("questionnaireStop continues with the declaring reason while pending", async () => {
-	const api = await harness();
+	const api = harness();
 	const reason = "settle the project constraints";
 	await openQuestionnaire(api, "factory-discovery", reason);
 
@@ -220,7 +220,7 @@ test("questionnaireStop continues with the declaring reason while pending", asyn
 });
 
 test("questionnaireStop does not continue after a successful ask", async () => {
-	const api = await harness();
+	const api = harness();
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 	await toolResult(api, "ask", false);
 
@@ -228,7 +228,7 @@ test("questionnaireStop does not continue after a successful ask", async () => {
 });
 
 test("questionnaireStop does not continue when nothing was declared", async () => {
-	await harness();
+	harness();
 
 	expect(await questionnaireStop({}, { cwd: "." })).toBeUndefined();
 });
@@ -236,7 +236,7 @@ test("questionnaireStop does not continue when nothing was declared", async () =
 // --- lifecycle reset --------------------------------------------------------
 
 test("session_switch clears the pending questionnaire", async () => {
-	const api = await harness();
+	const api = harness();
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 
 	await api.run("session_switch", { type: "session_switch", previousSessionFile: undefined });
@@ -246,7 +246,7 @@ test("session_switch clears the pending questionnaire", async () => {
 });
 
 test("session_branch clears the pending questionnaire", async () => {
-	const api = await harness();
+	const api = harness();
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 
 	await api.run("session_branch", { type: "session_branch", previousSessionFile: undefined });
@@ -256,7 +256,7 @@ test("session_branch clears the pending questionnaire", async () => {
 });
 
 test("session_start clears the pending questionnaire", async () => {
-	const api = await harness();
+	const api = harness();
 	await openQuestionnaire(api, "factory-discovery", "settle the project constraints");
 
 	await api.run("session_start", { type: "session_start" });

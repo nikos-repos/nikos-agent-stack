@@ -126,7 +126,7 @@ describe("ordered orchestration hooks", () => {
 		expect(aborted).toBe(true);
 	});
 
-	test("duplicate identities and non-json results fail closed", async () => {
+	test("duplicate identities and non-json results fail closed", () => {
 		const registry = new hookregistry();
 		const hook = definehook({
 			id: "audit.result",

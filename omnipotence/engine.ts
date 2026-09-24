@@ -252,11 +252,11 @@ export class orchestrationengine {
 		if (candidates.length === 0) {
 			throw new Error(`process ${processid}${version ? `@${version}` : ""} is not registered`);
 		}
-		const selected = candidates[0]!;
+		const selected = candidates[0];
 		if (
 			!blueprint &&
 			candidates.length > 1 &&
-			compareversions(selected.version, candidates[1]!.version) === 0
+			compareversions(selected.version, candidates[1].version) === 0
 		) {
 			throw new Error(`process ${processid}@${selected.version} is ambiguous across blueprints`);
 		}
@@ -651,7 +651,7 @@ export class orchestrationengine {
 			profile: run.profile,
 			task: (key, input) => pending({ key, kind: "task", input }),
 			parallel: (key, requests, maxconcurrency) => {
-				const effectiveconcurrency = maxconcurrency === undefined ? Math.max(1, requests.length) : maxconcurrency;
+				const effectiveconcurrency = maxconcurrency ?? Math.max(1, requests.length);
 				assertparallelmaxconcurrency(effectiveconcurrency);
 				if (requests.length === 0) return Promise.resolve([]);
 				return pending({
