@@ -320,7 +320,7 @@ try {
 
   {
     const cwd = repository();
-    const lease = acquirelease({
+    const lease = await acquirelease({
       cwd,
       owner_id: "owner-1",
       request_id: "request-1",
@@ -345,7 +345,7 @@ try {
     }) === true, "heartbeat must reclaim a dead contender claim");
     assert(releaselease(lease) === true, "mutation lease must release its owner");
     assert(inspectlease({ cwd }).status === "free", "released mutation lease must be free");
-    const stale = acquirelease({
+    const stale = await acquirelease({
       cwd,
       owner_id: "owner-2",
       request_id: "request-2",
@@ -372,7 +372,7 @@ try {
       stale_heartbeat_ms: 1_000,
     }) === true, "expired heartbeat must release even while the holder pid remains live");
     assert(inspectlease({ cwd }).status === "free", "stale recovery must clear the held lease");
-    const successor = acquirelease({
+    const successor = await acquirelease({
       cwd,
       owner_id: "owner-3",
       request_id: "request-3",
@@ -396,7 +396,7 @@ try {
       claimed_at: 0,
       token: "paused-initializer",
     })}\n`);
-    const paused = acquirelease({
+    const paused = await acquirelease({
       cwd,
       owner_id: "owner-4",
       request_id: "request-4",
@@ -415,7 +415,7 @@ try {
       claimed_at: 0,
       token: "paused-initializer",
     })}\n`);
-    const recovered = acquirelease({
+    const recovered = await acquirelease({
       cwd,
       owner_id: "owner-5",
       request_id: "request-5",

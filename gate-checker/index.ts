@@ -28,7 +28,7 @@ import { mergeprovenance, provenancefromdetails, provenancefromevent } from "./p
 import { journal_type, journal_version, journalfrombranch } from "./journal.js";
 import { auditscope } from "./risks.js";
 import {
-  acquireleaseasync,
+  acquirelease,
   formatleasestatus,
   heartbeatintervalms,
   heartbeatlease,
@@ -938,7 +938,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
     ledger.append("lease_wait_started", { ...metadata, ts: Date.now() });
     let result: LeaseRecord;
     try {
-      result = await acquireleaseasync(acquisitionOptions);
+      result = await acquirelease(acquisitionOptions);
     } catch (error) {
       return {
         block: true,
@@ -971,7 +971,7 @@ export default function gateChecker(pi: ExtensionAPI): void {
         if (stale) ledger.append("lease_heartbeat_stale", { ...leaseFields(result), ts: Date.now() });
         releaseOperation(event.toolCallId, stale ? "heartbeat_stale" : "heartbeat_lost");
       } catch {}
-    }, heartbeatintervalms({}));
+    }, heartbeatintervalms);
     timer.unref?.();
     activeOperations.set(event.toolCallId, {
       lease: result,

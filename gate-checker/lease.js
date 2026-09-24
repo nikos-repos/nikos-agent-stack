@@ -5,15 +5,14 @@ import {
   rmSync, statSync, writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import { isFunction, isRecord, isText, parseJsonObject } from "./predicates.js";
+import { isRecord, isText, parseJsonObject } from "./predicates.js";
 
-const default_poll_interval_ms = 50;
-const default_poll_jitter_ms = 5;
+const poll_interval_ms = 50;
+const poll_jitter_ms = 5;
 const default_acquisition_wait_ms = 5_000;
-const default_heartbeat_interval_ms = 2_000;
 const default_stale_heartbeat_ms = 30_000;
 const default_dead_pid_grace_ms = 2_000;
-const sleep_signal = new Int32Array(new SharedArrayBuffer(4));
+export const heartbeatintervalms = 2_000;
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 5_000, stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -27,45 +26,21 @@ export function identity(cwd = ".") {
   return { repo_root, common_dir, key };
 }
 function optionsOf(input) {
-  if (isText(input)) return { cwd: input };
   return isRecord(input) ? input : {};
 }
 const nonempty = (value) => isText(value) && value.trim().length > 0;
-function optionNumber(options, names, fallback) {
-  for (const name of names) if (Number.isFinite(options[name])) return Number(options[name]);
-  return fallback;
+function optionNumber(options, name, fallback) {
+  return Number.isFinite(options[name]) ? Number(options[name]) : fallback;
 }
-function clockOf(options) {
-  if (isFunction(options.clock)) return options.clock;
-  if (Number.isFinite(options.now)) return () => Number(options.now);
-  return () => Date.now();
-}
+// `now` is the test clock; production reads Date.now().
 function nowOf(options) {
-  const now = Number(clockOf(options)());
-  if (!Number.isFinite(now)) throw new Error("lease clock must return a finite number");
-  return now;
+  return Number.isFinite(options.now) ? Number(options.now) : Date.now();
 }
-const staleMs = (options) => Math.max(0, optionNumber(options, ["stale_heartbeat_ms", "stale_ms"], default_stale_heartbeat_ms));
-const waitMs = (options) => Math.max(0, optionNumber(options, ["acquisition_wait_ms", "wait_ms"], default_acquisition_wait_ms));
-const pollMs = (options) => Math.max(1, optionNumber(options, ["poll_interval_ms", "poll_ms"], default_poll_interval_ms));
-const jitterMs = (options) => Math.max(0, optionNumber(options, ["poll_jitter_ms", "jitter_ms"], default_poll_jitter_ms));
-export const heartbeatintervalms = (options = {}) => Math.max(1, optionNumber(options, ["heartbeat_interval_ms", "heartbeat_ms"], default_heartbeat_interval_ms));
-const deadGraceMs = (options) => Math.max(0, optionNumber(options, ["dead_pid_grace_ms"], default_dead_pid_grace_ms));
-function sleepSync(options, milliseconds) {
-  const delay = Math.max(0, Math.round(milliseconds));
-  if (isFunction(options.sleep)) { options.sleep(delay); return; }
-  if (delay) Atomics.wait(sleep_signal, 0, 0, delay);
-}
-async function sleepAsync(options, milliseconds) {
-  const delay = Math.max(0, Math.round(milliseconds));
-  if (isFunction(options.sleep)) { await options.sleep(delay); return; }
-  if (delay) await new Promise((done) => setTimeout(done, delay));
-}
-function nextDelay(options) {
-  const random = isFunction(options.random) ? options.random : Math.random;
-  const sample = Number(random());
-  const bounded = Number.isFinite(sample) ? Math.min(1, Math.max(0, sample)) : 0.5;
-  return Math.max(1, Math.round(pollMs(options) + (bounded * 2 - 1) * jitterMs(options)));
+const staleMs = (options) => Math.max(0, optionNumber(options, "stale_heartbeat_ms", default_stale_heartbeat_ms));
+const waitMs = (options) => Math.max(0, optionNumber(options, "acquisition_wait_ms", default_acquisition_wait_ms));
+const deadGraceMs = (options) => Math.max(0, optionNumber(options, "dead_pid_grace_ms", default_dead_pid_grace_ms));
+function nextDelay() {
+  return Math.max(1, Math.round(poll_interval_ms + (Math.random() * 2 - 1) * poll_jitter_ms));
 }
 function processAlive(pid) {
   if (!Number.isSafeInteger(pid) || pid < 1) return false;
@@ -83,11 +58,10 @@ function requiredString(options, name) {
   return options[name];
 }
 function operationMetadata(options) {
-  const pid = options.pid === undefined ? process.pid : Number(options.pid);
-  if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("lease pid must be a positive integer");
-  const agent_id = options.agent_id === undefined ? null : options.agent_id;
+  const pid = process.pid;
+  const agent_id = options.agent_id ?? null;
   if (agent_id !== null && !nonempty(agent_id)) throw new Error("lease agent_id must be a non-empty string or null");
-  const target = options.target === undefined || options.target === null ? null : options.target;
+  const target = options.target ?? null;
   if (target !== null && !nonempty(target)) throw new Error("lease target must be a non-empty string or null");
   return {
     owner_id: requiredString(options, "owner_id"), request_id: requiredString(options, "request_id"),
@@ -95,12 +69,11 @@ function operationMetadata(options) {
     agent_id, tool_call_id: requiredString(options, "tool_call_id"), tool_name: requiredString(options, "tool_name"), target, pid,
   };
 }
-function invalidLease(reason, kind = "malformed") {
-  return { ok: false, kind, legacy: kind === "legacy", reason, error: reason };
+function invalidLease(reason) {
+  return { ok: false, kind: "malformed", reason, error: reason };
 }
-export function validatelease(record) {
+function validatelease(record) {
   if (!isRecord(record)) return invalidLease("lease record must be an object");
-  if (!Object.prototype.hasOwnProperty.call(record, "schema")) return invalidLease("legacy v1 lease record has no schema", "legacy");
   if (record.schema !== 2) return invalidLease("lease record schema must be 2");
   if (record.acquired !== true) return invalidLease("lease record acquired must be true");
   if (record.scope !== "worktree") return invalidLease("lease record scope must be worktree");
@@ -113,7 +86,7 @@ export function validatelease(record) {
   if (!Number.isFinite(record.acquired_at)) return invalidLease("lease record acquired_at must be finite");
   if (!Number.isFinite(record.heartbeat_at)) return invalidLease("lease record heartbeat_at must be finite");
   if (record.heartbeat_at < record.acquired_at) return invalidLease("lease record heartbeat_at cannot precede acquired_at");
-  return { ok: true, kind: "v2", legacy: false, record };
+  return { ok: true, kind: "v2", record };
 }
 function readRecord(data_path) {
   let source;
@@ -128,21 +101,21 @@ function readRecord(data_path) {
   const validation = validatelease(record);
   return { kind: validation.ok ? "v2" : validation.kind, record, validation };
 }
-function readInitialization(path) {
+// the initialization marker and election claims share one {token, pid, claimed_at} shape.
+function readClaim(path) {
   try {
-    const record = parseJsonObject(readFileSync(path, "utf8"));
-    return record;
+    return parseJsonObject(readFileSync(path, "utf8"));
   } catch (error) {
     const code = String(error?.code ?? "").toLowerCase();
     if (["enoent", "eisdir", "enotdir"].includes(code)) return null;
     throw error;
   }
 }
-function validInitialization(record) {
+function validClaim(record) {
   return isRecord(record) && nonempty(record.token) && Number.isSafeInteger(record.pid) && record.pid > 0 && Number.isFinite(record.claimed_at);
 }
-function sameInitialization(current, expected) {
-  return validInitialization(current) && validInitialization(expected) && current.pid === expected.pid && current.claimed_at === expected.claimed_at && current.token === expected.token;
+function sameClaim(current, expected) {
+  return validClaim(current) && validClaim(expected) && current.token === expected.token && current.pid === expected.pid && current.claimed_at === expected.claimed_at;
 }
 const identityFields = ["schema", "acquired", "scope", "repo_root", "common_dir", "path", "token", "fence", "owner_id", "request_id", "session_id", "session_file", "agent_id", "tool_call_id", "tool_name", "target", "pid", "acquired_at"];
 function sameIdentity(current, expected) {
@@ -159,8 +132,7 @@ export function formatleasestatus(status, options = {}) {
   if (!isRecord(status)) return `lease status unavailable; ${inspect}`;
   const state = status.status ?? status.kind;
   if (state === "free" || status.exists === false) return `worktree mutation lease is free; ${inspect}`;
-  if (state === "legacy") return `legacy v1 lease record at ${displayStatus(status.data_path)}; ${inspect}; do not delete it`;
-  if (state === "malformed") return `malformed v2 lease record at ${displayStatus(status.data_path)}; ${inspect}; do not delete it`;
+  if (state === "malformed") return `malformed lease record at ${displayStatus(status.data_path)}; ${inspect}; do not delete it`;
   if (state === "initializing") return `worktree mutation lease is initializing; ${inspect}`;
   if (state !== "held" && status.acquired !== true) return `worktree mutation lease status ${displayStatus(state)}; ${inspect}`;
   const record = isRecord(status.record) ? status.record : isRecord(status.conflict) ? status.conflict : status;
@@ -188,10 +160,10 @@ export function inspectlease(input = {}) {
   let status = stored.kind;
   let record = stored.record;
   let validation = stored.validation;
-  if (stored.kind === "missing") { status = "initializing"; record = readInitialization(paths.initialization_path); validation = null; }
+  if (stored.kind === "missing") { status = "initializing"; record = readClaim(paths.initialization_path); validation = null; }
   else if (stored.kind === "v2" && !scopeEquals(record, scope, paths)) { status = "malformed"; validation = invalidLease("lease record repository identity does not match its directory"); }
   if (status !== "v2") {
-    const initialized = status === "initializing" && validInitialization(record);
+    const initialized = status === "initializing" && validClaim(record);
     const age_ms = initialized ? Math.max(0, now - record.claimed_at) : null;
     const pid_alive = initialized ? processAlive(record.pid) : false;
     const stale = initialized && age_ms >= dead_pid_grace_ms && !pid_alive;
@@ -225,10 +197,10 @@ function writeLease(path, record, suffix) {
   try { writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`, "utf8"); renameSync(temporary, path); }
   catch (error) { try { rmSync(temporary, { force: true }); } catch {} throw error; }
 }
-function publishInitialization(options, paths, now) {
+function publishInitialization(paths, now) {
   const token = randomUUID();
   const temporary = `${paths.path}.${process.pid}.${token}.tmp`;
-  const pid = options.pid === undefined ? process.pid : Number(options.pid);
+  const pid = process.pid;
   try {
     mkdirSync(temporary);
     writeFileSync(join(temporary, "lease.init"), `${JSON.stringify({ pid, claimed_at: now, token })}\n`, "utf8");
@@ -242,14 +214,14 @@ function publishInitialization(options, paths, now) {
   }
 }
 function acquireRecord(options, scope, paths, now, initialization) {
-  const claimed = claimInitialization({ record: initialization }, scope, options);
+  const claimed = claimInitialization(initialization, paths, options);
   if (!claimed) return null;
   try {
-    const current = readInitialization(paths.initialization_path);
+    const current = readClaim(paths.initialization_path);
     const stored = readRecord(paths.data_path);
     if (!claimOwned(claimed)
       || stored.kind !== "missing"
-      || !sameInitialization(current, initialization)) return null;
+      || !sameClaim(current, initialization)) return null;
     const metadata = operationMetadata(options);
     const fence = nextFence(paths.parent, scope.key, initialization.token);
     const record = { schema: 2, acquired: true, scope: "worktree", repo_root: scope.repo_root, common_dir: scope.common_dir, path: paths.path, token: initialization.token, fence, ...metadata, acquired_at: now, heartbeat_at: now };
@@ -257,11 +229,11 @@ function acquireRecord(options, scope, paths, now, initialization) {
     rmSync(paths.initialization_path, { force: true });
     return record;
   } catch (error) {
-    const current = readInitialization(paths.initialization_path);
+    const current = readClaim(paths.initialization_path);
     const stored = readRecord(paths.data_path);
     if (claimOwned(claimed)
       && stored.kind === "missing"
-      && sameInitialization(current, initialization)) {
+      && sameClaim(current, initialization)) {
       rmSync(paths.path, { recursive: true, force: true });
     }
     throw error;
@@ -274,14 +246,14 @@ function conflictResult(options, scope, paths, status, waited_ms = 0) {
   const diagnostic = formatleasestatus(status, { waited_ms, cwd: options.cwd });
   return { acquired: false, recovered: false, path: paths.path, token: null, fence: null, owner_id: metadata.owner_id, request_id: metadata.request_id, session_id: metadata.session_id, session_file: metadata.session_file, agent_id: metadata.agent_id, tool_call_id: metadata.tool_call_id, tool_name: metadata.tool_name, target: metadata.target, pid: metadata.pid, repo_root: scope.repo_root, common_dir: scope.common_dir, conflict: status.record, status: status.status, valid: status.valid, stale: status.stale, age_ms: status.age_ms, heartbeat_age_ms: status.heartbeat_age_ms, pid_alive: status.pid_alive, claimed_at: status.claimed_at ?? null, dead_pid_grace_ms: status.dead_pid_grace_ms, diagnostic, error: diagnostic, retryable: ["held", "free", "initializing"].includes(status.status), timed_out: false, waited_ms };
 }
-export function tryacquirelease(input = {}) {
+function tryacquirelease(input = {}) {
   const options = optionsOf(input);
   const scope = options.scope || identity(options.cwd || ".");
   const paths = leasePaths(scope);
   operationMetadata(options);
   const now = nowOf(options);
   mkdirSync(paths.parent, { recursive: true });
-  const initialization = publishInitialization(options, paths, now);
+  const initialization = publishInitialization(paths, now);
   if (!initialization) return conflictResult(options, scope, paths, inspectlease({ ...options, scope }));
   const record = acquireRecord(options, scope, paths, now, initialization);
   if (record) return { ...record, recovered: false };
@@ -294,10 +266,10 @@ function timeoutResult(result, waited_ms, cwd) {
 function recoverable(status, scope, options) {
   if (!status.stale || !status.conflict) return false;
   return status.status === "initializing"
-    ? reclaimInitialization({ record: status.conflict }, scope, options)
+    ? reclaimInitialization(status.conflict, scope, options)
     : releasestalelease(status.conflict, { ...options, scope });
 }
-export function acquirelease(input = {}) {
+export async function acquirelease(input = {}) {
   const options = optionsOf(input);
   const scope = options.scope || identity(options.cwd || ".");
   const wait_ms = waitMs(options);
@@ -306,67 +278,19 @@ export function acquirelease(input = {}) {
   for (;;) {
     const result = tryacquirelease({ ...options, scope });
     if (result.acquired) return { ...result, recovered: recovered || result.recovered };
-    if (result.status === "legacy" || result.status === "malformed") return { ...result, waited_ms };
+    if (result.status === "malformed") return { ...result, waited_ms };
     if (recoverable(result, scope, options)) { recovered = true; continue; }
     if (waited_ms >= wait_ms) return timeoutResult(result, waited_ms, options.cwd);
-    const delay = Math.min(nextDelay(options), wait_ms - waited_ms);
+    const delay = Math.min(nextDelay(), wait_ms - waited_ms);
     if (delay <= 0) return timeoutResult(result, waited_ms, options.cwd);
-    sleepSync(options, delay);
+    await new Promise((done) => setTimeout(done, delay));
     waited_ms += delay;
   }
 }
-export async function acquireleaseasync(input = {}) {
-  const options = optionsOf(input);
-  const scope = options.scope || identity(options.cwd || ".");
-  const wait_ms = waitMs(options);
-  let waited_ms = 0;
-  let recovered = false;
-  for (;;) {
-    const result = tryacquirelease({ ...options, scope });
-    if (result.acquired) return { ...result, recovered: recovered || result.recovered };
-    if (result.status === "legacy" || result.status === "malformed") return { ...result, waited_ms };
-    if (recoverable(result, scope, options)) { recovered = true; continue; }
-    if (waited_ms >= wait_ms) return timeoutResult(result, waited_ms, options.cwd);
-    const delay = Math.min(nextDelay(options), wait_ms - waited_ms);
-    if (delay <= 0) return timeoutResult(result, waited_ms, options.cwd);
-    await sleepAsync(options, delay);
-    waited_ms += delay;
-  }
-}
-function readClaim(path) {
-  try {
-    return parseJsonObject(readFileSync(path, "utf8"));
-  } catch (error) {
-    const code = String(error?.code ?? "").toLowerCase();
-    if (["enoent", "eisdir", "enotdir"].includes(code)) return null;
-    throw error;
-  }
-}
-
-function validClaim(record) {
-  return isRecord(record)
-    && nonempty(record.token)
-    && Number.isSafeInteger(record.pid)
-    && record.pid > 0
-    && Number.isFinite(record.claimed_at);
-}
-
-function sameClaim(current, expected) {
-  return validClaim(current)
-    && validClaim(expected)
-    && current.token === expected.token
-    && current.pid === expected.pid
-    && current.claimed_at === expected.claimed_at;
-}
-
-function publishClaim(claimsPath, options, token, claimedAt) {
+function publishClaim(claimsPath, token, claimedAt) {
   const claimPath = join(claimsPath, token);
   const temporary = join(claimsPath, `.${token}.${process.pid}.${randomUUID()}.tmp`);
-  const record = {
-    token,
-    pid: Number.isSafeInteger(options.pid) && options.pid > 0 ? options.pid : process.pid,
-    claimed_at: claimedAt,
-  };
+  const record = { token, pid: process.pid, claimed_at: claimedAt };
   try {
     try {
       mkdirSync(claimsPath);
@@ -498,29 +422,17 @@ function rereadClaimedLease(claim, expected) {
   return sameIdentity(stored.record, expected) ? stored.record : null;
 }
 
-function claimCurrentLease(lease, input = {}) {
-  if (!isRecord(lease) || lease.acquired !== true || !nonempty(lease.path)) return null;
-  const options = optionsOf(input);
-  const dataPath = join(lease.path, "lease.json");
+// publish a claim, win the election, then verify the guarded state; the verified value rides on the claim.
+function claimWith(dataPath, options, verify) {
   const claimsPath = `${dataPath}.claims`;
   for (;;) {
-    const token = randomUUID();
     const claimedAt = nowOf(options);
-    const published = publishClaim(claimsPath, options, token, claimedAt);
+    const published = publishClaim(claimsPath, randomUUID(), claimedAt);
     if (published === false) return null;
     if (published === null) continue;
-    const claim = {
-      dataPath,
-      claimsPath,
-      claimPath: published.claimPath,
-      record: published.record,
-    };
+    const claim = { dataPath, claimsPath, claimPath: published.claimPath, record: published.record };
     try {
-      if (!electClaim(claim, claimedAt, options)) {
-        releaseClaim(claim);
-        return null;
-      }
-      const current = rereadClaimedLease(claim, lease);
+      const current = electClaim(claim, claimedAt, options) ? verify(claim) : null;
       if (!current) {
         releaseClaim(claim);
         return null;
@@ -533,53 +445,31 @@ function claimCurrentLease(lease, input = {}) {
   }
 }
 
-function claimInitialization(status, scope, options) {
-  const expected = status.record;
-  if (!validInitialization(expected)) return null;
-  const paths = leasePaths(scope);
-  for (;;) {
-    const token = randomUUID();
-    const claimedAt = nowOf(options);
-    const published = publishClaim(paths.claims_path, options, token, claimedAt);
-    if (published === false) return null;
-    if (published === null) continue;
-    const claim = {
-      dataPath: paths.data_path,
-      claimsPath: paths.claims_path,
-      claimPath: published.claimPath,
-      record: published.record,
-    };
-    try {
-      if (!electClaim(claim, claimedAt, options)) {
-        releaseClaim(claim);
-        return null;
-      }
-      const current = readInitialization(paths.initialization_path);
-      const stored = readRecord(paths.data_path);
-      if (stored.kind !== "missing" || !sameInitialization(current, expected)) {
-        releaseClaim(claim);
-        return null;
-      }
-      return { ...claim, current };
-    } catch (error) {
-      releaseClaim(claim);
-      throw error;
-    }
-  }
+function claimCurrentLease(lease, options) {
+  if (!isRecord(lease) || lease.acquired !== true || !nonempty(lease.path)) return null;
+  return claimWith(join(lease.path, "lease.json"), options, (claim) => rereadClaimedLease(claim, lease));
 }
 
-function reclaimInitialization(status, scope, options) {
-  const claimed = claimInitialization(status, scope, options);
-  if (!claimed) return false;
+function claimInitialization(expected, paths, options) {
+  if (!validClaim(expected)) return null;
+  return claimWith(paths.data_path, options, () => {
+    const current = readClaim(paths.initialization_path);
+    return readRecord(paths.data_path).kind === "missing" && sameClaim(current, expected) ? current : null;
+  });
+}
+
+function reclaimInitialization(expected, scope, options) {
   const paths = leasePaths(scope);
+  const claimed = claimInitialization(expected, paths, options);
+  if (!claimed) return false;
   try {
-    const current = readInitialization(paths.initialization_path);
+    const current = readClaim(paths.initialization_path);
     const stored = readRecord(paths.data_path);
     const now = nowOf(options);
     const age = Math.max(0, now - current.claimed_at);
     if (!claimOwned(claimed)
       || stored.kind !== "missing"
-      || !sameInitialization(current, claimed.current)
+      || !sameClaim(current, claimed.current)
       || age < deadGraceMs(options)
       || processAlive(current.pid)) return false;
     rmSync(paths.path, { recursive: true, force: true });

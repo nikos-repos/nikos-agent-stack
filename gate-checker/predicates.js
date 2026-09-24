@@ -6,7 +6,6 @@ import { isAbsolute, join, resolve as resolvePath } from "node:path";
 const tag = Object.prototype.toString;
 export const isText = (value) => tag.call(value) === "[object String]";
 export const isRecord = (value) => value !== null && tag.call(value) === "[object Object]";
-export const isFunction = (value) => tag.call(value) === "[object Function]";
 export function parseJsonObject(source) {
   try {
     const value = JSON.parse(source);
