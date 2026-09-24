@@ -111,7 +111,7 @@ function modeText(mode) {
 export function describeLevel(level, verifyCmd, complexityCmd) {
   const policy = policyFor(level);
   if (!policy.enabled)
-    return ["gates: OFF", "  nothing is checked and nothing is recorded.",
+    return ["gates: OFF", "  nothing is checked; the request journal still opens and closes each request.",
       "  re-enable with /gates-engage medium"].join("\n");
   const lines = [
     `gates: ${level.toUpperCase()}`,
@@ -120,13 +120,13 @@ export function describeLevel(level, verifyCmd, complexityCmd) {
     `  subagent manifest               ${modeText(policy.manifest)}`,
     `  subagent claims vs diff         ${modeText(policy.subagentClaim)}`,
     `  snapshot tag references         ${modeText(policy.snapshot)}`,
-    `  test suite must pass            ${verifyCmd ? modeText(policy.verify) : "off (no verify command set)"}`,
+    `  test suite must pass            ${verifyCmd ? modeText(policy.verify)
+      : policy.verify === "block" ? "blocks without an observed passing test run (no verify command set)"
+      : "off (no verify command set)"}`,
     `  complexity linter               ${complexityCmd ? `warn (${complexityCmd})` : "unmeasured (no complexity command set)"}`,
     `  work must be committed          ${modeText(policy.commit)}`,
     `  gate integrity failures         ${modeText(policy.runtime)}`,
     "  runaway protection              always on (stalemate abort + cap 3)",
   ];
-  if (level === "high" && !verifyCmd)
-    lines.push("", "  note: high blocks a change with no observed passing test run when no verify command is set.");
   return lines.join("\n");
 }
