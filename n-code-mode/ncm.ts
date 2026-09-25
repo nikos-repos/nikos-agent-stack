@@ -15,7 +15,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 
 export const version = "0.1.0";
 
@@ -137,6 +137,20 @@ function git(args: string[], cwd: string): string {
 	return execFileSync("git", args, { cwd, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 }
 
+function repository(target: string): { start: string; root: string; isDirectory: boolean } {
+	const start = resolve(target);
+	if (!existsSync(start)) throw new Error(`no such path: ${target}`);
+	const isDirectory = statSync(start).isDirectory();
+	const cwd = isDirectory ? start : dirname(start);
+	let root: string;
+	try {
+		root = git(["rev-parse", "--show-toplevel"], cwd).trim();
+	} catch {
+		throw new Error(`ncm needs a git repository; ${target} is not inside one`);
+	}
+	return { start, root, isDirectory };
+}
+
 // text files under pathspec that mention @cc: tracked plus untracked-and-not-ignored, the way a
 // review sees the tree. git does the sniffing, skips binaries, and never enters a nested repository.
 function candidates(root: string, pathspec: string): string[] {
@@ -157,15 +171,7 @@ function candidates(root: string, pathspec: string): string[] {
 // a scan whose path holds a CONTRACTS file still checks its ids against every CONTRACTS file
 // in the repository, and reports each collision on the in-scope side.
 export function scan(target = "."): scanresult {
-	const start = resolve(target);
-	if (!existsSync(start)) throw new Error(`no such path: ${target}`);
-	const cwd = statSync(start).isDirectory() ? start : dirname(start);
-	let root: string;
-	try {
-		root = git(["rev-parse", "--show-toplevel"], cwd).trim();
-	} catch {
-		throw new Error(`ncm needs a git repository; ${target} is not inside one`);
-	}
+	const { start, root } = repository(target);
 	const pathspec = relative(root, start) || ".";
 
 	const result: scanresult = { contracts: [], findings: [], files: 0 };
@@ -200,8 +206,39 @@ export function scan(target = "."): scanresult {
 	return result;
 }
 
+// @cc [label:product] list-scope
+// for a file, list every CONTRACTS file from the repository root through its directory,
+// then its own blocks (except markdown); a CONTRACTS path counts once. for a directory,
+// list only CONTRACTS files through that directory. do not follow calls.
+function list(targets: readonly string[]): contract[] {
+	const byLocation = new Map<string, contract>();
+	for (const target of targets) {
+		const { start, root, isDirectory } = repository(target);
+		const relativeDirectory = relative(root, isDirectory ? start : dirname(start));
+		const parts = relativeDirectory ? relativeDirectory.split(sep) : [];
+		let directory = root;
+		for (let i = 0; i <= parts.length; i++) {
+			if (i) directory = resolve(directory, parts[i - 1]);
+			const path = resolve(directory, "CONTRACTS");
+			if (!existsSync(path)) continue;
+			for (const item of parsefile(relative(root, path), readFileSync(path, "utf8")).contracts) {
+				byLocation.set(`${item.file}:${item.line}`, item);
+			}
+		}
+		if (!isDirectory && basename(start) !== "CONTRACTS") {
+			const extension = extname(start).toLowerCase();
+			if (extension === ".md" || extension === ".markdown") continue;
+			for (const item of parsefile(relative(root, start), readFileSync(start, "utf8")).contracts) {
+				byLocation.set(`${item.file}:${item.line}`, item);
+			}
+		}
+	}
+	return [...byLocation.values()].sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
+}
+
 const usage = `ncm commands:
   check [path]    validate every @cc block under path (default: the current directory)
+  list <path>...  list contracts governing each path (one or more paths required)
   ledger [path]   list every ceiling under path with its until: condition
 
 paths print relative to the repository root.
@@ -217,14 +254,20 @@ export function runcli(args: readonly string[], write: (text: string) => void = 
 		write(`ncm ${version}`);
 		return 0;
 	}
-	const [command, target = ".", ...rest] = args;
-	if (rest.length || (command !== "check" && command !== "ledger")) {
+	const [command, ...paths] = args;
+	if ((command !== "check" && command !== "list" && command !== "ledger") || (command === "list" ? !paths.length : paths.length > 1)) {
 		error(usage);
 		return 2;
 	}
 	let result: scanresult;
 	try {
-		result = scan(target);
+		if (command === "list") {
+			const contracts = list(paths);
+			for (const item of contracts) write(`${item.file}:${item.line}\t${item.label ?? "-"}\t${item.id}\t${item.prose.filter(Boolean).join(" ")}`);
+			write(`ncm: ${contracts.length} contracts apply to ${paths.length} paths`);
+			return 0;
+		}
+		result = scan(paths[0] ?? ".");
 	} catch (cause) {
 		error(`ncm: ${cause instanceof Error ? cause.message : String(cause)}`);
 		return 2;

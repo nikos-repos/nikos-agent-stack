@@ -8,13 +8,13 @@ it ships five parts:
 
 | part | file | what it does |
 | --- | --- | --- |
-| OMP extension | `n-code-mode/index.ts` | runs `before_agent_start` and appends the whole doctrine, Lazy Ladder and Contracts, to OMP's native `systemPrompt: string[]` |
+| OMP extension | `n-code-mode/index.ts` | appends the whole doctrine at `before_agent_start`, registers the `ncm` tool, and appends findings plus governing contracts to successful edit/write results |
 | doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder and the Contracts rules; OMP injects it, Claude Code wires it manually |
-| checker | `n-code-mode/ncm.ts` | `ncm check` validates every `@cc` block in a repository; `ncm ledger` lists the ceilings |
+| checker | `n-code-mode/ncm.ts` | `ncm check` validates `@cc` blocks; `ncm list` shows governing contracts; `ncm ledger` lists ceilings |
 | review skill | `n-code-mode/skills/review/SKILL.md` | separate Claude Code pass over a diff or path: deletions, contract violations, contracts to kill, and the ledger |
 | contracts | `n-code-mode/ncm.ts` and `n-code-mode/ncm.test.ts` | the plugin's own specifications on its checker and fixture, checked by its own test |
 
-The OMP extension uses a hook, but the Claude Code plugin does not: OMP receives the doctrine at `before_agent_start`; Claude Code loads the same file from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
+The OMP extension injects doctrine, offers a tool, and appends edit/write notices; the Claude Code plugin does not use those OMP hooks. Claude Code loads the same doctrine from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
 
 ## install
 
@@ -26,7 +26,7 @@ For the published package, install the OMP extension:
 omp plugin install nikos-agent-stack
 ```
 
-Start a new OMP session after installing or updating. `n-code-mode/index.ts` activates automatically at `before_agent_start`; it appends the whole doctrine to OMP's native `systemPrompt: string[]`. there is no separate activation command.
+Start a new OMP session after installing or updating. `n-code-mode/index.ts` activates automatically at `before_agent_start`; it appends the whole doctrine to OMP's native `systemPrompt: string[]`, registers the `ncm` tool, and appends findings plus governing contracts to successful edit/write results. there is no separate activation command.
 
 For a local checkout, from the repository root use `omp plugin link .` instead. the same link makes the extension available to the next OMP session.
 
@@ -82,7 +82,7 @@ a contract is one `@cc` directive followed by prose. the directive is code-contr
 | `architecture` | a declaration's doc comment or directory-wide `CONTRACTS` | none | boundaries and dependencies |
 | `ceiling` | the shortcut's declaration doc comment | `until: <the condition that ends it>` | a deliberate shortcut with an exit |
 
-ids are unique across every `CONTRACTS` file in the repository, and unique per source file. put each contract in the doc comment of the declaration it governs. a directory's `CONTRACTS` file holds only rules for the whole directory: architecture, dependencies, security. the doctrine tells the agent to read every `CONTRACTS` file from the repository root down to the files it touches and the contracts on declarations it calls, on both hosts.
+ids are unique across every `CONTRACTS` file in the repository, and unique per source file. put each contract in the doc comment of the declaration it governs. a directory's `CONTRACTS` file holds only rules for the whole directory: architecture, dependencies, security. the doctrine tells the agent to use `ncm list <file>` for directory-wide and file-local contracts, then read the contracts on declarations it calls.
 
 a directory-wide security contract in a `CONTRACTS` file:
 
@@ -127,10 +127,11 @@ until: a backend exists. -->
 
 ```text
 ncm check [path]    validate every @cc block under path (default: the current directory)
+ncm list <path>...  list contracts governing each path (one or more paths required)
 ncm ledger [path]   list every ceiling under path with its until: condition
 ```
 
-`check` prints one `path:line: message` per finding and exits 1 when there are any, 0 when clean. `ledger` prints `path:line`, the id, and the `until:` text separated by tabs, and exits 0. exit code 2 means a usage or environment error. paths print relative to the repository root.
+`check` prints one `path:line: message` per finding and exits 1 when there are any, 0 when clean. `list` prints one `<file>:<line>\t<label or ->\t<id>\t<prose>` line per contract (non-empty prose lines joined with spaces), sorted by file and line and deduplicated across the requested paths. it ends with `ncm: <N> contracts apply to <M> paths` and exits 0; it does not follow calls. `ledger` prints `path:line`, the id, and the `until:` text separated by tabs, and exits 0. exit code 2 means a usage or environment error, including `list` without a path. paths print relative to the repository root.
 
 `check` reports:
 
@@ -140,7 +141,7 @@ ncm ledger [path]   list every ceiling under path with its until: condition
 - a ceiling without an `until:` last line
 - a duplicate id inside a file, or across `CONTRACTS` files
 
-it scans the text files in which `git grep --untracked` finds `@cc`, tracked and untracked but not ignored, so it needs a git repository. git skips binaries and never enters a nested repository. `ncm` also skips markdown, because examples in documentation are not declarations. it does not judge prose and does not verify that code complies; the review skill does that.
+`check` scans the text files in which `git grep --untracked` finds `@cc`, tracked and untracked but not ignored, so it needs a git repository. git skips binaries and never enters a nested repository. `check` skips markdown examples; `list` includes directory-wide `CONTRACTS` but skips a markdown file's own examples. `ncm` does not judge prose or verify that code complies; the review skill does that.
 
 ## review
 
@@ -169,6 +170,7 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 
 - `ncm` validates form, not truth. a contract can be well-formed and wrong.
 - the labels and required ceiling ending are fixed. `owner` and `notify` attributes parse but mean nothing here.
+- `list` works per file and directory, not per declaration, and does not follow calls.
 - scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
 - OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its doctrine. In Claude Code, say so in the conversation when a task should skip the ladder.

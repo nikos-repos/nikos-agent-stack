@@ -254,9 +254,9 @@ the [advisor role user guide](https://github.com/nikos-repos/nikos-agent-stack/b
 
 n-code-mode is an OMP extension, a Claude Code plugin, and a command-line checker built on one rule: write less code, and say more about the little you wrote. a contract states what the code can't show at a glance: what callers may rely on, what the code assumes but doesn't check, a boundary, or a shortcut with an exit. never restate the implementation.
 
-- the OMP extension runs `before_agent_start` and appends the whole [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md), Lazy Ladder and Contracts, to OMP's native `systemPrompt: string[]`.
+- the OMP extension runs `before_agent_start` and appends the whole [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md), Lazy Ladder and Contracts, to OMP's native `systemPrompt: string[]`. it also registers the `ncm` tool and appends findings plus governing contracts to successful edit/write results.
 - Claude Code wires the same `doctrine.md` manually through `~/.claude/CLAUDE.md`.
-- `ncm check` validates every `@cc` block in a repository: grammar, a `product`, `security`, `architecture`, or `ceiling` label, a required ceiling `until:` ending, and unique ids. `ncm ledger` lists the ceilings.
+- `ncm check` validates every `@cc` block in a repository: grammar, a `product`, `security`, `architecture`, or `ceiling` label, a required ceiling `until:` ending, and unique ids. `ncm list <path>...` shows governing contracts; `ncm ledger` lists the ceilings.
 - `/n-code-mode:review` is a separate Claude Code skill: one pass over a diff or a path for deletions, contract violations, contracts to kill, and the ledger.
 
 Install the package with `omp plugin install nikos-agent-stack`, then start a new OMP session. the extension activates automatically; there is no separate OMP command. verify the doctrine is present in that new session before changing or disabling another prompt injector. if Ponytail is still active, both injectors may contribute guidance, so treat the overlap as intentional dual injection until the new session is verified.
@@ -321,8 +321,8 @@ terra advisor:
 | [`orchestrate-prompt/index.ts`](orchestrate-prompt/index.ts)                                                                                       | standalone prose orchestration prompt extension                                      |
 | [`orchestrate-prompt/prompt.md`](orchestrate-prompt/prompt.md)                                                                                     | bundled editable orchestration prompt template                                      |
 | [`docs/orchestrate-prompt-user-guide.md`](docs/orchestrate-prompt-user-guide.md)                                                           | installation, customization, activation, and prompt behavior guide                  |
-| [`n-code-mode/index.ts`](n-code-mode/index.ts)                                                                                           | OMP `before_agent_start` extension: appends the doctrine to the native system prompt          |
-| [`n-code-mode/ncm.ts`](n-code-mode/ncm.ts)                                                                                               | `ncm check` and `ncm ledger`: language-agnostic @cc contract checker and ceiling ledger        |
+| [`n-code-mode/index.ts`](n-code-mode/index.ts)                                                                                           | OMP doctrine injection, `ncm` tool, and edit/write notice                              |
+| [`n-code-mode/ncm.ts`](n-code-mode/ncm.ts)                                                                                               | `ncm check`, `ncm list`, and `ncm ledger`: contract checker, governing contracts, and ceiling ledger |
 | [`n-code-mode/skills/review/SKILL.md`](n-code-mode/skills/review/SKILL.md)                                                               | separate Claude Code review pass: deletions, contract violations, contracts to kill, and ledger |
 | [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md)                                                                                     | Lazy Ladder and Contracts; injected into OMP, wired manually into Claude Code                 |
 | [`docs/n-code-mode-user-guide.md`](docs/n-code-mode-user-guide.md)                                                                       | install, wiring, grammar, checker, and review guide                                            |

@@ -139,7 +139,7 @@ describe("n-code-mode checker", () => {
 		}
 	});
 
-	test("the cli checks, lists the ledger, and refuses a directory outside git", () => {
+	test("the cli checks, lists contracts and ceilings, and refuses a directory outside git", () => {
 		const root = fixture();
 		const plain = mkdtempSync(resolve(tmpdir(), "ncm-plain-"));
 		try {
@@ -154,6 +154,16 @@ describe("n-code-mode checker", () => {
 			expect(ledger.stdout).toContain("src/c.cs:1\tsingle-series\tuntil: (missing)");
 			expect(ledger.stdout.trim().split("\n").pop()).toBe("ncm: 3 ceilings in 3 files");
 
+			const list = spawnSync("bun", [ncm, "list", resolve(root, "src/a.py"), resolve(root, "src/b.ts")], { encoding: "utf8" });
+			expect(list.status).toBe(0);
+			expect(list.stdout.trimEnd().split("\n")).toEqual([
+				"CONTRACTS:1\tproduct\tvalidated-input\tstages receive validated pages and MUST NOT re-check required fields. deletes: the per-stage None guards.",
+				"CONTRACTS:6\tarchitecture\tgit-scoped\tfile discovery is git ls-files. deletes: skip-lists for build output.",
+				"src/a.py:3\tceiling\tall-pairs\tall pairs over block ids. until: more than 5000 blocks; then banded lsh.",
+				"src/b.ts:2\tproduct\ttrusted-caller\tcallers pass validated input. deletes: guards in every caller.",
+				"ncm: 4 contracts apply to 2 paths",
+			]);
+
 			const outside = spawnSync("bun", [ncm, "check", plain], { encoding: "utf8" });
 			expect(outside.status).toBe(2);
 			expect(outside.stderr).toContain("ncm needs a git repository");
@@ -162,6 +172,7 @@ describe("n-code-mode checker", () => {
 			expect(runcli(["--version"], (text) => lines.push(text))).toBe(0);
 			expect(lines).toEqual([`ncm ${version}`]);
 			expect(runcli(["nope"], () => { }, () => { })).toBe(2);
+			expect(runcli(["list"], () => { }, () => { })).toBe(2);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 			rmSync(plain, { recursive: true, force: true });
