@@ -32,7 +32,7 @@ a single assert-based self-check is the minimum, never a deletion candidate.
 
 ## 2. contracts
 
-applicable contracts are every `CONTRACTS` file from the repository root down to each touched directory, plus `@cc` blocks on touched declarations and on the declarations they call. read them all.
+run `ncm list <touched-file>...` for every touched file (or `bun ${CLAUDE_PLUGIN_ROOT}/ncm.ts list <touched-file>...` when `ncm` is not on PATH) to read directory rules and each file's own contracts. then read the `@cc` blocks on declarations those files call; `ncm list` does not follow calls.
 
 `<file>:L<n>: violates <id> (<contracts-file>:L<m>). <evidence>.`
 
@@ -42,6 +42,7 @@ trace inputs, guards, errors, outputs, and side effects. a contract weakened or 
 
 - `kill: <id>` a contract that restates the implementation or says nothing a reader could not see in the code, a `deletes:` line naming nothing that exists, or a ceiling whose `until:` cannot be observed
 - `expired: <id>` a ceiling whose `until:` condition now holds. upgrade or re-justify
+- `changed: <id> → <owners>` for every existing contract edited or removed in the diff with `owner:` metadata. split `;` between owners so those people review the change. path scope has no diff, so reports none
 - ncm already reports missing trailers, wrong labels, and duplicate ids. do not repeat those
 
 ## 4. ledger
@@ -50,7 +51,7 @@ path scope only: run `ncm ledger <path>` and print it verbatim.
 
 ## close
 
-`net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `lean and compliant. ship.`
+`net: -<N> lines. <V> violations. <K> to kill, <E> expired, <C> changed.` or `lean and compliant. ship.`
 
 ## boundaries
 

@@ -4,17 +4,18 @@ n-code-mode is an OMP extension, a Claude Code plugin, and a command-line checke
 
 > write less code, and say more about the little you wrote. a contract states what the code can't show at a glance: what callers may rely on, what the code assumes but doesn't check, a boundary, or a shortcut with an exit. never restate the implementation.
 
-it ships five parts:
+it ships six parts:
 
 | part | file | what it does |
 | --- | --- | --- |
 | OMP extension | `n-code-mode/index.ts` | appends the whole doctrine at `before_agent_start`, registers the `ncm` tool, and appends findings plus governing contracts to successful edit/write results |
 | doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder and the Contracts rules; OMP injects it, Claude Code wires it manually |
 | checker | `n-code-mode/ncm.ts` | `ncm check` validates `@cc` blocks; `ncm list` shows governing contracts; `ncm ledger` lists ceilings |
+| Claude Code Stop hook | `n-code-mode/hooks/hooks.json` and `n-code-mode/hooks/stop.ts` | blocks a stop when changed files contain contract findings |
 | review skill | `n-code-mode/skills/review/SKILL.md` | separate Claude Code pass over a diff or path: deletions, contract violations, contracts to kill, and the ledger |
 | contracts | `n-code-mode/ncm.ts` and `n-code-mode/ncm.test.ts` | the plugin's own specifications on its checker and fixture, checked by its own test |
 
-The OMP extension injects doctrine, offers a tool, and appends edit/write notices; the Claude Code plugin does not use those OMP hooks. Claude Code loads the same doctrine from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
+The OMP extension injects doctrine, offers a tool, and appends edit/write notices; the Claude Code plugin registers one Stop hook instead of using those OMP hooks. Claude Code loads the same doctrine from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
 
 ## install
 
@@ -58,6 +59,8 @@ claude --plugin-dir ./n-code-mode
 ```
 
 `claude plugin validate n-code-mode` checks both manifests.
+
+the plugin's Stop hook checks changed tracked and untracked, unignored files for contract findings. findings make it exit 2 so Claude keeps working; it blocks at most once per stop cycle. `bun` must be on PATH.
 
 ## Claude Code doctrine wiring
 
@@ -150,14 +153,14 @@ ncm ledger [path]   list every ceiling under path with its until: condition
 /n-code-mode:review path/to/dir
 ```
 
-without a path the skill reviews the current task's changes against the branch base. with a path it audits that path in full. it runs `ncm check` first and prints the output verbatim, then reads:
+without a path the skill reviews the current task's changes against the branch base. with a path it audits that path in full. it runs `ncm check` first and prints the output verbatim, runs `ncm list` for every touched file to read directory rules and each file's own contracts, then reads `@cc` blocks on declarations those files call (`ncm list` does not follow calls). then it reads:
 
 1. deletions, one line each, tagged `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`
 2. contract violations, `violates <id>` with the contract's location and evidence
-3. hygiene, `kill: <id>` for a contract that restates code, claims an unreal `deletes:`, or has an unobservable ceiling exit; `expired: <id>` for a ceiling whose trigger has fired
+3. hygiene, `kill: <id>` for a contract that restates code, claims an unreal `deletes:`, or has an unobservable ceiling exit; `expired: <id>` for a ceiling whose trigger has fired; `changed: <id> → <owners>` routes an edited or removed contract to its `owner:` names (split on `;`, diff scope only)
 4. the ceiling ledger, for a path scope
 
-it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `lean and compliant. ship.` it lists and applies nothing. correctness, security, and performance belong to `/code-review`.
+it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired, <C> changed.` or `lean and compliant. ship.` it lists and applies nothing. correctness, security, and performance belong to `/code-review`.
 
 ## what it replaces
 
@@ -169,8 +172,9 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 ## boundaries
 
 - `ncm` validates form, not truth. a contract can be well-formed and wrong.
-- the labels and required ceiling ending are fixed. `owner` and `notify` attributes parse but mean nothing here.
+- `owner` names who the review asks to look at a changed or removed contract; `notify` parses but means nothing here.
 - `list` works per file and directory, not per declaration, and does not follow calls.
+- the Claude Code Stop hook checks files differing from HEAD, so files committed during the turn escape it.
 - scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
 - OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its doctrine. In Claude Code, say so in the conversation when a task should skip the ladder.

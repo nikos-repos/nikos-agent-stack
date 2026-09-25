@@ -11,7 +11,7 @@ const ncm = resolve(here, "ncm.ts");
 
 // fixture lines are quoted one by one so ncm does not parse them as this file's contracts.
 // @cc [label:architecture] one-fixture
-// ncm.test.ts builds one git repository with fixture() and drives it through scan and runcli. a new case is lines in that fixture plus its expected finding in the existing list. no mocks, no second fixture builder, no test block per check.
+// ncm.test.ts builds one git repository with fixture() and drives it through scan, runcli, and the Claude Stop hook script. a new case is lines in that fixture plus its expected finding in the existing list. no mocks, no second fixture builder, no test block per check.
 // deletes: per-case fixture builders, fs and git mocks, and a test block or file per check.
 function fixture(): string {
 	const root = mkdtempSync(resolve(tmpdir(), "ncm-"));
@@ -167,6 +167,17 @@ describe("n-code-mode checker", () => {
 			const outside = spawnSync("bun", [ncm, "check", plain], { encoding: "utf8" });
 			expect(outside.status).toBe(2);
 			expect(outside.stderr).toContain("ncm needs a git repository");
+
+			const stopHook = resolve(here, "hooks/stop.ts");
+			const blocked = spawnSync("bun", [stopHook], { encoding: "utf8", input: JSON.stringify({ cwd: root }) });
+			expect(blocked.status).toBe(2);
+			expect(blocked.stderr).toContain("src/c.cs:1: ceiling single-series");
+
+			const continuing = spawnSync("bun", [stopHook], { encoding: "utf8", input: JSON.stringify({ cwd: root, stop_hook_active: true }) });
+			expect(continuing.status).toBe(0);
+
+			const notGit = spawnSync("bun", [stopHook], { encoding: "utf8", input: JSON.stringify({ cwd: plain }) });
+			expect(notGit.status).toBe(0);
 
 			const lines: string[] = [];
 			expect(runcli(["--version"], (text) => lines.push(text))).toBe(0);

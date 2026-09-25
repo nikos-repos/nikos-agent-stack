@@ -68,6 +68,8 @@ const expectedFiles = [
 	"n-code-mode/ncm.ts",
 	"n-code-mode/.claude-plugin/plugin.json",
 	"n-code-mode/.claude-plugin/marketplace.json",
+	"n-code-mode/hooks/hooks.json",
+	"n-code-mode/hooks/stop.ts",
 	"n-code-mode/skills/review/SKILL.md",
 	"n-code-mode/doctrine.md",
 	"docs/n-code-mode-user-guide.md",
