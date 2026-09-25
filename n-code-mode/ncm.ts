@@ -16,7 +16,7 @@ export const budget = 12;
 // whitespace, commas, colons, or brackets. metadata is optional; the id is not.
 const token = String.raw`[^\s,:\[\]]+`;
 const directivepattern = new RegExp(`^@cc +(?:\\[(${token}:${token}(?:,${token}:${token})*)\\] +)?(${token})$`, "u");
-const directivestart = /^@cc(?: |$)/u;
+const directivestart = /^@cc\b/u;
 const linemarker = /^\s*(?:\/\/+|#+|--)\s?/u;
 const blockopener = /^\s*(\/\*+|"""|'''|<!--)\s?/u;
 const blockdecoration = /^\s*\*+(?!\/)\s?/u;
@@ -43,7 +43,7 @@ export interface scanresult {
 	files: number;
 }
 
-class clierror extends Error {}
+class clierror extends Error { }
 
 // one entry per source line: the comment text on that line, or null when the line is code.
 // CONTRACTS files are all content, so every line is text.
@@ -112,7 +112,7 @@ function parsefile(file: string, source: string): Pick<scanresult, "contracts" |
 		while (prose.length && prose[prose.length - 1] === "") prose.pop();
 		i = j - 1;
 
-		const label = labels.length === 1 && labels[0] in trailers ? (labels[0] as label) : null;
+		const label = labels.length === 1 && Object.hasOwn(trailers, labels[0]) ? (labels[0] as label) : null;
 		const want = label ? trailers[label] : null;
 		const last = prose[prose.length - 1] ?? "";
 		const trailer = want && last.startsWith(want) ? last.slice(want.length).trim() || null : null;
@@ -161,6 +161,7 @@ export function scan(target = "."): scanresult {
 	const pathspec = relative(root, start) || ".";
 
 	const result: scanresult = { contracts: [], findings: [], files: 0 };
+	const scoped = new Map<string, contract[]>();
 	for (const file of candidates(root, pathspec)) {
 		const extension = extname(file).toLowerCase();
 		if (extension === ".md" || extension === ".markdown") continue;
@@ -169,15 +170,22 @@ export function scan(target = "."): scanresult {
 		result.files += 1;
 		result.contracts.push(...parsed.contracts);
 		result.findings.push(...parsed.findings);
+		if (basename(file) === "CONTRACTS") scoped.set(file, parsed.contracts);
 	}
 
-	// CONTRACTS ids are citable across the repository, so they are unique across every CONTRACTS file.
-	const contractids = new Map<string, string>();
-	for (const item of result.contracts) {
-		if (basename(item.file) !== "CONTRACTS") continue;
-		const first = contractids.get(item.id);
-		if (first === undefined) contractids.set(item.id, `${item.file}:${item.line}`);
-		else if (!first.startsWith(`${item.file}:`)) result.findings.push({ file: item.file, line: item.line, message: `duplicate id ${item.id} across CONTRACTS files (first at ${first})` });
+	// CONTRACTS ids are citable across the repository, so they are unique across every CONTRACTS file,
+	// in scope or not. a scoped scan reports each duplicate pair that touches its scope.
+	// @cc [label:ceiling] second-walk
+	// a scoped scan holding a CONTRACTS file walks the untracked tree again to find the other ones.
+	// until: a scoped check is measured slow; then list the other CONTRACTS files with git ls-files.
+	const everyfile = pathspec === "." || !scoped.size ? [...scoped.keys()] : candidates(root, ":(glob)**/CONTRACTS");
+	const firsts = new Map<string, contract>();
+	for (const file of everyfile) {
+		for (const item of scoped.get(file) ?? parsefile(file, readFileSync(resolve(root, file), "utf8")).contracts) {
+			const first = firsts.get(item.id);
+			if (!first) firsts.set(item.id, item);
+			else if (first.file !== item.file && (scoped.has(first.file) || scoped.has(item.file))) result.findings.push({ file: item.file, line: item.line, message: `duplicate id ${item.id} across CONTRACTS files (first at ${first.file}:${first.line})` });
+		}
 	}
 	result.findings.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
 	return result;

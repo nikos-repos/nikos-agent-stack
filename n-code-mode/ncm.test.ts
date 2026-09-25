@@ -73,8 +73,15 @@ function fixture(): string {
 		"@cc [label:rule] no-prose",
 		"@cc [label:ceiling] no-trailer",
 		"a ceiling with no until line.",
+		"",
+		"@cc [label:toString] proto",
+		"prose.",
+		"deletes: x.",
+		"",
+		"@cc[label:rule] nospace",
 	]);
 	write("many/CONTRACTS", Array.from({ length: budget + 1 }, (_, i) => `@cc [label:rule] r${i}\nprose.\ndeletes: x${i}.\n`));
+	write("sub/CONTRACTS", ["@cc [label:rule] git-scoped", "repeated from the root.", "deletes: nothing new."]);
 	write("docs/notes.md", ["# @cc [label:ceiling] doc-example", "# until: never; this is documentation."]);
 	writeFileSync(resolve(root, "img.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x40, 0x63, 0x63, 0x20]));
 	// a nested repository is another project: git lists it as one directory entry and ncm skips it.
@@ -108,16 +115,22 @@ describe("n-code-mode checker", () => {
 	test("reports grammar, label, trailer, duplicate id, and budget findings", () => {
 		const root = fixture();
 		try {
-			const messages = scan(root).findings.map((item) => `${item.file}:${item.line}: ${item.message}`);
+			const show = (target: string) => scan(target).findings.map((item) => `${item.file}:${item.line}: ${item.message}`);
+			const messages = show(root);
 			expect(messages).toEqual([
 				"bad/CONTRACTS:1: contract no-label: label must be rule or ceiling",
 				"bad/CONTRACTS:9: duplicate id twice (first at line 5)",
 				"bad/CONTRACTS:13: invalid @cc directive",
 				"bad/CONTRACTS:16: contract no-prose: no prose body",
 				"bad/CONTRACTS:17: ceiling no-trailer: needs a until: trailer as its last line",
+				"bad/CONTRACTS:20: contract proto: label must be rule or ceiling",
+				"bad/CONTRACTS:24: invalid @cc directive",
 				`many/CONTRACTS:1: CONTRACTS holds ${budget + 1} contracts; the budget is ${budget}`,
 				"src/c.cs:1: ceiling single-series: needs a until: trailer as its last line",
+				"sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (first at CONTRACTS:6)",
 			]);
+			// a scoped scan still sees the root CONTRACTS it collides with.
+			expect(show(resolve(root, "sub"))).toEqual(["sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (first at CONTRACTS:6)"]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -130,7 +143,7 @@ describe("n-code-mode checker", () => {
 			const check = spawnSync("bun", [ncm, "check", root], { encoding: "utf8" });
 			expect(check.status).toBe(1);
 			expect(check.stdout).toContain("src/c.cs:1: ceiling single-series");
-			expect(check.stdout.trim().split("\n").pop()).toBe("ncm: 7 findings in 3 files");
+			expect(check.stdout.trim().split("\n").pop()).toBe("ncm: 10 findings in 4 files");
 
 			const ledger = spawnSync("bun", [ncm, "ledger", resolve(root, "src")], { encoding: "utf8" });
 			expect(ledger.status).toBe(0);
@@ -145,7 +158,7 @@ describe("n-code-mode checker", () => {
 			const lines: string[] = [];
 			expect(runcli(["--version"], (text) => lines.push(text))).toBe(0);
 			expect(lines).toEqual([`ncm ${version}`]);
-			expect(runcli(["nope"], () => {}, () => {})).toBe(2);
+			expect(runcli(["nope"], () => { }, () => { })).toBe(2);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 			rmSync(plain, { recursive: true, force: true });

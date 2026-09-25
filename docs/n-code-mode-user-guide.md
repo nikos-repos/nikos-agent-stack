@@ -146,6 +146,6 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 - `ncm` validates form, not truth. a contract can be well-formed and wrong.
 - the labels and trailers are fixed. `owner` and `notify` attributes parse but mean nothing here.
 - the budget is the `budget` constant in `n-code-mode/ncm.ts`. raise it when a real thirteenth contract earns its place.
-- scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path.
+- scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
 - the doctrine import replaces the ponytail off-switch. there is no `stop` command; say so in the conversation when a task should skip the ladder.
