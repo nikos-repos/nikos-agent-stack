@@ -2,7 +2,7 @@
 // ncm: the n-code-mode contract checker and ceiling ledger.
 //
 // it reads @cc blocks out of comment text in any language and out of CONTRACTS files,
-// then checks grammar, label, trailer, id uniqueness, and the per-file budget. it never
+// then checks grammar, label, trailer, and id uniqueness. it never
 // parses a syntax tree and never judges prose; the review skill does the judging.
 
 import { execFileSync } from "node:child_process";
@@ -10,7 +10,6 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, extname, relative, resolve } from "node:path";
 
 export const version = "0.1.0";
-export const budget = 12;
 
 // the directive grammar is code-contracts' own: `@cc [key:value,...] id`, tokens without
 // whitespace, commas, colons, or brackets. metadata is optional; the id is not.
@@ -124,10 +123,6 @@ function parsefile(file: string, source: string): Pick<scanresult, "contracts" |
 		const first = seen.get(id);
 		if (first === undefined) seen.set(id, line);
 		else findings.push({ file, line, message: `duplicate id ${id} (first at line ${first})` });
-	}
-
-	if (iscontracts && contracts.length > budget) {
-		findings.push({ file, line: 1, message: `CONTRACTS holds ${contracts.length} contracts; the budget is ${budget}` });
 	}
 	return { contracts, findings };
 }

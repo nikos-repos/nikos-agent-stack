@@ -32,7 +32,7 @@ a single assert-based self-check is the minimum, never a deletion candidate.
 
 ## 2. contracts
 
-applicable contracts are every `CONTRACTS` file from the repository root down to each touched directory, plus `@cc` blocks on touched declarations and on the declarations they call. read them all; each file holds at most 12.
+applicable contracts are every `CONTRACTS` file from the repository root down to each touched directory, plus `@cc` blocks on touched declarations and on the declarations they call. read them all.
 
 `<file>:L<n>: violates <id> (<contracts-file>:L<m>). <evidence>.`
 
@@ -42,7 +42,7 @@ trace inputs, guards, errors, outputs, and side effects. a contract weakened or 
 
 - `kill: <id>` a rule whose `deletes:` names nothing that exists or could exist, or a ceiling whose `until:` cannot be observed
 - `expired: <id>` a ceiling whose `until:` condition now holds. upgrade or re-justify
-- ncm already reports missing trailers, wrong labels, duplicate ids, and a CONTRACTS file over budget. do not repeat those
+- ncm already reports missing trailers, wrong labels, and duplicate ids. do not repeat those
 
 ## 4. ledger
 

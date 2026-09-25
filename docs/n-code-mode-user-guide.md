@@ -80,7 +80,7 @@ a contract is one `@cc` directive followed by prose. the directive is code-contr
 | `rule` | a `CONTRACTS` file at the directory it governs | `deletes: <the code it makes unnecessary>` | a promise callers may rely on instead of writing a guard, a wrapper, or a dependency |
 | `ceiling` | a comment beside a deliberate shortcut | `until: <the condition that ends it>` | a known limit with the trigger that retires it |
 
-a `CONTRACTS` file holds at most 12 contracts. ids are unique across every `CONTRACTS` file in the repository, and unique per source file. a repository's `CLAUDE.md` imports its `CONTRACTS` file with a single `@CONTRACTS` line, so the rules are read on entering the repository without a reminder.
+ids are unique across every `CONTRACTS` file in the repository, and unique per source file. a repository's `CLAUDE.md` imports its `CONTRACTS` file with a single `@CONTRACTS` line, so the rules are read on entering the repository without a reminder.
 
 a rule in a `CONTRACTS` file:
 
@@ -134,7 +134,6 @@ ncm ledger [path]   list every ceiling under path with its until: condition
 - a missing prose body
 - a rule without a `deletes:` last line, a ceiling without an `until:` last line
 - a duplicate id inside a file, or across `CONTRACTS` files
-- a `CONTRACTS` file holding more than 12 contracts
 
 it scans the text files in which `git grep --untracked` finds `@cc`, tracked and untracked but not ignored, so it needs a git repository. git skips binaries and never enters a nested repository. `ncm` also skips markdown, because examples in documentation are not declarations. it does not judge prose and does not verify that code complies; the review skill does that.
 
@@ -165,7 +164,6 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 
 - `ncm` validates form, not truth. a contract can be well-formed and wrong.
 - the labels and trailers are fixed. `owner` and `notify` attributes parse but mean nothing here.
-- the budget is the `budget` constant in `n-code-mode/ncm.ts`. raise it when a real thirteenth contract earns its place.
 - scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
 - OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its ladder. In Claude Code, say so in the conversation when a task should skip the ladder.

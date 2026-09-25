@@ -256,7 +256,7 @@ n-code-mode is an OMP extension, a Claude Code plugin, and a command-line checke
 
 - the OMP extension runs `before_agent_start` and appends only the concise Lazy Ladder (the first 14 lines of [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md)) to OMP's native `systemPrompt: string[]`.
 - the Claude Code workflow still wires `doctrine.md` manually; its Contracts section is not injected by OMP.
-- `ncm check` validates every `@cc` block in a repository: grammar, a `rule` or `ceiling` label, the `deletes:` or `until:` trailer, unique ids, and a twelve-contract budget per `CONTRACTS` file. `ncm ledger` lists the ceilings.
+- `ncm check` validates every `@cc` block in a repository: grammar, a `rule` or `ceiling` label, the `deletes:` or `until:` trailer, and unique ids. `ncm ledger` lists the ceilings.
 - `/n-code-mode:review` is a separate Claude Code skill: one pass over a diff or a path for deletions, contract violations, contracts to kill, and the ledger.
 
 Install the package with `omp plugin install nikos-agent-stack`, then start a new OMP session. the extension activates automatically; there is no separate OMP command. verify the Lazy Ladder is present in that new session before changing or disabling another prompt injector. if Ponytail is still active, both injectors may contribute guidance, so treat the overlap as intentional dual injection until the new session is verified.

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { budget, runcli, scan, version } from "./ncm.ts";
+import { runcli, scan, version } from "./ncm.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const ncm = resolve(here, "ncm.ts");
@@ -80,7 +80,6 @@ function fixture(): string {
 		"",
 		"@cc[label:rule] nospace",
 	]);
-	write("many/CONTRACTS", Array.from({ length: budget + 1 }, (_, i) => `@cc [label:rule] r${i}\nprose.\ndeletes: x${i}.\n`));
 	write("sub/CONTRACTS", ["@cc [label:rule] git-scoped", "repeated from the root.", "deletes: nothing new."]);
 	write("docs/notes.md", ["# @cc [label:ceiling] doc-example", "# until: never; this is documentation."]);
 	writeFileSync(resolve(root, "img.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x40, 0x63, 0x63, 0x20]));
@@ -112,7 +111,7 @@ describe("n-code-mode checker", () => {
 		}
 	});
 
-	test("reports grammar, label, trailer, duplicate id, and budget findings", () => {
+	test("reports grammar, label, trailer, and duplicate id findings", () => {
 		const root = fixture();
 		try {
 			const show = (target: string) => scan(target).findings.map((item) => `${item.file}:${item.line}: ${item.message}`);
@@ -125,7 +124,6 @@ describe("n-code-mode checker", () => {
 				"bad/CONTRACTS:17: ceiling no-trailer: needs a until: trailer as its last line",
 				"bad/CONTRACTS:20: contract proto: label must be rule or ceiling",
 				"bad/CONTRACTS:24: invalid @cc directive",
-				`many/CONTRACTS:1: CONTRACTS holds ${budget + 1} contracts; the budget is ${budget}`,
 				"src/c.cs:1: ceiling single-series: needs a until: trailer as its last line",
 				"sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (also at CONTRACTS:6)",
 			]);
@@ -144,7 +142,7 @@ describe("n-code-mode checker", () => {
 			const check = spawnSync("bun", [ncm, "check", root], { encoding: "utf8" });
 			expect(check.status).toBe(1);
 			expect(check.stdout).toContain("src/c.cs:1: ceiling single-series");
-			expect(check.stdout.trim().split("\n").pop()).toBe("ncm: 10 findings in 4 files");
+			expect(check.stdout.trim().split("\n").pop()).toBe("ncm: 9 findings in 3 files");
 
 			const ledger = spawnSync("bun", [ncm, "ledger", resolve(root, "src")], { encoding: "utf8" });
 			expect(ledger.status).toBe(0);
