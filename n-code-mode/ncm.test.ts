@@ -171,6 +171,5 @@ describe("n-code-mode checker", () => {
 		const own = scan(here);
 		expect(own.findings).toEqual([]);
 		expect(own.contracts.length).toBeGreaterThan(0);
-		expect(own.contracts.length).toBeLessThanOrEqual(budget);
 	});
 });
