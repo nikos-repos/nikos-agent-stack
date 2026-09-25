@@ -9,7 +9,10 @@ import { runcli, scan, version } from "./ncm.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const ncm = resolve(here, "ncm.ts");
 
-// fixture lines are quoted one by one so this file never declares a contract itself.
+// fixture lines are quoted one by one so ncm does not parse them as this file's contracts.
+// @cc [label:architecture] one-fixture
+// ncm.test.ts builds one git repository with fixture() and drives it through scan and runcli. a new case is lines in that fixture plus its expected finding in the existing list. no mocks, no second fixture builder, no test block per check.
+// deletes: per-case fixture builders, fs and git mocks, and a test block or file per check.
 function fixture(): string {
 	const root = mkdtempSync(resolve(tmpdir(), "ncm-"));
 	execFileSync("git", ["init", "-q", root]);
@@ -18,12 +21,12 @@ function fixture(): string {
 		writeFileSync(resolve(root, path), lines.join("\n") + "\n");
 	};
 	write("CONTRACTS", [
-		"@cc [label:rule] validated-input",
+		"@cc [label:product] validated-input",
 		"stages receive validated pages and MUST NOT re-check required fields.",
 		"",
 		"deletes: the per-stage None guards.",
 		"",
-		"@cc [owner:niko,label:rule] git-scoped",
+		"@cc [owner:niko,label:architecture] git-scoped",
 		"file discovery is git ls-files.",
 		"deletes: skip-lists for build output.",
 	]);
@@ -37,7 +40,7 @@ function fixture(): string {
 	]);
 	write("src/b.ts", [
 		"/**",
-		" * @cc [label:rule] trusted-caller",
+		" * @cc [label:product] trusted-caller",
 		" * callers pass validated input.",
 		" * deletes: guards in every caller.",
 		" */",
@@ -63,14 +66,14 @@ function fixture(): string {
 		"first.",
 		"deletes: a.",
 		"",
-		"@cc [label:rule] twice",
+		"@cc [label:architecture] twice",
 		"second.",
 		"deletes: b.",
 		"",
-		"@cc [label:rule] bad id here",
+		"@cc [label:architecture] bad id here",
 		"spaces in the id.",
 		"",
-		"@cc [label:rule] no-prose",
+		"@cc [label:architecture] no-prose",
 		"@cc [label:ceiling] no-trailer",
 		"a ceiling with no until line.",
 		"",
@@ -78,9 +81,9 @@ function fixture(): string {
 		"prose.",
 		"deletes: x.",
 		"",
-		"@cc[label:rule] nospace",
+		"@cc[label:product] nospace",
 	]);
-	write("sub/CONTRACTS", ["@cc [label:rule] git-scoped", "repeated from the root.", "deletes: nothing new."]);
+	write("sub/CONTRACTS", ["@cc [label:architecture] git-scoped", "repeated from the root.", "deletes: nothing new."]);
 	write("docs/notes.md", ["# @cc [label:ceiling] doc-example", "# until: never; this is documentation."]);
 	writeFileSync(resolve(root, "img.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x40, 0x63, 0x63, 0x20]));
 	// a nested repository is another project: git lists it as one directory entry and ncm skips it.
@@ -104,8 +107,8 @@ describe("n-code-mode checker", () => {
 			expect(ids).not.toContain("nested-example");
 			const ceiling = result.contracts.find((item) => item.id === "fake-submit");
 			expect(ceiling?.trailer).toBe("a backend exists.");
-			const rule = result.contracts.find((item) => item.id === "validated-input");
-			expect(rule?.trailer).toBe("the per-stage None guards.");
+			const product = result.contracts.find((item) => item.id === "validated-input");
+			expect(product?.trailer).toBeNull();
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -117,12 +120,13 @@ describe("n-code-mode checker", () => {
 			const show = (target: string) => scan(target).findings.map((item) => `${item.file}:${item.line}: ${item.message}`);
 			const messages = show(root);
 			expect(messages).toEqual([
-				"bad/CONTRACTS:1: contract no-label: label must be rule or ceiling",
+				"bad/CONTRACTS:1: contract no-label: label must be product, security, architecture, or ceiling",
+				"bad/CONTRACTS:5: contract twice: label must be product, security, architecture, or ceiling",
 				"bad/CONTRACTS:9: duplicate id twice (first at line 5)",
 				"bad/CONTRACTS:13: invalid @cc directive",
 				"bad/CONTRACTS:16: contract no-prose: no prose body",
 				"bad/CONTRACTS:17: ceiling no-trailer: needs a until: trailer as its last line",
-				"bad/CONTRACTS:20: contract proto: label must be rule or ceiling",
+				"bad/CONTRACTS:20: contract proto: label must be product, security, architecture, or ceiling",
 				"bad/CONTRACTS:24: invalid @cc directive",
 				"src/c.cs:1: ceiling single-series: needs a until: trailer as its last line",
 				"sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (also at CONTRACTS:6)",
@@ -142,7 +146,7 @@ describe("n-code-mode checker", () => {
 			const check = spawnSync("bun", [ncm, "check", root], { encoding: "utf8" });
 			expect(check.status).toBe(1);
 			expect(check.stdout).toContain("src/c.cs:1: ceiling single-series");
-			expect(check.stdout.trim().split("\n").pop()).toBe("ncm: 9 findings in 3 files");
+			expect(check.stdout.trim().split("\n").pop()).toBe("ncm: 10 findings in 3 files");
 
 			const ledger = spawnSync("bun", [ncm, "ledger", resolve(root, "src")], { encoding: "utf8" });
 			expect(ledger.status).toBe(0);

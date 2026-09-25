@@ -2,8 +2,16 @@
 // ncm: the n-code-mode contract checker and ceiling ledger.
 //
 // it reads @cc blocks out of comment text in any language and out of CONTRACTS files,
-// then checks grammar, label, trailer, and id uniqueness. it never
+// then checks grammar, labels, required ceiling endings, and id uniqueness. it never
 // parses a syntax tree and never judges prose; the review skill does the judging.
+
+// @cc [label:architecture] stdlib-only
+// ncm.ts imports node builtins only. a runtime dependency MUST NOT be added to the checker.
+// deletes: an install step, a lockfile entry, and a supply-chain read for the checker.
+
+// @cc [label:architecture] deep-module
+// ncm.ts is the whole checker. it exports scan, runcli, and version with their result types; every other function stays private. a new check goes inside parsefile or scan, never into a new module or a new export.
+// deletes: a module split, the imports and re-exports between the pieces, and callers or tests pinned to internals.
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -20,8 +28,8 @@ const linemarker = /^\s*(?:\/\/+|#+|--)\s?/u;
 const blockopener = /^\s*(\/\*+|"""|'''|<!--)\s?/u;
 const blockdecoration = /^\s*\*+(?!\/)\s?/u;
 const closers: Record<string, string> = { '"""': '"""', "'''": "'''", "<!--": "-->" };
-const trailers = { rule: "deletes:", ceiling: "until:" } as const;
-type label = keyof typeof trailers;
+const knownlabels = { product: true, security: true, architecture: true, ceiling: true } as const;
+type label = keyof typeof knownlabels;
 
 export interface contract {
 	file: string;
@@ -109,15 +117,15 @@ function parsefile(file: string, source: string): Pick<scanresult, "contracts" |
 		while (prose.length && prose[prose.length - 1] === "") prose.pop();
 		i = j - 1;
 
-		const label = labels.length === 1 && Object.hasOwn(trailers, labels[0]) ? (labels[0] as label) : null;
-		const want = label ? trailers[label] : null;
+		const label = labels.length === 1 && Object.hasOwn(knownlabels, labels[0]) ? (labels[0] as label) : null;
+		const want = label === "ceiling" ? "until:" : null;
 		const last = prose[prose.length - 1] ?? "";
 		const trailer = want && last.startsWith(want) ? last.slice(want.length).trim() || null : null;
 		contracts.push({ file, line, id, label, prose, trailer });
 
-		if (!label) findings.push({ file, line, message: `contract ${id}: label must be rule or ceiling` });
+		if (!label) findings.push({ file, line, message: `contract ${id}: label must be product, security, architecture, or ceiling` });
 		if (!prose.length) findings.push({ file, line, message: `contract ${id}: no prose body` });
-		else if (label && !trailer) findings.push({ file, line, message: `${label} ${id}: needs a ${want} trailer as its last line` });
+		else if (want && !trailer) findings.push({ file, line, message: `${label} ${id}: needs a ${want} trailer as its last line` });
 		const first = seen.get(id);
 		if (first === undefined) seen.set(id, line);
 		else findings.push({ file, line, message: `duplicate id ${id} (first at line ${first})` });
@@ -141,6 +149,13 @@ function candidates(root: string, pathspec: string): string[] {
 }
 
 // markdown is documentation: examples in it are not declarations.
+// @cc [label:product] repo-relative-paths
+// every finding and contract path is relative to the repository root, whatever path was passed.
+// @cc [label:product] sorted-findings
+// findings are sorted by file, then line.
+// @cc [label:product] scoped-duplicates
+// a scan whose path holds a CONTRACTS file still checks its ids against every CONTRACTS file
+// in the repository, and reports each collision on the in-scope side.
 export function scan(target = "."): scanresult {
 	const start = resolve(target);
 	if (!existsSync(start)) throw new Error(`no such path: ${target}`);
@@ -225,9 +240,8 @@ export function runcli(args: readonly string[], write: (text: string) => void = 
 		write(`ncm: ${result.findings.length} findings in ${new Set(result.findings.map((item) => item.file)).size} files`);
 		return 1;
 	}
-	const rules = result.contracts.filter((item) => item.label === "rule").length;
 	const ceilings = result.contracts.filter((item) => item.label === "ceiling").length;
-	write(`ncm: clean. ${result.contracts.length} contracts in ${result.files} files (${rules} rules, ${ceilings} ceilings)`);
+	write(`ncm: clean. ${result.contracts.length} contracts in ${result.files} files (${ceilings} ceilings)`);
 	return 0;
 }
 

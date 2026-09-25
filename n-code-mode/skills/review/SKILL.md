@@ -40,7 +40,7 @@ trace inputs, guards, errors, outputs, and side effects. a contract weakened or 
 
 ## 3. hygiene
 
-- `kill: <id>` a rule whose `deletes:` names nothing that exists or could exist, or a ceiling whose `until:` cannot be observed
+- `kill: <id>` a contract that restates the implementation or says nothing a reader could not see in the code, a `deletes:` line naming nothing that exists, or a ceiling whose `until:` cannot be observed
 - `expired: <id>` a ceiling whose `until:` condition now holds. upgrade or re-justify
 - ncm already reports missing trailers, wrong labels, and duplicate ids. do not repeat those
 

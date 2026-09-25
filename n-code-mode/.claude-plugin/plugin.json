@@ -1,7 +1,7 @@
 {
   "name": "n-code-mode",
   "version": "0.1.0",
-  "description": "write less code, and say more about the little you wrote. the lazy ladder as doctrine, @cc contracts with deletes: and until: trailers, one review skill, and the ncm checker.",
+  "description": "write less code, and say more about the little you wrote. the lazy ladder as doctrine, local @cc contracts with optional deletes: and required ceiling until:, one review skill, and the ncm checker.",
   "author": {
     "name": "nikos-repos",
     "url": "https://github.com/nikos-repos"

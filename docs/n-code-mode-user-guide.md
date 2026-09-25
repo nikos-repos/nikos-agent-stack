@@ -1,8 +1,8 @@
 # n-code-mode user guide
 
-n-code-mode is an OMP extension, a Claude Code plugin, and a command-line checker shipped inside the `nikos-agent-stack` repository. it carries one rule:
+n-code-mode is an OMP extension, a Claude Code plugin, and a command-line checker shipped inside the `nikos-agent-stack` repository. it follows this contract admission rule:
 
-> write less code, and say more about the little you wrote. a contract earns its place when it lets you delete code, never when it narrates code.
+> write less code, and say more about the little you wrote. a contract states what the code can't show at a glance: what callers may rely on, what the code assumes but doesn't check, a boundary, or a shortcut with an exit. never restate the implementation.
 
 it ships five parts:
 
@@ -12,7 +12,7 @@ it ships five parts:
 | doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder and the Contracts rules; OMP injects it, Claude Code wires it manually |
 | checker | `n-code-mode/ncm.ts` | `ncm check` validates every `@cc` block in a repository; `ncm ledger` lists the ceilings |
 | review skill | `n-code-mode/skills/review/SKILL.md` | separate Claude Code pass over a diff or path: deletions, contract violations, contracts to kill, and the ledger |
-| contracts | `n-code-mode/CONTRACTS` | the plugin's own coding rules, checked by its own test |
+| contracts | `n-code-mode/ncm.ts` and `n-code-mode/ncm.test.ts` | the plugin's own specifications on its checker and fixture, checked by its own test |
 
 The OMP extension uses a hook, but the Claude Code plugin does not: OMP receives the doctrine at `before_agent_start`; Claude Code loads the same file from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
 
@@ -73,21 +73,22 @@ Do not uninstall Ponytail as part of installation. In a fresh OMP session, inspe
 
 ## the grammar
 
-a contract is one `@cc` directive followed by prose. the directive is code-contracts' grammar: `@cc [key:value,...] id`, where tokens contain no whitespace, commas, colons, or brackets. n-code-mode fixes two labels and requires a trailer for each:
+a contract is one `@cc` directive followed by prose. the directive is code-contracts' grammar: `@cc [key:value,...] id`, where tokens contain no whitespace, commas, colons, or brackets. n-code-mode fixes four labels; only ceilings require an ending:
 
-| label | lives in | prose ends with | meaning |
+| label | where it lives | required ending | meaning |
 | --- | --- | --- | --- |
-| `rule` | a `CONTRACTS` file at the directory it governs | `deletes: <the code it makes unnecessary>` | a promise callers may rely on instead of writing a guard, a wrapper, or a dependency |
-| `ceiling` | a comment beside a deliberate shortcut | `until: <the condition that ends it>` | a known limit with the trigger that retires it |
+| `product` | a declaration's doc comment | none | behavior callers rely on: preconditions, postconditions, invariants |
+| `security` | a declaration's doc comment or directory-wide `CONTRACTS` | none | trust and data-handling assumptions |
+| `architecture` | a declaration's doc comment or directory-wide `CONTRACTS` | none | boundaries and dependencies |
+| `ceiling` | the shortcut's declaration doc comment | `until: <the condition that ends it>` | a deliberate shortcut with an exit |
 
-ids are unique across every `CONTRACTS` file in the repository, and unique per source file. the doctrine tells the agent to read every `CONTRACTS` file from the repository root down to the files it touches before editing, on both hosts.
+ids are unique across every `CONTRACTS` file in the repository, and unique per source file. put each contract in the doc comment of the declaration it governs. a directory's `CONTRACTS` file holds only rules for the whole directory: architecture, dependencies, security. the doctrine tells the agent to read every `CONTRACTS` file from the repository root down to the files it touches and the contracts on declarations it calls, on both hosts.
 
-a rule in a `CONTRACTS` file:
+a directory-wide security contract in a `CONTRACTS` file:
 
 ```text
-@cc [label:rule] validated-input
-pipeline stages receive validated page objects and MUST NOT re-check required frontmatter fields.
-deletes: the per-stage None guards on frontmatter fields.
+@cc [label:security] untrusted-webhook-input
+webhook payloads under this directory are untrusted until validated at the HTTP boundary.
 ```
 
 a ceiling in python, c#, typescript, and html. the checker reads comment text, so any comment style works:
@@ -106,11 +107,15 @@ a ceiling in python, c#, typescript, and html. the checker reads comment text, s
 
 ```typescript
 /**
- * @cc [label:rule] trusted-caller
- * callers pass validated input.
- * deletes: the argument guards in every caller.
+ * @cc [label:product] trusted-caller
+ * callers pass a non-empty array of validated names; returns the first name unchanged.
  */
+export function firstName(names: string[]): string {
+  return names[0];
+}
 ```
+
+`deletes: <the code it makes unnecessary>` is optional on every label; place it before the required final `until:` on a ceiling.
 
 ```html
 <!-- @cc [label:ceiling] fake-submit
@@ -130,9 +135,9 @@ ncm ledger [path]   list every ceiling under path with its until: condition
 `check` reports:
 
 - an invalid directive
-- a label other than `rule` or `ceiling`, or no label
+- a missing label or a label other than `product`, `security`, `architecture`, or `ceiling`
 - a missing prose body
-- a rule without a `deletes:` last line, a ceiling without an `until:` last line
+- a ceiling without an `until:` last line
 - a duplicate id inside a file, or across `CONTRACTS` files
 
 it scans the text files in which `git grep --untracked` finds `@cc`, tracked and untracked but not ignored, so it needs a git repository. git skips binaries and never enters a nested repository. `ncm` also skips markdown, because examples in documentation are not declarations. it does not judge prose and does not verify that code complies; the review skill does that.
@@ -148,7 +153,7 @@ without a path the skill reviews the current task's changes against the branch b
 
 1. deletions, one line each, tagged `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`
 2. contract violations, `violates <id>` with the contract's location and evidence
-3. hygiene, `kill: <id>` for a contract that names nothing real and `expired: <id>` for a ceiling whose trigger has fired
+3. hygiene, `kill: <id>` for a contract that restates code, claims an unreal `deletes:`, or has an unobservable ceiling exit; `expired: <id>` for a ceiling whose trigger has fired
 4. the ceiling ledger, for a path scope
 
 it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `lean and compliant. ship.` it lists and applies nothing. correctness, security, and performance belong to `/code-review`.
@@ -163,7 +168,7 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 ## boundaries
 
 - `ncm` validates form, not truth. a contract can be well-formed and wrong.
-- the labels and trailers are fixed. `owner` and `notify` attributes parse but mean nothing here.
+- the labels and required ceiling ending are fixed. `owner` and `notify` attributes parse but mean nothing here.
 - scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
 - OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its doctrine. In Claude Code, say so in the conversation when a task should skip the ladder.
