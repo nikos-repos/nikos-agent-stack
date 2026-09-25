@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installadvisor } from "./advisor/install.js";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
@@ -192,48 +193,45 @@ test("the package exposes only the declared public surface", async () => {
 	]);
 });
 
-test("terra is a native passive advisor with source-backed notes", () => {
-	const watchdog = Bun.YAML.parse(
-		readFileSync(resolve(root, "advisor/WATCHDOG.yml"), "utf8"),
-	) as {
-		advisors: Array<{
-			name: string;
-			enabled: boolean;
-			model: string;
-			tools: string[];
-			instructions: string;
-		}>;
+test("terra advisor installation selects models and preserves peers", () => {
+	const directory = mkdtempSync(resolve(tmpdir(), "nikos-agent-stack-advisor-"));
+	const previousDirectory = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = directory;
+	const watchdogfile = resolve(directory, "WATCHDOG.yml");
+	const readwatchdog = () => Bun.YAML.parse(readFileSync(watchdogfile, "utf8")) as {
+		advisors: Array<{ name: string; model?: string;[key: string]: unknown }>;
 	};
 
-	expect(Object.keys(watchdog)).toEqual(["advisors"]);
-	expect(watchdog.advisors).toHaveLength(1);
+	try {
+		installadvisor();
+		let installed = readwatchdog();
+		expect(installed.advisors).toHaveLength(1);
+		expect(installed.advisors[0].name).toBe("terra");
+		expect(installed.advisors[0].model).toBeUndefined();
 
-	const [terra] = watchdog.advisors;
-	expect(terra.name).toBe("terra");
-	expect(terra.enabled).toBe(true);
-	expect(terra.model).toBe("openai-codex/gpt-5.6-terra:high");
-	expect(terra.tools).toEqual(["read", "grep", "glob"]);
-	expect(terra.instructions).toContain("path");
-	expect(terra.instructions).toContain("line");
-	expect(terra.instructions).toContain("claim");
-	expect(terra.instructions).toContain("read-snapshot digest");
-	expect(terra.instructions).toContain("omp validates only note and severity");
-	expect(terra.instructions).toContain(
-		"this restriction applies only to terra's own operations",
-	);
-	expect(terra.instructions).toContain(
-		"never evaluate OMP-DEV against terra's tool allowlist",
-	);
-	expect(terra.instructions).toContain(
-		"must identify the current OMP-DEV candidate from the session update",
-	);
-	expect(terra.instructions).toContain(
-		"must directly establish the applicable acceptance criterion or existing observable contract",
-	);
-	expect(terra.instructions).toContain(
-		"the digest must belong to that cited read result",
-	);
-	expect(terra.instructions).toContain(
-		"never use an unrelated read only to supply a digest",
-	);
+		installadvisor("arbitrary/provider-model");
+		installed = readwatchdog();
+		expect(installed.advisors[0].model).toBe("arbitrary/provider-model");
+
+		installadvisor();
+		installed = readwatchdog();
+		expect(installed.advisors[0].model).toBe("arbitrary/provider-model");
+
+		installadvisor("override/provider-model");
+		installed = readwatchdog();
+		expect(installed.advisors[0].model).toBe("override/provider-model");
+
+		const peer = { name: "reviewer", enabled: true, model: "peer/model" };
+		writeFileSync(watchdogfile, Bun.YAML.stringify({ advisors: [peer, ...installed.advisors] }));
+		installadvisor();
+		installed = readwatchdog();
+		expect(installed.advisors).toContainEqual(peer);
+		expect(installed.advisors.find((advisor) => advisor.name === "terra")?.model).toBe(
+			"override/provider-model",
+		);
+	} finally {
+		if (previousDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previousDirectory;
+		rmSync(directory, { recursive: true, force: true });
+	}
 });

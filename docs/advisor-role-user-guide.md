@@ -27,10 +27,11 @@ source: [package](../package.json), [shell command](../advisor/cli.js)
 omp plugin install nikos-agent-stack
 ```
 
-this installs the omp extensions. start an omp session and run the setup command with no arguments:
+this installs the omp extensions. start an omp session and run the setup command with no model argument, or pass one optional nonblank model selector:
 
 ```text
 /advisor-install
+/advisor-install [model]
 ```
 
 the command writes terra to the user watchdog configuration. start a new omp session to activate terra. in the new session, enable and inspect the native advisor:
@@ -40,7 +41,7 @@ the command writes terra to the user watchdog configuration. start a new omp ses
 /advisor status
 ```
 
-`/advisor on` enables native passive monitoring. `/advisor status` reports native advisor state. `/advisor-install` accepts no arguments; trailing text produces an error notification.
+`/advisor on` enables native passive monitoring. `/advisor status` reports native advisor state. `/advisor-install` accepts no argument or one optional nonblank model selector; it trims the full trailing text and passes nonblank text as the selector. whitespace-only trailing text behaves like no argument.
 
 for a linked local checkout, use this instead of the published plugin install:
 
@@ -56,9 +57,10 @@ after the global shell-bin prerequisite, run:
 
 ```sh
 nikos-advisor install
+nikos-advisor install [model]
 ```
 
-the command accepts only `install`. success prints the installed path and tells you to start a new omp session. success returns exit code `0`; failure prints an `advisor install:` error and returns exit code `2`.
+the command accepts `install` with one optional nonblank model selector. with no model argument, a fresh terra entry omits `model` and the native omp host resolves its default advisor model role; a no-argument reinstall preserves the model on the existing normalized `terra` entry. an explicit selector overrides that model. success prints the installed path and tells you to start a new omp session. success returns exit code `0`; failure prints an `advisor install:` error and returns exit code `2`.
 
 source: [package](../package.json), [command registration](../advisor/index.ts), [shell installer](../advisor/cli.js), [installer](../advisor/install.js)
 
@@ -75,7 +77,7 @@ the installer validates an existing file before it writes. the document root mus
 
 the packaged profile passes the same validation and contains exactly one advisor named `terra`.
 
-the merge keeps every existing top-level key. it rebuilds `advisors` by keeping entries whose normalized name is not `terra`, then appending the packaged terra entry. name normalization lowercases a name, replaces each run of non-letter and non-digit characters with `-`, and trims `-` characters. a rerun therefore replaces every normalized terra entry, including a customized terra object or extra terra fields, with the shipped profile. other advisor entries remain in the list.
+the merge keeps every existing top-level key. it rebuilds `advisors` by keeping entries whose normalized name is not `terra`, then appending the packaged terra entry. name normalization lowercases a name, replaces each run of non-letter and non-digit characters with `-`, and trims `-` characters. a rerun replaces every normalized terra entry, including a customized terra object or extra terra fields, with the shipped profile; the one exception is the existing `model` value, which a no-argument reinstall preserves. passing one explicit nonblank model selector writes that selector instead. other advisor entries remain in the list.
 
 the installer creates the target directory when needed. if the serialized result is identical to the existing UTF-8 text, it leaves the file alone. otherwise, before replacing an existing file, it saves the original UTF-8 text, including comments, under the same basename in a unique sibling `.watchdog-backup-*` directory. the backup directory is private and its file has mode `0600`. a failed backup prevents replacement; a completed backup remains available if replacement later fails.
 
@@ -97,10 +99,10 @@ the installed profile contains:
 
 - `name: terra`
 - `enabled: true`
-- `model: openai-codex/gpt-5.6-terra:high`
+- the packaged entry omits `model`, so a fresh no-argument install uses the native omp host's default advisor model role.
 - `tools: read`, `grep`, and `glob`
 
-terra can inspect source with `read`, `grep`, and `glob`. terra cannot edit files, write files, or run commands. this tool restriction applies only to terra’s own operations; it does not apply to `OMP-DEV`.
+the native omp host resolves arbitrary configured model selectors; this package does not pin one. model choice does not change terra's identity or shipped instructions. terra can inspect source with `read`, `grep`, and `glob`; it cannot edit files, write files, or run commands. this tool restriction applies only to terra's own operations; it does not apply to `OMP-DEV`.
 
 source: [terra profile](../advisor/WATCHDOG.yml)
 
@@ -171,10 +173,6 @@ source: [installer](../advisor/install.js), [package](../package.json)
 
 ## troubleshooting
 
-### `/advisor-install` rejects the command
-
-run `/advisor-install` with no trailing text. the slash command accepts no arguments.
-
 ### `nikos-gates` is not found
 
 install the package globally and export the global bun bin directory:
@@ -196,7 +194,7 @@ run `/advisor-install`, start a new omp session, run `/advisor on`, and run `/ad
 
 ### a direct shell install fails
 
-use exactly `nikos-advisor install`. the direct command rejects another subcommand or extra arguments, prints the failure as `advisor install: ...`, and returns exit code `2`.
+use `nikos-advisor install` or `nikos-advisor install [model]`. the direct command rejects another subcommand, extra arguments, or a blank selector, prints the failure as `advisor install: ...`, and returns exit code `2`.
 
 ### a terra note has incomplete evidence
 
@@ -204,10 +202,6 @@ native omp can accept the note because it validates only `note` and `severity`. 
 
 ### the terra model is unavailable
 
-the shipped model is `openai-codex/gpt-5.6-terra:high`. make that model available to the native omp host, start a new omp session, enable the advisor, and check `/advisor status` again.
+the packaged profile has no pinned model. on a fresh no-argument install, the native omp host resolves its default advisor model role; on a no-argument reinstall, the existing normalized terra model is preserved. to choose a model explicitly, rerun `/advisor-install [model]` or `nikos-advisor install [model]` with a nonblank selector, then start a new omp session, enable the advisor, and check `/advisor status`.
 
 source: [terra profile](../advisor/WATCHDOG.yml), [installer](../advisor/install.js), [shell installer](../advisor/cli.js), [command registration](../advisor/index.ts)
-
-## Proposed advisor guidance release
-
-The candidate preserves Terra's native name, enabled flag, model and read/grep/glob tool list. It preserves every instruction substring pinned by plugin.test.ts and adds current candidate identity, quiet duplicate handling and separate diagnosis/remedy assessment. OMP validates note and severity; path/line/claim/read-snapshot digest remain prompt conventions. Silence is not a passed check, and no transport coalescer or authority is added. The packaged installer preserves peer advisors; verify the merged live file and retained backup before activation. See [the control map](../omp-skills-stuffs-prompts-and-more/OMP-DEV-USER-GUIDE.md).
