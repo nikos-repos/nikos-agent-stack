@@ -174,17 +174,18 @@ export function scan(target = "."): scanresult {
 	}
 
 	// CONTRACTS ids are citable across the repository, so they are unique across every CONTRACTS file,
-	// in scope or not. a scoped scan reports each duplicate pair that touches its scope.
-	// @cc [label:ceiling] second-walk
-	// a scoped scan holding a CONTRACTS file walks the untracked tree again to find the other ones.
-	// until: a scoped check is measured slow; then list the other CONTRACTS files with git ls-files.
+	// in scope or not. a scope holding a CONTRACTS file walks the tree again to find the others, and
+	// each duplicate is reported on its in-scope side.
 	const everyfile = pathspec === "." || !scoped.size ? [...scoped.keys()] : candidates(root, ":(glob)**/CONTRACTS");
 	const firsts = new Map<string, contract>();
 	for (const file of everyfile) {
 		for (const item of scoped.get(file) ?? parsefile(file, readFileSync(resolve(root, file), "utf8")).contracts) {
 			const first = firsts.get(item.id);
 			if (!first) firsts.set(item.id, item);
-			else if (first.file !== item.file && (scoped.has(first.file) || scoped.has(item.file))) result.findings.push({ file: item.file, line: item.line, message: `duplicate id ${item.id} across CONTRACTS files (first at ${first.file}:${first.line})` });
+			else if (first.file !== item.file && (scoped.has(first.file) || scoped.has(item.file))) {
+				const [at, other] = scoped.has(item.file) ? [item, first] : [first, item];
+				result.findings.push({ file: at.file, line: at.line, message: `duplicate id ${item.id} across CONTRACTS files (also at ${other.file}:${other.line})` });
+			}
 		}
 	}
 	result.findings.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));

@@ -127,10 +127,11 @@ describe("n-code-mode checker", () => {
 				"bad/CONTRACTS:24: invalid @cc directive",
 				`many/CONTRACTS:1: CONTRACTS holds ${budget + 1} contracts; the budget is ${budget}`,
 				"src/c.cs:1: ceiling single-series: needs a until: trailer as its last line",
-				"sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (first at CONTRACTS:6)",
+				"sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (also at CONTRACTS:6)",
 			]);
-			// a scoped scan still sees the root CONTRACTS it collides with.
-			expect(show(resolve(root, "sub"))).toEqual(["sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (first at CONTRACTS:6)"]);
+			// a scoped scan still sees the CONTRACTS it collides with, and reports on its own side.
+			expect(show(resolve(root, "sub"))).toEqual(["sub/CONTRACTS:1: duplicate id git-scoped across CONTRACTS files (also at CONTRACTS:6)"]);
+			expect(show(resolve(root, "CONTRACTS"))).toEqual(["CONTRACTS:6: duplicate id git-scoped across CONTRACTS files (also at sub/CONTRACTS:1)"]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
