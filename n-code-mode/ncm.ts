@@ -42,8 +42,6 @@ export interface scanresult {
 	files: number;
 }
 
-class clierror extends Error { }
-
 // one entry per source line: the comment text on that line, or null when the line is code.
 // CONTRACTS files are all content, so every line is text.
 function commenttext(source: string, everyline: boolean): Array<string | null> {
@@ -145,13 +143,13 @@ function candidates(root: string, pathspec: string): string[] {
 // markdown is documentation: examples in it are not declarations.
 export function scan(target = "."): scanresult {
 	const start = resolve(target);
-	if (!existsSync(start)) throw new clierror(`no such path: ${target}`);
+	if (!existsSync(start)) throw new Error(`no such path: ${target}`);
 	const cwd = statSync(start).isDirectory() ? start : dirname(start);
 	let root: string;
 	try {
 		root = git(["rev-parse", "--show-toplevel"], cwd).trim();
 	} catch {
-		throw new clierror(`ncm needs a git repository; ${target} is not inside one`);
+		throw new Error(`ncm needs a git repository; ${target} is not inside one`);
 	}
 	const pathspec = relative(root, start) || ".";
 
