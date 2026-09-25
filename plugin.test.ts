@@ -21,6 +21,7 @@ const expectedExtensions = [
 	"./omnipotence/index.ts",
 	"./ask-questionnaire/index.ts",
 	"./orchestrate-prompt/index.ts",
+	"./n-code-mode/index.ts",
 	"./advisor/index.ts",
 ];
 
@@ -63,6 +64,7 @@ const expectedFiles = [
 	"orchestrate-prompt/index.ts",
 	"orchestrate-prompt/prompt.md",
 	"docs/orchestrate-prompt-user-guide.md",
+	"n-code-mode/index.ts",
 	"n-code-mode/ncm.ts",
 	"n-code-mode/.claude-plugin/plugin.json",
 	"n-code-mode/.claude-plugin/marketplace.json",
