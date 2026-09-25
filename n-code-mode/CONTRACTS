@@ -2,30 +2,10 @@
 ncm.ts imports node builtins only. a runtime dependency MUST NOT be added to the checker.
 deletes: an install step, a lockfile entry, and a supply-chain read for the checker.
 
-@cc [label:rule] language-agnostic
-the checker reads @cc blocks out of comment text. it MUST NOT parse a language's syntax tree.
-deletes: per-language extractors; code-contracts ships 2,297 lines of them for four languages.
+@cc [label:rule] deep-module
+ncm.ts is the whole checker. it exports scan, runcli, and version with their result types; every other function stays private. a new check goes inside parsefile or scan, never into a new module or a new export.
+deletes: a module split, the imports and re-exports between the pieces, and callers or tests pinned to internals.
 
-@cc [label:rule] git-scoped
-file discovery is `git grep --untracked` for `@cc` over tracked and untracked-unignored files. there is no directory walker and no per-file sniff.
-deletes: skip-lists for node_modules, build output, and scratch checkouts, and the binary sniff.
-
-@cc [label:rule] two-labels
-a contract's label is `rule` or `ceiling`. any other label, or none, is a finding.
-deletes: owner and notify handling and the review-bot vocabulary behind them.
-
-@cc [label:rule] trailer-required
-a rule ends with `deletes:` and a ceiling ends with `until:`. the checker enforces both.
-deletes: the model-judged question "does this contract earn its place"; it is now a grep.
-
-@cc [label:rule] budget-twelve
-a CONTRACTS file holds at most 12 contracts.
-deletes: discovery tooling for rules; a 12-entry file is read whole on entering the repo.
-
-@cc [label:rule] one-skill
-the plugin ships one skill. audit, verification, and the ledger are its scope arguments.
-deletes: separate audit, debt, and verify skills and their overlapping descriptions.
-
-@cc [label:rule] no-hooks
-the plugin registers no hooks. the doctrine reaches every session and subagent through `~/.claude/CLAUDE.md`, which carries doctrine.md by paste or by an approved import.
-deletes: SessionStart and SubagentStart injectors and their per-session token cost.
+@cc [label:rule] one-fixture
+ncm.test.ts builds one git repository with fixture() and drives it through scan and runcli. a new case is lines in that fixture plus its expected finding in the existing list. no mocks, no second fixture builder, no test block per check.
+deletes: per-case fixture builders, fs and git mocks, and a test block or file per check.

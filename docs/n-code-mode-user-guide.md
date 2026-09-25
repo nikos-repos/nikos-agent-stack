@@ -12,7 +12,7 @@ it ships five parts:
 | doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder for OMP, plus the Contracts section still wired manually for Claude Code |
 | checker | `n-code-mode/ncm.ts` | `ncm check` validates every `@cc` block in a repository; `ncm ledger` lists the ceilings |
 | review skill | `n-code-mode/skills/review/SKILL.md` | separate Claude Code pass over a diff or path: deletions, contract violations, contracts to kill, and the ledger |
-| contracts | `n-code-mode/CONTRACTS` | the plugin's own eight rules, checked by its own test |
+| contracts | `n-code-mode/CONTRACTS` | the plugin's own coding rules, checked by its own test |
 
 The OMP extension uses a hook, but the Claude Code plugin does not: OMP receives the Lazy Ladder at `before_agent_start`; Claude Code still relies on manually wired doctrine. its standing OMP cost is the concise ladder, while the full doctrine and review skill remain separate Claude workflow pieces.
 
