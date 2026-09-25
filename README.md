@@ -11,7 +11,7 @@ the plugin ships six parts:
 | omnipotence       | omp extension and cli | starts one versioned process and advances it through hidden turns with sqlite recovery             |
 | ask questionnaire | omp extension         | keeps an explicitly declared questionnaire open until the native `ask` tool returns successfully   |
 | terra advisor     | native omp advisor    | a read-only passive watchdog that sends source-backed notes through omp's advisor system           |
-| n-code-mode       | omp extension, claude code plugin, and cli | injects the concise Lazy Ladder into OMP; keeps @cc contracts with deletes: and until: trailers, one review skill, and the ncm checker |
+| n-code-mode       | omp extension, claude code plugin, and cli | injects the Lazy Ladder and the @cc contract rules into OMP; @cc contracts with deletes: and until: trailers, one Claude Code review skill, and the ncm checker |
 
 ## requirements
 
@@ -254,12 +254,12 @@ the [advisor role user guide](https://github.com/nikos-repos/nikos-agent-stack/b
 
 n-code-mode is an OMP extension, a Claude Code plugin, and a command-line checker built on one rule: write less code, and say more about the little you wrote. a contract earns its place when it lets you delete code, never when it narrates code.
 
-- the OMP extension runs `before_agent_start` and appends only the concise Lazy Ladder (the first 14 lines of [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md)) to OMP's native `systemPrompt: string[]`.
-- the Claude Code workflow still wires `doctrine.md` manually; its Contracts section is not injected by OMP.
+- the OMP extension runs `before_agent_start` and appends the whole [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md), Lazy Ladder and Contracts, to OMP's native `systemPrompt: string[]`.
+- Claude Code wires the same `doctrine.md` manually through `~/.claude/CLAUDE.md`.
 - `ncm check` validates every `@cc` block in a repository: grammar, a `rule` or `ceiling` label, the `deletes:` or `until:` trailer, and unique ids. `ncm ledger` lists the ceilings.
 - `/n-code-mode:review` is a separate Claude Code skill: one pass over a diff or a path for deletions, contract violations, contracts to kill, and the ledger.
 
-Install the package with `omp plugin install nikos-agent-stack`, then start a new OMP session. the extension activates automatically; there is no separate OMP command. verify the Lazy Ladder is present in that new session before changing or disabling another prompt injector. if Ponytail is still active, both injectors may contribute guidance, so treat the overlap as intentional dual injection until the new session is verified.
+Install the package with `omp plugin install nikos-agent-stack`, then start a new OMP session. the extension activates automatically; there is no separate OMP command. verify the doctrine is present in that new session before changing or disabling another prompt injector. if Ponytail is still active, both injectors may contribute guidance, so treat the overlap as intentional dual injection until the new session is verified.
 
 the [n-code-mode user guide](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/n-code-mode-user-guide.md) covers OMP activation, Claude wiring, the grammar, the checker, and the review pass.
 
@@ -321,10 +321,10 @@ terra advisor:
 | [`orchestrate-prompt/index.ts`](orchestrate-prompt/index.ts)                                                                                       | standalone prose orchestration prompt extension                                      |
 | [`orchestrate-prompt/prompt.md`](orchestrate-prompt/prompt.md)                                                                                     | bundled editable orchestration prompt template                                      |
 | [`docs/orchestrate-prompt-user-guide.md`](docs/orchestrate-prompt-user-guide.md)                                                           | installation, customization, activation, and prompt behavior guide                  |
-| [`n-code-mode/index.ts`](n-code-mode/index.ts)                                                                                           | OMP `before_agent_start` extension: appends the Lazy Ladder to the native system prompt       |
+| [`n-code-mode/index.ts`](n-code-mode/index.ts)                                                                                           | OMP `before_agent_start` extension: appends the doctrine to the native system prompt          |
 | [`n-code-mode/ncm.ts`](n-code-mode/ncm.ts)                                                                                               | `ncm check` and `ncm ledger`: language-agnostic @cc contract checker and ceiling ledger        |
 | [`n-code-mode/skills/review/SKILL.md`](n-code-mode/skills/review/SKILL.md)                                                               | separate Claude Code review pass: deletions, contract violations, contracts to kill, and ledger |
-| [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md)                                                                                     | Lazy Ladder for OMP; full doctrine and Contracts source for Claude wiring                     |
+| [`n-code-mode/doctrine.md`](n-code-mode/doctrine.md)                                                                                     | Lazy Ladder and Contracts; injected into OMP, wired manually into Claude Code                 |
 | [`n-code-mode/CONTRACTS`](n-code-mode/CONTRACTS)                                                                                         | the plugin's own rules, checked by its test                                                    |
 | [`docs/n-code-mode-user-guide.md`](docs/n-code-mode-user-guide.md)                                                                       | install, wiring, grammar, checker, and review guide                                            |
 | [`docs/gates-plugin-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/gates-plugin-user-guide.md)           | complete gate user and operator guide                                                 |

@@ -8,13 +8,13 @@ it ships five parts:
 
 | part | file | what it does |
 | --- | --- | --- |
-| OMP extension | `n-code-mode/index.ts` | runs `before_agent_start` and appends the concise Lazy Ladder (doctrine lines 1–14) to OMP's native `systemPrompt: string[]`; it does not inject Contracts |
-| doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder for OMP, plus the Contracts section still wired manually for Claude Code |
+| OMP extension | `n-code-mode/index.ts` | runs `before_agent_start` and appends the whole doctrine, Lazy Ladder and Contracts, to OMP's native `systemPrompt: string[]` |
+| doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder and the Contracts rules; OMP injects it, Claude Code wires it manually |
 | checker | `n-code-mode/ncm.ts` | `ncm check` validates every `@cc` block in a repository; `ncm ledger` lists the ceilings |
 | review skill | `n-code-mode/skills/review/SKILL.md` | separate Claude Code pass over a diff or path: deletions, contract violations, contracts to kill, and the ledger |
 | contracts | `n-code-mode/CONTRACTS` | the plugin's own coding rules, checked by its own test |
 
-The OMP extension uses a hook, but the Claude Code plugin does not: OMP receives the Lazy Ladder at `before_agent_start`; Claude Code still relies on manually wired doctrine. its standing OMP cost is the concise ladder, while the full doctrine and review skill remain separate Claude workflow pieces.
+The OMP extension uses a hook, but the Claude Code plugin does not: OMP receives the doctrine at `before_agent_start`; Claude Code loads the same file from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
 
 ## install
 
@@ -26,7 +26,7 @@ For the published package, install the OMP extension:
 omp plugin install nikos-agent-stack
 ```
 
-Start a new OMP session after installing or updating. `n-code-mode/index.ts` activates automatically at `before_agent_start`; it appends the concise Lazy Ladder to OMP's native `systemPrompt: string[]`. there is no separate activation command, and OMP does not receive the Claude-specific Contracts section.
+Start a new OMP session after installing or updating. `n-code-mode/index.ts` activates automatically at `before_agent_start`; it appends the whole doctrine to OMP's native `systemPrompt: string[]`. there is no separate activation command.
 
 For a local checkout, from the repository root use `omp plugin link .` instead. the same link makes the extension available to the next OMP session.
 
@@ -61,7 +61,7 @@ claude --plugin-dir ./n-code-mode
 
 ## Claude Code doctrine wiring
 
-the OMP extension already appends the Lazy Ladder at `before_agent_start`; this section is only for Claude Code. Claude Code still loads doctrine through user memory, so wire both sections of `n-code-mode/doctrine.md` manually. the review skill and Contracts remain separate Claude workflow pieces. the two methods below were probed on Claude Code 2.1.278:
+the OMP extension already appends the doctrine at `before_agent_start`; this section is only for Claude Code. Claude Code loads doctrine through user memory, so wire both sections of `n-code-mode/doctrine.md` manually. the review skill is Claude Code only. the two methods below were probed on Claude Code 2.1.278:
 
 **paste it.** copy the two sections of `n-code-mode/doctrine.md` into `~/.claude/CLAUDE.md`. no dialogs, headless `-p` runs carry it, and re-pasting the doctrine when it changes is the maintenance. this is the recommended Claude wiring.
 
@@ -69,7 +69,7 @@ the OMP extension already appends the Lazy Ladder at `before_agent_start`; this 
 
 ### Ponytail cutover and verification
 
-Do not uninstall Ponytail as part of installation. In a fresh OMP session, inspect the effective system prompt for the n-code-mode Lazy Ladder segment; an agent answer alone cannot distinguish it from Ponytail while both are active. Once verified, disable Ponytail, start another session, and confirm the ladder remains before uninstalling it. Both injectors may contribute guidance during the overlap, so the OMP token cost has not been measured. Claude Code doctrine wiring remains separate.
+Do not uninstall Ponytail as part of installation. In a fresh OMP session, inspect the effective system prompt for the n-code-mode doctrine segment; an agent answer alone cannot distinguish it from Ponytail while both are active. Once verified, disable Ponytail, start another session, and confirm the doctrine remains before uninstalling it. Both injectors may contribute guidance during the overlap, so the OMP token cost has not been measured. Claude Code doctrine wiring remains separate.
 
 ## the grammar
 
@@ -80,7 +80,7 @@ a contract is one `@cc` directive followed by prose. the directive is code-contr
 | `rule` | a `CONTRACTS` file at the directory it governs | `deletes: <the code it makes unnecessary>` | a promise callers may rely on instead of writing a guard, a wrapper, or a dependency |
 | `ceiling` | a comment beside a deliberate shortcut | `until: <the condition that ends it>` | a known limit with the trigger that retires it |
 
-ids are unique across every `CONTRACTS` file in the repository, and unique per source file. a repository's `CLAUDE.md` imports its `CONTRACTS` file with a single `@CONTRACTS` line, so the rules are read on entering the repository without a reminder.
+ids are unique across every `CONTRACTS` file in the repository, and unique per source file. the doctrine tells the agent to read every `CONTRACTS` file from the repository root down to the files it touches before editing, on both hosts.
 
 a rule in a `CONTRACTS` file:
 
@@ -155,7 +155,7 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 
 ## what it replaces
 
-- the OMP extension replaces manual Lazy Ladder wiring for OMP only; it does not inject Contracts and does not replace the separate Claude Code review skill.
+- the OMP extension replaces manual doctrine wiring for OMP only; it does not replace the separate Claude Code review skill.
 - any comparison with Ponytail's token cost is an estimate from a different setup, not an OMP measurement. actual OMP cost depends on prompt serialization and the active model; measure it in your own environment if it matters.
 - Ponytail's `review`, `audit`, and `debt` skills are still a separate concern; n-code-mode's Claude review skill consolidates that review workflow with a scope argument.
 - `cc-check` from code-contracts. its `list` command cannot produce a ledger, its published package depends on pyright and a typescript language server, it pins node 24, and the repository carries no license. `ncm` keeps the directive grammar so the two formats stay compatible on the line that matters.
@@ -166,4 +166,4 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired.` or `
 - the labels and trailers are fixed. `owner` and `notify` attributes parse but mean nothing here.
 - scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
-- OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its ladder. In Claude Code, say so in the conversation when a task should skip the ladder.
+- OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its doctrine. In Claude Code, say so in the conversation when a task should skip the ladder.

@@ -17,7 +17,7 @@ Contracts
 ---------
 
 * write less code, and say more about the little you wrote. a contract earns its place when it lets you delete code, never when it narrates code
-* grammar: `@cc [label:rule] id` in a repo's `CONTRACTS` file (that repo's CLAUDE.md imports it with `@CONTRACTS`); `@cc [label:ceiling] id` in a comment beside a deliberate shortcut. prose on the lines below the directive
+* grammar: `@cc [label:rule] id` in a repo's `CONTRACTS` file; `@cc [label:ceiling] id` in a comment beside a deliberate shortcut. prose on the lines below the directive. before editing, read every `CONTRACTS` file from the repo root down to the files you touch
 * a rule's prose ends with `deletes: <the code it makes unnecessary>`. a ceiling's ends with `until: <the condition that ends it>`. missing trailer = deleted at the next review
-* after adding or editing a contract, run `ncm check <path>`. it validates grammar, label, trailer, and id uniqueness
-* findings cite contract ids. `/n-code-mode:review` verifies a diff by default, or a path
+* after adding or editing a contract, run `ncm check <path>` on any host. it validates grammar, label, trailer, and id uniqueness
+* findings cite contract ids. in Claude Code, `/n-code-mode:review` verifies a diff by default, or a path
