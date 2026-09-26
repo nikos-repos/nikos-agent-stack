@@ -209,11 +209,15 @@ export function scan(target = "."): scanresult {
 // @cc [label:product] list-scope
 // for a file, list every CONTRACTS file from the repository root through its directory,
 // then its own blocks (except markdown); a CONTRACTS path counts once. for a directory,
-// list only CONTRACTS files through that directory. do not follow calls.
+// list only CONTRACTS files through that directory. do not follow calls. every path must
+// sit in one repository, so each printed location names one file.
 function list(targets: readonly string[]): contract[] {
 	const byLocation = new Map<string, contract>();
+	let shared: string | undefined;
 	for (const target of targets) {
 		const { start, root, isDirectory } = repository(target);
+		shared ??= root;
+		if (root !== shared) throw new Error(`list paths must share one repository; ${target} is outside ${shared}`);
 		const relativeDirectory = relative(root, isDirectory ? start : dirname(start));
 		const parts = relativeDirectory ? relativeDirectory.split(sep) : [];
 		let directory = root;

@@ -163,6 +163,9 @@ describe("n-code-mode checker", () => {
 				"src/b.ts:2\tproduct\ttrusted-caller\tcallers pass validated input. deletes: guards in every caller.",
 				"ncm: 4 contracts apply to 2 paths",
 			]);
+			const mixed: string[] = [];
+			expect(runcli(["list", resolve(root, "src/a.py"), resolve(root, "nested/x.py")], () => { }, (text) => { mixed.push(text); })).toBe(2);
+			expect(mixed.join("\n")).toContain("list paths must share one repository");
 
 			const outside = spawnSync("bun", [ncm, "check", plain], { encoding: "utf8" });
 			expect(outside.status).toBe(2);
