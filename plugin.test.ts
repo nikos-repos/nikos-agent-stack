@@ -216,22 +216,12 @@ test("terra advisor installation selects models and preserves peers", () => {
 		installed = readwatchdog();
 		expect(installed.advisors[0].model).toBe("arbitrary/provider-model");
 
-		installadvisor();
-		installed = readwatchdog();
-		expect(installed.advisors[0].model).toBe("arbitrary/provider-model");
-
-		installadvisor("override/provider-model");
-		installed = readwatchdog();
-		expect(installed.advisors[0].model).toBe("override/provider-model");
-
 		const peer = { name: "reviewer", enabled: true, model: "peer/model" };
 		writeFileSync(watchdogfile, Bun.YAML.stringify({ advisors: [peer, ...installed.advisors] }));
 		installadvisor();
 		installed = readwatchdog();
 		expect(installed.advisors).toContainEqual(peer);
-		expect(installed.advisors.find((advisor) => advisor.name === "terra")?.model).toBe(
-			"override/provider-model",
-		);
+		expect(installed.advisors.find((advisor) => advisor.name === "terra")?.model).toBeUndefined();
 	} finally {
 		if (previousDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previousDirectory;

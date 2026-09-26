@@ -86,7 +86,7 @@ after `/advisor-install`, restart omp:
 /advisor status
 ```
 
-`/advisor-install` updates the watchdog configuration. with no model argument, a fresh terra entry omits `model`, so the native omp host resolves its default advisor model role; a no-argument reinstall preserves the model already configured on the normalized `terra` entry. Supplying one nonblank model selector explicitly overrides that value. The host resolves arbitrary configured model selectors; the package does not pin one.
+`/advisor-install` updates the watchdog configuration. with no model argument, the terra entry omits `model`, including on reinstall, so the native omp host resolves its `advisor` model role (set with `/model`). Supplying one nonblank model selector pins it as terra's `model`, which takes precedence over the `advisor` role. The host resolves arbitrary configured model selectors; the package does not pin one.
 
 Model choice does not change terra's persona: the advisor remains the native, enabled `terra` advisor with its shipped read-only instructions and `read`, `grep`, and `glob` tool list. `/advisor on` enables native passive monitoring and `/advisor status` reports native advisor state. omp owns advisor routing, concern and blocker interruption, and the advisor ui.
 
@@ -284,7 +284,7 @@ questionnaire:
 
 terra advisor:
 
-- a fresh no-argument install leaves terra's `model` unset so the native omp host supplies its default advisor model role; a no-argument reinstall preserves an existing normalized terra model, while one explicit nonblank model selector overrides it. The host may resolve any configured model selector.
+- a no-argument install, including a reinstall, leaves terra's `model` unset so the native omp host supplies its `advisor` model role; one explicit nonblank model selector pins terra's `model`, which takes precedence over that role. The host may resolve any configured model selector.
 - model selection does not alter terra's identity, shipped instructions, or `read`, `grep`, and `glob` tool list.
 - `/advisor-install` preserves top-level instructions and non-terra advisors, replaces or adds terra by normalized name, validates the native watchdog schema, and writes atomically in `PI_CODING_AGENT_DIR` when set, otherwise `~/.omp/agent`, to `WATCHDOG.yml` or an existing `WATCHDOG.yaml` when no `.yml` file exists. `nikos-advisor install [model]` provides the same setup for direct package use.
 - terra is read-only. omp routes its passive notes, handles concern and blocker interruption, and renders the advisor ui.

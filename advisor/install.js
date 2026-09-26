@@ -108,11 +108,11 @@ export function installadvisor(model) {
   const current = existsSync(file) ? readFileSync(file, "utf8") : null;
   const document = current === null ? {} : validatewatchdog(Bun.YAML.parse(current), "existing");
   const terra = packagedterra();
-  const chosenModel = model === undefined
-    ? document.advisors?.findLast((advisor) => normalizedname(advisor.name) === "terra")?.model?.trim()
-    : model.trim();
-  if (model !== undefined && !chosenModel) throw new Error("advisor model must not be empty");
-  if (chosenModel) terra.model = chosenModel;
+  if (model !== undefined) {
+    const chosenModel = model.trim();
+    if (!chosenModel) throw new Error("advisor model must not be empty");
+    terra.model = chosenModel;
+  }
   const contents = Bun.YAML.stringify({
     ...document,
     advisors: [
