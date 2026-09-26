@@ -8,14 +8,14 @@ it ships six parts:
 
 | part | file | what it does |
 | --- | --- | --- |
-| OMP extension | `n-code-mode/index.ts` | appends the whole doctrine at `before_agent_start`, registers the `ncm` tool, and appends findings plus governing contracts to successful edit/write results |
+| OMP extension | `n-code-mode/index.ts` | appends the whole doctrine at `before_agent_start`, registers a read-only `ncm` tool, and appends findings plus governing contracts to successful edit/write results |
 | doctrine | `n-code-mode/doctrine.md` | the Lazy Ladder and the Contracts rules; OMP injects it, Claude Code wires it manually |
 | checker | `n-code-mode/ncm.ts` | `ncm check` validates `@cc` blocks; `ncm list` shows governing contracts; `ncm ledger` lists ceilings |
 | Claude Code Stop hook | `n-code-mode/hooks/hooks.json` and `n-code-mode/hooks/stop.ts` | blocks a stop when changed files contain contract findings |
 | review skill | `n-code-mode/skills/review/SKILL.md` | separate Claude Code pass over a diff or path: deletions, contract violations, contracts to kill, and the ledger |
-| contracts | `n-code-mode/ncm.ts` and `n-code-mode/ncm.test.ts` | the plugin's own specifications on its checker and fixture, checked by its own test |
+| contracts | `n-code-mode/ncm.ts`, `ncm.test.ts`, `index.ts`, `hooks/stop.ts` | the plugin's own `@cc` contracts, checked by its own test |
 
-The OMP extension injects doctrine, offers a tool, and appends edit/write notices; the Claude Code plugin registers one Stop hook instead of using those OMP hooks. Claude Code loads the same doctrine from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
+The OMP extension injects doctrine, offers a read-only `ncm` tool, and appends edit/write notices; the Claude Code plugin registers one Stop hook instead. Claude Code loads the same doctrine from manually wired user memory. both hosts carry the same text. the review skill is Claude Code only.
 
 ## install
 
@@ -52,19 +52,19 @@ claude plugin marketplace add ./n-code-mode
 claude plugin install n-code-mode@n-code-mode
 ```
 
-Installed plugins are copied into `~/.claude/plugins/cache`. after editing the repository, run `claude plugin update n-code-mode@n-code-mode`, or load the working copy for one session without installing:
+Installed plugins are copied into `~/.claude/plugins/cache`. after editing the repository, run `claude plugin update n-code-mode@n-code-mode` to pick up hook changes, or load the working copy for one session without installing:
 
 ```sh
 claude --plugin-dir ./n-code-mode
 ```
 
-`claude plugin validate n-code-mode` checks both manifests.
+`claude plugin validate n-code-mode` checks the marketplace manifest; `claude plugin validate n-code-mode/.claude-plugin/plugin.json` checks the plugin manifest.
 
 the plugin's Stop hook checks changed tracked and untracked, unignored files for contract findings. findings make it exit 2 so Claude keeps working; it blocks at most once per stop cycle. `bun` must be on PATH.
 
 ## Claude Code doctrine wiring
 
-the OMP extension already appends the doctrine at `before_agent_start`; this section is only for Claude Code. Claude Code loads doctrine through user memory, so wire both sections of `n-code-mode/doctrine.md` manually. the review skill is Claude Code only. the two methods below were probed on Claude Code 2.1.278:
+the OMP extension already appends the doctrine at `before_agent_start`; this section is only for Claude Code. Claude Code loads doctrine through user memory, so wire both sections of `n-code-mode/doctrine.md` manually and re-paste it after changes, or keep the import below in place. the review skill is Claude Code only. the two methods below were probed on Claude Code 2.1.278:
 
 **paste it.** copy the two sections of `n-code-mode/doctrine.md` into `~/.claude/CLAUDE.md`. no dialogs, headless `-p` runs carry it, and re-pasting the doctrine when it changes is the maintenance. this is the recommended Claude wiring.
 
@@ -78,14 +78,16 @@ Do not uninstall Ponytail as part of installation. In a fresh OMP session, inspe
 
 a contract is one `@cc` directive followed by prose. the directive is code-contracts' grammar: `@cc [key:value,...] id`, where tokens contain no whitespace, commas, colons, or brackets. n-code-mode fixes four labels; only ceilings require an ending:
 
-| label | where it lives | required ending | meaning |
+| label | recommended placement | required ending | meaning |
 | --- | --- | --- | --- |
 | `product` | a declaration's doc comment | none | behavior callers rely on: preconditions, postconditions, invariants |
 | `security` | a declaration's doc comment or directory-wide `CONTRACTS` | none | trust and data-handling assumptions |
 | `architecture` | a declaration's doc comment or directory-wide `CONTRACTS` | none | boundaries and dependencies |
 | `ceiling` | the shortcut's declaration doc comment | `until: <the condition that ends it>` | a deliberate shortcut with an exit |
 
-ids are unique across every `CONTRACTS` file in the repository, and unique per source file. put each contract in the doc comment of the declaration it governs. a directory's `CONTRACTS` file holds only rules for the whole directory: architecture, dependencies, security. the doctrine tells the agent to use `ncm list <file>` for directory-wide and file-local contracts, then read the contracts on declarations it calls.
+placement is doctrine and review guidance, not a checker rule: `ncm` accepts any label in any file and does not check whether a contract sits on the declaration it governs. ids are unique across every `CONTRACTS` file in the repository, and unique per source file. put each contract in the doc comment of the declaration it governs. a directory's `CONTRACTS` file holds only rules for the whole directory: architecture, dependencies, security. the doctrine tells the agent to use `ncm list <file>` for directory-wide and file-local contracts, then read the contracts on declarations it calls.
+
+the old `rule` label is gone, and so is the 12-contract cap per `CONTRACTS` file. a `[label:rule]` contract now reports a label finding; relabel it `product`, `security`, or `architecture`.
 
 a directory-wide security contract in a `CONTRACTS` file:
 
@@ -134,7 +136,7 @@ ncm list <path>...  list contracts governing each path (one or more paths requir
 ncm ledger [path]   list every ceiling under path with its until: condition
 ```
 
-`check` prints one `path:line: message` per finding and exits 1 when there are any, 0 when clean. `list` prints one `<file>:<line>\t<label or ->\t<id>\t<prose>` line per contract (non-empty prose lines joined with spaces), sorted by file and line and deduplicated across the requested paths. it ends with `ncm: <N> contracts apply to <M> paths` and exits 0; it does not follow calls. `ledger` prints `path:line`, the id, and the `until:` text separated by tabs, and exits 0. exit code 2 means a usage or environment error, including `list` without a path. paths print relative to the repository root.
+`check` prints each finding as `<file>:<line>: <message>`. when findings exist it then prints `ncm: <N> findings in <F> files` and exits 1; when clean it prints `ncm: clean. <C> contracts in <F> files (<K> ceilings)` and exits 0. `list` prints one `<file>:<line>\t<label or ->\t<id>\t<prose>` line per contract (non-empty prose lines joined with spaces), sorted by file and line and deduplicated across the requested paths. it then prints `ncm: <N> contracts apply to <M> paths` and exits 0; it does not follow calls. `ledger` prints each ceiling as `<file>:<line>\t<id>\tuntil: <condition>` and then prints `ncm: <N> ceilings in <F> files`; it exits 0 and uses `(missing)` when a ceiling has no trailer. exit code 2 means a usage or environment error, including `list` without a path or more than one path for `check` or `ledger`; `--help` and `--version` exit 0. paths print relative to the repository root.
 
 `check` reports:
 
@@ -142,7 +144,7 @@ ncm ledger [path]   list every ceiling under path with its until: condition
 - a missing label or a label other than `product`, `security`, `architecture`, or `ceiling`
 - a missing prose body
 - a ceiling without an `until:` last line
-- a duplicate id inside a file, or across `CONTRACTS` files
+- a duplicate id inside a file, or across `CONTRACTS` files; when a scoped path contains a `CONTRACTS` file, a cross-file duplicate is reported on the in-scope side
 
 `check` scans the text files in which `git grep --untracked` finds `@cc`, tracked and untracked but not ignored, so it needs a git repository. git skips binaries and never enters a nested repository. `check` skips markdown examples; `list` includes directory-wide `CONTRACTS` but skips a markdown file's own examples. `ncm` does not judge prose or verify that code complies; the review skill does that.
 
@@ -153,7 +155,7 @@ ncm ledger [path]   list every ceiling under path with its until: condition
 /n-code-mode:review path/to/dir
 ```
 
-without a path the skill reviews the current task's changes against the branch base. with a path it audits that path in full. it runs `ncm check` first and prints the output verbatim, runs `ncm list` for every touched file to read directory rules and each file's own contracts, then reads `@cc` blocks on declarations those files call (`ncm list` does not follow calls). then it reads:
+without a path the skill reviews the current task's changes against the branch base. with a path it audits that path in full. it runs `ncm check` first and prints the output verbatim under `ncm:`, runs `ncm list` for every touched file to read directory rules and each file's own contracts, then reads `@cc` blocks on declarations those files call (`ncm list` does not follow calls). then it reads:
 
 1. deletions, one line each, tagged `delete:`, `stdlib:`, `native:`, `yagni:`, or `shrink:`
 2. contract violations, `violates <id>` with the contract's location and evidence
@@ -165,16 +167,16 @@ it closes with `net: -<N> lines. <V> violations. <K> to kill, <E> expired, <C> c
 ## what it replaces
 
 - the OMP extension replaces manual doctrine wiring for OMP only; it does not replace the separate Claude Code review skill.
+- `cc-check` from code-contracts. its `list` command cannot produce a ledger, its published package depends on pyright and a typescript language server, it pins node 24, and the repository carries no license. `ncm` keeps the directive grammar so the two formats stay compatible on the line that matters.
 - any comparison with Ponytail's token cost is an estimate from a different setup, not an OMP measurement. actual OMP cost depends on prompt serialization and the active model; measure it in your own environment if it matters.
 - Ponytail's `review`, `audit`, and `debt` skills are still a separate concern; n-code-mode's Claude review skill consolidates that review workflow with a scope argument.
-- `cc-check` from code-contracts. its `list` command cannot produce a ledger, its published package depends on pyright and a typescript language server, it pins node 24, and the repository carries no license. `ncm` keeps the directive grammar so the two formats stay compatible on the line that matters.
 
 ## boundaries
 
 - `ncm` validates form, not truth. a contract can be well-formed and wrong.
-- `owner` names who the review asks to look at a changed or removed contract; `notify` parses but means nothing here.
-- `list` works per file and directory, not per declaration, and does not follow calls.
+- `owner` is review metadata for changed or removed contracts; `notify` is accepted metadata but has no behavior.
 - the Claude Code Stop hook checks files differing from HEAD, so files committed during the turn escape it.
-- scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide.
+- scan time follows the size of the untracked tree, because `--untracked` walks it. a repository carrying hundreds of thousands of unignored scratch files takes about a minute; ignore the scratch tree or pass the directory you are reviewing as the path. a path that holds a `CONTRACTS` file walks the tree a second time to find every other `CONTRACTS` file, so its ids stay unique repository-wide. the Claude Code Stop hook scans the whole repository on every stop, so it pays the same cost.
+- `list` works per file and directory, not per declaration, and does not follow calls.
 - ceiling comments must be a comment block on their own: the directive line and its prose, ending at the first non-comment or blank comment line.
-- OMP injection has no separate stop command; disable the n-code-mode extension only when you intend to remove its doctrine. In Claude Code, say so in the conversation when a task should skip the ladder.
+- there is no off command. disable the n-code-mode OMP extension only when you intend to remove its doctrine, `ncm` tool, and edit notice. In Claude Code, say so in the conversation when a task should skip the ladder.

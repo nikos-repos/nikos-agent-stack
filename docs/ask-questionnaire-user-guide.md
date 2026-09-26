@@ -33,7 +33,7 @@ omp owns the native ask contract and ui. native omp handles question validation,
 
 there is no questionnaire bin, package export, slash command, environment trigger, or extension setting. ordinary chat text does not open a questionnaire. only an executed `questionnaire_open` tool call can open one.
 
-sources: [extension source](../ask-questionnaire/index.ts#L1-L143), [package manifest](../package.json#L26-L76), [native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts)
+sources: [extension source](../ask-questionnaire/index.ts#L1-L112), [package manifest](../package.json#L34-L53), [native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts)
 
 ## quick start
 
@@ -272,14 +272,14 @@ the manifest exposes this package surface:
 
 | manifest field | current behavior |
 |---|---|
-| `omp.extensions` | loads `./gate-checker/index.ts`, `./omnipotence/index.ts`, and `./ask-questionnaire/index.ts` |
+| `omp.extensions` | loads `./gate-checker/index.ts`, `./omnipotence/index.ts`, `./ask-questionnaire/index.ts`, `./orchestrate-prompt/index.ts`, `./n-code-mode/index.ts`, and `./advisor/index.ts` |
 | `files` | publishes `ask-questionnaire/index.ts`, `ask-questionnaire/stop-decision.ts`, and `stop-slot.ts` among the package files |
-| `bin` | provides only `nikos-gates` and `omnipotence` |
+| `bin` | provides `nikos-gates`, `omnipotence`, `ncm`, and `nikos-advisor`; none is questionnaire-specific |
 | `exports` | provides only `./gate-cli` and `./omnipotence` |
 
 `docs/ask-questionnaire-user-guide.md` is repository documentation. it is not in the published `files` list. there is no questionnaire-specific install command or published questionnaire executable.
 
-source: [package manifest](../package.json#L26-L76)
+source: [package manifest](../package.json#L34-L53)
 
 ## troubleshooting
 

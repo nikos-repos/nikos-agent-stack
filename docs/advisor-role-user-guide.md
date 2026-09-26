@@ -41,7 +41,7 @@ the command writes terra to the user watchdog configuration. start a new omp ses
 /advisor status
 ```
 
-`/advisor on` enables native passive monitoring. `/advisor status` reports native advisor state. `/advisor-install` accepts no argument or one optional nonblank model selector; it trims the full trailing text and passes nonblank text as the selector. whitespace-only trailing text behaves like no argument.
+`/advisor on` enables native passive monitoring. `/advisor status` reports native advisor state. `/advisor-install` accepts no argument or one optional nonblank model selector; it trims the full trailing text and passes nonblank text as the selector. whitespace-only trailing text behaves like no argument. on success it notifies `advisor install: installed terra at <path>` and `start a new omp session to activate the advisor`; on failure it notifies `advisor install: <error>` as an error.
 
 for a linked local checkout, use this instead of the published plugin install:
 
@@ -60,7 +60,7 @@ nikos-advisor install
 nikos-advisor install [model]
 ```
 
-the command accepts `install` with one optional nonblank model selector. with no model argument, a fresh terra entry omits `model` and the native omp host resolves its default advisor model role; a no-argument reinstall preserves the model on the existing normalized `terra` entry. an explicit selector overrides that model. success prints the installed path and tells you to start a new omp session. success returns exit code `0`; failure prints an `advisor install:` error and returns exit code `2`.
+the command accepts `install` with one optional nonblank model selector. the selector may be any nonblank string; the installer trims it and stores it as `model` on the shipped `terra` entry. with no model argument, a fresh terra entry omits `model` and the native omp host resolves its default advisor model role; a no-argument reinstall preserves the model from the last normalized `terra` entry when it is nonblank, after trimming. an explicit selector overrides that model. success prints `advisor install: installed terra at <path>` and `start a new omp session to activate the advisor`, then returns exit code `0`. an installation error prints an `advisor install:` error to stderr and returns exit code `2`; an unknown subcommand instead prints `advisor: unknown subcommand "<value>"` and the `usage: nikos-advisor install [model]` line to stderr.
 
 source: [package](../package.json), [command registration](../advisor/index.ts), [shell installer](../advisor/cli.js), [installer](../advisor/install.js)
 
@@ -68,7 +68,7 @@ source: [package](../package.json), [command registration](../advisor/index.ts),
 
 the installer selects the user watchdog file in this order:
 
-1. use `PI_CODING_AGENT_DIR` when it is set; otherwise use `~/.omp/agent`.
+1. use non-empty `PI_CODING_AGENT_DIR` when it is set; otherwise use `~/.omp/agent`.
 2. use `WATCHDOG.yml` when that file exists.
 3. when `WATCHDOG.yml` does not exist but `WATCHDOG.yaml` exists, use `WATCHDOG.yaml`.
 4. when neither file exists, create `WATCHDOG.yml`.
@@ -77,7 +77,7 @@ the installer validates an existing file before it writes. the document root mus
 
 the packaged profile passes the same validation and contains exactly one advisor named `terra`.
 
-the merge keeps every existing top-level key. it rebuilds `advisors` by keeping entries whose normalized name is not `terra`, then appending the packaged terra entry. name normalization lowercases a name, replaces each run of non-letter and non-digit characters with `-`, and trims `-` characters. a rerun replaces every normalized terra entry, including a customized terra object or extra terra fields, with the shipped profile; the one exception is the existing `model` value, which a no-argument reinstall preserves. passing one explicit nonblank model selector writes that selector instead. other advisor entries remain in the list.
+the merge keeps every existing top-level key. it rebuilds `advisors` by keeping entries whose normalized name is not `terra`, then appending the packaged terra entry. name normalization lowercases a name, replaces each run of characters outside ASCII letters and digits with `-`, and trims `-` characters. a rerun replaces every normalized terra entry, including a customized terra object or extra terra fields, with the shipped profile; the model from the last normalized `terra` entry is preserved when it is nonblank and no selector is supplied, after trimming. passing one explicit nonblank model selector writes that selector instead. other advisor entries remain in the list.
 
 the installer creates the target directory when needed. if the serialized result is identical to the existing UTF-8 text, it leaves the file alone. otherwise, before replacing an existing file, it saves the original UTF-8 text, including comments, under the same basename in a unique sibling `.watchdog-backup-*` directory. the backup directory is private and its file has mode `0600`. a failed backup prevents replacement; a completed backup remains available if replacement later fails.
 
@@ -91,7 +91,7 @@ source: [installer](../advisor/install.js), [command registration](../advisor/in
 
 keep the selected backup and the compatible retained package before changing profiles. to select an earlier packaged terra profile, invoke `nikos-advisor install` from that retained package's `advisor/cli.js` with `PI_CODING_AGENT_DIR` set to the intended agent directory. inspect the resulting terra entry and preserved peer settings. running the new package's installer again reselects the new profile; it is not rollback.
 
-when the original comments or formatting are needed, restore the retained pre-merge file after checking that doing so will not overwrite later user edits. a subsequent installer merge can serialize it again. use a new omp session to inspect the restored selection; do not restart an active session merely to activate it. profile selection does not change historical run, approval, or effect records.
+when the original comments or formatting are needed, restore the retained pre-merge file after checking that doing so will not overwrite later user edits. a subsequent installer merge can serialize it again. use a new omp session to inspect the restored selection; do not restart an active session merely to activate it.
 
 ## shipped terra profile
 
@@ -112,7 +112,7 @@ the installer supplies configuration only. the terra profile defines no polling 
 
 native omp owns `/advisor on`, `/advisor status`, advisor routing, concern and blocker interruption, and the advisor ui. terra does not replace these native surfaces.
 
-`OMP-DEV` is the sole writer, integrator, and validator. terra advises from inspected source, but a terra note is not an approval, gate result, or handoff. terra cannot select concern or blocker only to enforce its own tool or authority limits. the separate gate checker owns gate results.
+`OMP-DEV` remains accountable for decisions and acceptance; named workers may perform assigned writes and verification, and a shared delivery branch has its own integrator. terra advises from inspected source, but a terra note is not an approval, gate result, or handoff. terra cannot select concern or blocker only to enforce its own tool or authority limits. the separate gate checker owns gate results.
 
 source: [terra profile](../advisor/WATCHDOG.yml), [package](../package.json)
 
@@ -124,7 +124,7 @@ terra advises only when inspected evidence directly establishes all three links 
 2. an explicit acceptance criterion or existing observable contract that applies to it; and
 3. a concrete path by which the candidate violates that criterion or leaves it materially unverified.
 
-when any link is hypothetical, unobserved, or supported only by an unrelated source, terra stays silent. each recommendation covers one candidate, its acceptance criteria, relevant existing tests, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen settled design.
+when any link is hypothetical, unobserved, or supported only by an unrelated source, terra stays silent. each recommendation covers one candidate, its acceptance criteria, relevant existing proof, and supplied proposals. terra does not propose a broader plan, invent edge cases, or reopen settled design.
 
 when a proposed or speculative test fails, terra classifies the failure before advising:
 
@@ -173,7 +173,7 @@ source: [installer](../advisor/install.js), [package](../package.json)
 
 ## troubleshooting
 
-### `nikos-gates` is not found
+### `nikos-advisor` is not found
 
 install the package globally and export the global bun bin directory:
 
@@ -190,11 +190,11 @@ fix the selected file so it follows the mapping, string, list, and boolean rules
 
 ### terra does not appear in `/advisor status`
 
-run `/advisor-install`, start a new omp session, run `/advisor on`, and run `/advisor status` again. check the file selected by `PI_CODING_AGENT_DIR`, or by the default `~/.omp/agent` path when the variable is unset. confirm that it contains an enabled `terra` entry.
+run `/advisor-install`, start a new omp session, run `/advisor on`, and run `/advisor status` again. check the file selected by `PI_CODING_AGENT_DIR`, or by the default `~/.omp/agent` path when the variable is unset or empty. confirm that it contains an enabled `terra` entry.
 
 ### a direct shell install fails
 
-use `nikos-advisor install` or `nikos-advisor install [model]`. the direct command rejects another subcommand, extra arguments, or a blank selector, prints the failure as `advisor install: ...`, and returns exit code `2`.
+use `nikos-advisor install` or `nikos-advisor install [model]`. the direct command accepts only `install` with at most one selector argument; all rejected invocations return exit code `2`. an unknown subcommand prints `advisor: unknown subcommand ...` and the usage line to stderr; extra arguments or installer errors print `advisor install: ...` to stderr. blank selectors are rejected.
 
 ### a terra note has incomplete evidence
 
@@ -202,6 +202,6 @@ native omp can accept the note because it validates only `note` and `severity`. 
 
 ### the terra model is unavailable
 
-the packaged profile has no pinned model. on a fresh no-argument install, the native omp host resolves its default advisor model role; on a no-argument reinstall, the existing normalized terra model is preserved. to choose a model explicitly, rerun `/advisor-install [model]` or `nikos-advisor install [model]` with a nonblank selector, then start a new omp session, enable the advisor, and check `/advisor status`.
+the packaged profile has no pinned model. on a fresh no-argument install, the native omp host resolves its default advisor model role; on a no-argument reinstall, the model from the last normalized `terra` entry is preserved when it is nonblank, after trimming. to choose a model explicitly, rerun `/advisor-install [model]` or `nikos-advisor install [model]` with a nonblank selector, then start a new omp session, enable the advisor, and check `/advisor status`.
 
 source: [terra profile](../advisor/WATCHDOG.yml), [installer](../advisor/install.js), [shell installer](../advisor/cli.js), [command registration](../advisor/index.ts)
