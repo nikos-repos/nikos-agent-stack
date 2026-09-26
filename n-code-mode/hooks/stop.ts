@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { scan, type finding } from "../ncm.ts";
 
 // @cc [label:product] stop-gate
 // exits 2 with ncm findings in files changed from HEAD (tracked or untracked-unignored),
 // so Claude keeps working; exits 0 when none, outside git, or continuing from a stop hook.
+// each changed file is checked on its own, so a collision an edited CONTRACTS file causes
+// is reported on that file.
 let input: { cwd?: string; stop_hook_active?: boolean } = {};
 try {
 	input = JSON.parse(readFileSync(0, "utf8"));
@@ -32,7 +34,9 @@ for (const args of [
 ]) {
 	try {
 		for (const file of execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0")) {
-			if (file && existsSync(resolve(root, file))) changed.add(file);
+			const path = resolve(root, file);
+			// a nested repository lists as a directory: it is another project.
+			if (file && existsSync(path) && statSync(path).isFile()) changed.add(file);
 		}
 	} catch {
 		// A failed Git query contributes no changed files.
@@ -40,9 +44,9 @@ for (const args of [
 }
 if (!changed.size) process.exit(0);
 
-let findings: finding[];
+const findings: finding[] = [];
 try {
-	findings = scan(root).findings.filter((item) => changed.has(item.file));
+	for (const file of changed) findings.push(...scan(resolve(root, file)).findings);
 } catch {
 	process.exit(0);
 }

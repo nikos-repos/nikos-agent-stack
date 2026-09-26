@@ -175,6 +175,8 @@ describe("n-code-mode checker", () => {
 			const blocked = spawnSync("bun", [stopHook], { encoding: "utf8", input: JSON.stringify({ cwd: root }) });
 			expect(blocked.status).toBe(2);
 			expect(blocked.stderr).toContain("src/c.cs:1: ceiling single-series");
+			// editing the first CONTRACTS file of a colliding pair still blocks, on that file's side.
+			expect(blocked.stderr.split("\n")).toContain("CONTRACTS:6: duplicate id git-scoped across CONTRACTS files (also at sub/CONTRACTS:1)");
 
 			const continuing = spawnSync("bun", [stopHook], { encoding: "utf8", input: JSON.stringify({ cwd: root, stop_hook_active: true }) });
 			expect(continuing.status).toBe(0);
