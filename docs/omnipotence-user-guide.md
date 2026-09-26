@@ -422,7 +422,3 @@ public limits:
 the system does not provide a daemon, automatic external-effect retry, or a way to bypass omp approvals. one session owns one active run. process source, effect input, fence, blueprint hash, and hook selection are part of durable replay state.
 
 source: [contracts.ts](../omnipotence/contracts.ts), [index.ts](../omnipotence/index.ts), [store.ts](../omnipotence/store.ts), and [blueprints.ts](../omnipotence/blueprints.ts).
-
-## Proposed workflow and source adoption
-
-The candidate keeps the public API, CLI JSON envelopes, three extensions, two binaries, engine/store schema and native execution ownership. Session coordination uses the session-coordination skill; the former coherent-agent-operating-loop entry is intentionally retired for new source selection. Factory admission still uses new-project and the complete phase chain. Original run input, same-root preflight fingerprint and effective parent/child guidance must agree; factorySkillsRoot alone does not select a native worker's skill bytes. Keep old active sources or demonstrate unchanged-installation drain/reconciliation before global adoption. State-only resume after source changes is unsupported. All five finish records and six result checks remain required. See the separately installed `OMP-DEV-USER-GUIDE.md` at the selected agent root and the actual CLI skill references.

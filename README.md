@@ -332,7 +332,3 @@ terra advisor:
 | [`docs/ask-questionnaire-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/ask-questionnaire-user-guide.md) | questionnaire declaration, native ask behavior, policy, settings, and limits                            |
 | [`docs/advisor-role-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/advisor-role-user-guide.md)           | advisor setup, passive behavior, evidence-note rules, and limitations                 |
 | [`docs/omnipotence-user-guide.md`](https://github.com/nikos-repos/nikos-agent-stack/blob/main/docs/omnipotence-user-guide.md)             | native process, blueprint, cli, state, recovery, and safety guide                                    |
-
-## Proposed workflow/control-surface release
-
-The maintained OMP-DEV control map (`omp-skills-stuffs-prompts-and-more/OMP-DEV-USER-GUIDE.md` in the matching maintained checkout) and skills routing guide (`skills/USER_GUIDE.md` under the selected agent directory) accompany the proposed skills/prompt release. These sources have a separate installation channel from the npm package. Do not replace live guidance or active factory source bindings from a source checkout alone; follow the reviewed release inventory, effective-loading checks and retained-source recovery plan. Existing package entry points and runtime ownership stay unchanged.
