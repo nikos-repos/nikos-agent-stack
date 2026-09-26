@@ -1,3 +1,4 @@
+import packagejson from "../package.json" with { type: "json" };
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -90,6 +91,6 @@ test("loader rejects an incompatible legacy active blueprint", () => {
 		.digest("hex");
 	writeFileSync(manifestpath, JSON.stringify(manifestvalue));
 	store.writeblueprint({ ...installed, contenthash, manifest: manifestvalue, active: true });
-	expect(loadactiveblueprints(store, new orchestrationengine(store))).rejects.toThrow("blueprint pinned-pack@1.0.0 requires engine >=999.0.0, current engine 2.0.0");
+	expect(loadactiveblueprints(store, new orchestrationengine(store))).rejects.toThrow(`blueprint pinned-pack@1.0.0 requires engine >=999.0.0, current engine ${packagejson.version}`);
 	store.close();
 });

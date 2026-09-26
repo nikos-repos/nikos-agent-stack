@@ -1,3 +1,4 @@
+import packagejson from "../package.json" with { type: "json" };
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
@@ -89,7 +90,7 @@ test("install enforces blueprint minimum engine versions", () => {
 	expect(blueprints.install(fixture(root, "0.9.0", false, ">=0.9.0")).version).toBe("0.9.0");
 	expect(blueprints.install(fixture(root, "1.0.0", false, ">=1.0.0")).version).toBe("1.0.0");
 	expect(() => blueprints.install(fixture(root, "9.0.0", false, ">=999.0.0"))).toThrow(
-		"blueprint delivery-pack@9.0.0 requires engine >=999.0.0, current engine 2.0.0",
+		`blueprint delivery-pack@9.0.0 requires engine >=999.0.0, current engine ${packagejson.version}`,
 	);
 	store.close();
 });
@@ -147,7 +148,7 @@ describe("local blueprint lifecycle", () => {
 		store.writeblueprint({ ...legacy, manifest, active: false });
 
 		expect(() => blueprints.remove("delivery-pack", active.version)).toThrow(
-			"blueprint delivery-pack@1.0.0 requires engine >=999.0.0, current engine 2.0.0",
+			`blueprint delivery-pack@1.0.0 requires engine >=999.0.0, current engine ${packagejson.version}`,
 		);
 		expect(blueprints.active("delivery-pack")?.version).toBe(active.version);
 		expect(existsSync(active.installpath)).toBe(true);
