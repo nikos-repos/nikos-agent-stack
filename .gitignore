@@ -13,6 +13,3 @@ docs/maintainers/
 
 # stray dir from a botched shell expansion; holds a live sqlite db
 $D/
-
-# astra refactor: local implementation work trees and nested repos, never pushed
-Astra refactor/

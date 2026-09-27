@@ -11,5 +11,5 @@
     "types": ["bun"]
   },
   "include": ["**/*.ts"],
-  "exclude": ["node_modules", "Astra refactor"]
+  "exclude": ["node_modules"]
 }
