@@ -157,6 +157,21 @@ try {
         .filter(request => request.agent === "child/one");
       assert.ok(childRequests.length > 0);
       assert.ok(childRequests.every(request => request.status === 200));
+      const sessions = join(profile.home, ".omp", "profiles", "one-child", "agent", "sessions");
+      const mainFiles: string[] = [];
+      for await (const file of new Bun.Glob("*/*.jsonl").scan({ cwd: sessions })) mainFiles.push(file);
+      assert.equal(mainFiles.length, 1);
+      const mainRecords = (await readFile(join(sessions, mainFiles[0]!), "utf8")).trimEnd().split("\n")
+        .map(line => JSON.parse(line) as { message?: { role?: string; toolName?: string; content?: { type?: string; text?: string }[] } });
+      assert.ok(mainRecords.some(({ message }) => message?.role === "toolResult" && message.toolName === "task"
+        && message.content?.some(({ type, text }) => type === "text" && text?.includes('id="child-one"') && text.includes('status="completed"'))));
+      const childFiles: string[] = [];
+      for await (const file of new Bun.Glob("*/*/child-one.jsonl").scan({ cwd: sessions })) childFiles.push(file);
+      assert.equal(childFiles.length, 1);
+      const childRecords = (await readFile(join(sessions, childFiles[0]!), "utf8")).trimEnd().split("\n")
+        .map(line => JSON.parse(line) as { message?: { role?: string; toolName?: string; details?: { status?: string } } });
+      assert.ok(childRecords.some(({ message }) => message?.role === "toolResult" && message.toolName === "yield"
+        && message.details?.status === "success"));
       const version = profile.spawn(["--version"]);
       const [versionOutput, versionError, versionExit] = await Promise.all([
         new Response(version.stdout).text(), new Response(version.stderr).text(), version.exited,
