@@ -63,12 +63,28 @@
     ],
     "child/old": [
       {
-        "text": "old generation"
+        "text": "old generation",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ],
     "child/new": [
       {
-        "text": "new generation"
+        "text": "new generation",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

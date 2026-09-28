@@ -37,7 +37,15 @@
     "child/*": [
       {
         "text": "restored child",
-        "delayMs": 2000
+        "delayMs": 2000,
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

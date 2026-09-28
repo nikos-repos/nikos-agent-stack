@@ -64,12 +64,28 @@
     ],
     "child/original": [
       {
-        "text": "original child"
+        "text": "original child",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ],
     "child/forked": [
       {
-        "text": "fork child"
+        "text": "fork child",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

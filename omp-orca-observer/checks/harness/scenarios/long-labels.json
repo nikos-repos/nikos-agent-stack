@@ -38,12 +38,28 @@
     ],
     "child/long-a": [
       {
-        "text": "first long label"
+        "text": "first long label",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ],
     "child/long-b": [
       {
-        "text": "second long label"
+        "text": "second long label",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

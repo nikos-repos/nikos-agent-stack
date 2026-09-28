@@ -43,10 +43,26 @@
     ],
     "child/followup": [
       {
-        "text": "first run"
+        "text": "first run",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       },
       {
-        "text": "second run on same child"
+        "text": "second run on same child",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

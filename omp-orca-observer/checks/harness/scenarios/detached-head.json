@@ -44,7 +44,15 @@
     ],
     "child/detached-head": [
       {
-        "text": "detached HEAD answer"
+        "text": "detached HEAD answer",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

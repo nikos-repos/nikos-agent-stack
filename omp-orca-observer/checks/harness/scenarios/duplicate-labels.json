@@ -35,12 +35,28 @@
     ],
     "child/duplicate-a": [
       {
-        "text": "a complete"
+        "text": "a complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ],
     "child/duplicate-b": [
       {
-        "text": "b complete"
+        "text": "b complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

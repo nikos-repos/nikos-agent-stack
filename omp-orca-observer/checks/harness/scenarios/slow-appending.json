@@ -3,7 +3,7 @@
   "setup": [
     "create('slow-appending')",
     "run HARNESS_AGENT=main",
-    "read the admitted child's session file between streamed text chunks and again after completion"
+    "read the admitted child's session file between delayed child turns and again after completion"
   ],
   "settings": {
     "async": {
@@ -43,12 +43,40 @@
     ],
     "child/slow": [
       {
-        "chunks": [
-          "first ",
-          "second ",
-          "third"
-        ],
-        "chunkDelayMs": 1000
+        "text": "first ",
+        "delayMs": 1000,
+        "calls": [
+          {
+            "tool": "read",
+            "args": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "text": "second ",
+        "delayMs": 1000,
+        "calls": [
+          {
+            "tool": "read",
+            "args": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "text": "third",
+        "delayMs": 1000,
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

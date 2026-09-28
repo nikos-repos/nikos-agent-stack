@@ -42,7 +42,15 @@
     ],
     "child/one": [
       {
-        "text": "child complete"
+        "text": "child complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

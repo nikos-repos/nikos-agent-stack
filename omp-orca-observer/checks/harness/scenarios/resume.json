@@ -43,7 +43,15 @@
     ],
     "child/resume": [
       {
-        "text": "resumable answer"
+        "text": "resumable answer",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

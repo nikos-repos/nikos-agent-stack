@@ -49,7 +49,15 @@
     ],
     "child/linked": [
       {
-        "text": "linked checkout child"
+        "text": "linked checkout child",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

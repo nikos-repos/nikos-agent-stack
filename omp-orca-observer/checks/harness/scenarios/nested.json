@@ -63,12 +63,28 @@
         ]
       },
       {
-        "text": "parent complete"
+        "text": "parent complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ],
     "child/parent/leaf": [
       {
-        "text": "leaf complete"
+        "text": "leaf complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

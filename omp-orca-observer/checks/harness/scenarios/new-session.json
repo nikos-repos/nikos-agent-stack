@@ -65,12 +65,28 @@
     ],
     "child/old-root": [
       {
-        "text": "old root"
+        "text": "old root",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ],
     "child/new-root": [
       {
-        "text": "new root"
+        "text": "new root",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

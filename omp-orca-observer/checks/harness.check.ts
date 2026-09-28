@@ -29,7 +29,7 @@ const root = await mkdtemp(join(tmpdir(), "omp-orca-harness-check-"));
 try {
   const watch = join(root, "watch.txt");
   const capturePath = join(root, "stub.jsonl");
-  const planted = "issued-code-secret-planted-only-in-user-prompt";
+  const planted = 'issued-code-"secret\nplanted-only-in-user-prompt';
   const message = { role: "user", content: `HARNESS_AGENT=main ${planted}` };
   const body = {
     model: "scripted", stream: true, messages: [
@@ -78,7 +78,7 @@ try {
       });
     }
     assert.equal(record.secret_seen, true);
-    assert.doesNotMatch(lines[0], /issued-code-secret|Harness system instruction|HARNESS_AGENT/);
+    assert.doesNotMatch(lines[0], /issued-code-|Harness system instruction|HARNESS_AGENT/);
     await writeFile(watch, JSON.stringify(["absent-code-secret"]));
     const secondResponse = await fetch(`${url}/chat/completions`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
@@ -138,6 +138,7 @@ try {
   try {
     const profile = await create("one-child");
     const profileRoot = profile.root;
+    let rpcExit: Promise<number> | undefined;
     try {
       const listing = await profile.run(["models", "ls", "--json"]);
       assert.equal(listing.exitCode, 0, listing.stderr);
@@ -149,10 +150,32 @@ try {
       const effective = JSON.parse(config.stdout) as { key: string; value: unknown };
       assert.equal(effective.key, "providers.cacheWarming");
       assert.equal(effective.value, "off");
+      const printed = await profile.run(["-p", "HARNESS_AGENT=main complete the harness assignment"]);
+      assert.equal(printed.exitCode, 0, printed.stderr);
+      const childRequests = (await readFile(profile.capture, "utf8")).trimEnd().split("\n")
+        .map(line => JSON.parse(line) as Capture)
+        .filter(request => request.agent === "child/one");
+      assert.ok(childRequests.length > 0);
+      assert.ok(childRequests.every(request => request.status === 200));
+      const version = profile.spawn(["--version"]);
+      const [versionOutput, versionError, versionExit] = await Promise.all([
+        new Response(version.stdout).text(), new Response(version.stderr).text(), version.exited,
+      ]);
+      assert.equal(versionExit, 0, versionError);
+      assert.ok(versionOutput);
+      const rpc = profile.spawn(["--mode", "rpc"]);
+      rpcExit = rpc.exited;
+      const rpcState = await Promise.race([
+        rpc.exited.then(() => "exited"),
+        Bun.sleep(50).then(() => "running"),
+      ]);
+      assert.equal(rpcState, "running");
     } finally {
       await profile.teardown();
     }
     await assert.rejects(stat(profileRoot), { code: "ENOENT" });
+    assert.ok(rpcExit);
+    assert.notEqual(await rpcExit, 0);
   } finally {
     if (beforeKey === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = beforeKey;

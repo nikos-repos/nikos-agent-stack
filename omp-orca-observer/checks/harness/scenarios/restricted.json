@@ -42,7 +42,15 @@
     ],
     "child/restricted": [
       {
-        "text": "restricted child complete"
+        "text": "restricted child complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

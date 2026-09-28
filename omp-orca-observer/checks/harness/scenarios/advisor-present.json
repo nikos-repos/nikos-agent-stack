@@ -42,7 +42,15 @@
     ],
     "child/advisor": [
       {
-        "text": "advisor recommendation"
+        "text": "advisor recommendation",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

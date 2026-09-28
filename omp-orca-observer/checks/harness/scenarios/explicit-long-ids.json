@@ -42,7 +42,15 @@
     ],
     "child/explicit-long": [
       {
-        "text": "explicit id complete"
+        "text": "explicit id complete",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

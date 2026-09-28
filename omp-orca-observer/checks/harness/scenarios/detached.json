@@ -43,7 +43,15 @@
     "child/detached": [
       {
         "text": "detached child complete",
-        "delayMs": 1500
+        "delayMs": 1500,
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

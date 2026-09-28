@@ -41,7 +41,15 @@
     ],
     "child/eval": [
       {
-        "text": "eval answer"
+        "text": "eval answer",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

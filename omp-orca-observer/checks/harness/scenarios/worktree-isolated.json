@@ -51,7 +51,15 @@
     ],
     "child/isolated": [
       {
-        "text": "isolated checkout child"
+        "text": "isolated checkout child",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

@@ -48,7 +48,15 @@
     ],
     "child/shared": [
       {
-        "text": "shared checkout child"
+        "text": "shared checkout child",
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }

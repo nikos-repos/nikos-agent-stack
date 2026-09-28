@@ -35,7 +35,15 @@
     "child/*": [
       {
         "text": "fanout child complete",
-        "delayMs": 1000
+        "delayMs": 1000,
+        "calls": [
+          {
+            "tool": "yield",
+            "args": {
+              "type": "result"
+            }
+          }
+        ]
       }
     ]
   }
