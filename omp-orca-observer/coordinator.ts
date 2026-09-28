@@ -42,12 +42,13 @@ export function startCoordinator(options: Options): Coordinator {
   let snapshot: Snapshot | null = null;
   let state: ObserverState = { state: "ready" };
   let disposed = false;
+  let overflowed = false;
 
   function enqueue(pending: PendingFact): void {
     if (length === FACT_QUEUE_LIMIT) {
       queue[head] = pending;
       head = (head + 1) % FACT_QUEUE_LIMIT;
-      options.outcomes?.evidenceLost("fact queue overflow");
+      overflowed = true;
       dirty = true;
       return;
     }
@@ -82,6 +83,7 @@ export function startCoordinator(options: Options): Coordinator {
         if (children.length > 0) bytes--; // the comma preceding the removed row
       }
     }
+    if (bytes > SNAPSHOT_MAX_BYTES) throw new Error("snapshot exceeds byte cap");
     snapshot = next;
     lastBuild = now;
     dirty = false;
@@ -90,6 +92,10 @@ export function startCoordinator(options: Options): Coordinator {
   function tick(): void {
     if (disposed || state.state !== "ready") return;
     try {
+      if (overflowed) {
+        overflowed = false;
+        options.outcomes?.evidenceLost("fact queue overflow");
+      }
       // The queue is bounded, so every pending fact gets one attempt per tick.
       const work = length;
       for (let i = 0; i < work; i++) {

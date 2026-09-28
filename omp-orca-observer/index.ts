@@ -12,6 +12,7 @@ type ActiveRuntime = ObserverRuntime & {
 
 let publisher: symbol | null = null;
 let runtime: ActiveRuntime | null = null;
+let stopping: Promise<void> | null = null;
 
 function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
   if (runtime) return;
@@ -58,12 +59,16 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
   api.pi.logger.info(`omp-orca-observer: publisher epoch=${coordinator.epoch()}`);
 }
 
-async function stopRuntime(): Promise<void> {
+function stopRuntime(): Promise<void> {
+  if (stopping) return stopping;
   const previous = runtime;
   runtime = null;
-  if (!previous) return;
+  if (!previous) return Promise.resolve();
   previous.coordinator.dispose();
-  await previous.close();
+  stopping = previous.close().finally(() => {
+    stopping = null;
+  });
+  return stopping;
 }
 
 /** Registering the extension never starts observer work; only the elected main session can publish. */
@@ -110,22 +115,19 @@ export default function orcaObserver(api: ExtensionAPI): void {
   api.on("session_switch", async (_event, ctx) => {
     if (publisher !== instance || !compatible) return;
     await stopRuntime();
-    startRuntime(ctx, api);
+    if (publisher === instance) startRuntime(ctx, api);
   });
   api.on("session_branch", async (_event, ctx) => {
     if (publisher !== instance || !compatible) return;
     await stopRuntime();
-    startRuntime(ctx, api);
+    if (publisher === instance) startRuntime(ctx, api);
   });
   api.on("session_shutdown", async () => {
     unsubscribe?.();
     unsubscribe = null;
     if (publisher !== instance) return;
-    try {
-      await stopRuntime();
-    } finally {
-      publisher = null;
-    }
+    publisher = null;
+    await stopRuntime();
   });
 
   api.registerCommand("observer", {

@@ -92,7 +92,9 @@ try {
   for (let i = 0; i < 1025; i++) {
     coordinator.recordFact({ ...current, childId: `queued-${i}` });
   }
-  assert.ok(losses.some(loss => loss.reason === "fact queue overflow"));
+  assert.equal(losses.filter(loss => loss.reason === "fact queue overflow").length, 0);
+  tick();
+  assert.equal(losses.filter(loss => loss.reason === "fact queue overflow").length, 1);
 
   let invalidations = 0;
   coordinator.onInvalidate(() => { invalidations++; });
@@ -121,6 +123,9 @@ try {
   tick();
   assert.deepEqual(periodic.snapshot()?.inventory, { state: "partial", reason: "snapshot byte cap" });
   assert.deepEqual(periodic.snapshot()?.children, []);
+  const trimmedSnapshot = periodic.snapshot();
+  assert.ok(trimmedSnapshot);
+  assert.ok(Buffer.byteLength(JSON.stringify(trimmedSnapshot)) <= SNAPSHOT_MAX_BYTES);
   const generation = periodic.snapshot()?.generation;
   let periodicInvalidations = 0;
   periodic.onInvalidate(() => { periodicInvalidations++; });
@@ -129,6 +134,20 @@ try {
   assert.equal(periodicInvalidations, 0);
   assert.equal(periodic.snapshot()?.generation, (generation ?? 0) + 1);
   periodic.dispose();
+  const rootTooLargeSource: SnapshotSource = {
+    collect: () => ({
+      rootSession: { known: false, reason: "x".repeat(SNAPSHOT_MAX_BYTES) },
+      inventory: { state: "complete" },
+      rows: [],
+    }),
+    admittedSessionFile: () => null,
+    dispose: () => { },
+  };
+  const rootTooLarge = startCoordinator({ source: rootTooLargeSource, outcomes: null, limit: 1 });
+  tick();
+  assert.equal(rootTooLarge.snapshot(), null);
+  assert.equal(rootTooLarge.state().state, "unavailable");
+  rootTooLarge.dispose();
   assert.equal(periodicInvalidations, 1);
 
   const mainHandlers = new Map<string, Handler>();
@@ -152,6 +171,13 @@ try {
   await mainHandlers.get("session_switch")!({}, mainCtx);
   assert.notEqual(processCoordinator()?.epoch(), first.epoch());
   await mainHandlers.get("session_shutdown")!({}, mainCtx);
+  const raceHandlers = new Map<string, Handler>();
+  orcaObserver(makeApi("18.3.5", raceHandlers));
+  await raceHandlers.get("session_start")!({}, mainCtx);
+  const switching = raceHandlers.get("session_switch")!({}, mainCtx);
+  const shuttingDown = raceHandlers.get("session_shutdown")!({}, mainCtx);
+  await Promise.all([switching, shuttingDown]);
+  assert.equal(processCoordinator(), null);
 } finally {
   processCoordinator()?.dispose();
   globalThis.setInterval = originalSetInterval;
