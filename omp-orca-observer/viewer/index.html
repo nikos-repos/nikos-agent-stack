@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>omp task children</title>
+  <style>
+    body {
+      max-width: 72rem;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      font: 1rem/1.5 system-ui, sans-serif;
+      color: #202733;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+    }
+
+    th,
+    td {
+      padding: .5rem;
+      border-bottom: 1px solid #c5cbd3;
+      overflow-wrap: anywhere;
+    }
+
+    #status {
+      color: #8b1720;
+      font-weight: 600;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>omp task children</h1>
+  <p id="status" role="status" hidden></p>
+  <p id="age">Waiting for snapshot</p>
+  <div class="table-wrap">
+    <table>
+      <caption>Current child inventory</caption>
+      <thead>
+        <tr>
+          <th scope="col">Agent</th>
+          <th scope="col">Child ID</th>
+          <th scope="col">Registry</th>
+          <th scope="col">Outcome</th>
+          <th scope="col">Completeness</th>
+        </tr>
+      </thead>
+      <tbody id="children"></tbody>
+    </table>
+  </div>
+  <script>
+    const status = document.getElementById("status");
+    const age = document.getElementById("age");
+    const children = document.getElementById("children");
+    let receivedAt = null;
+    let polling = false;
+
+    function showAge() {
+      age.textContent = receivedAt === null
+        ? "No compatible snapshot received"
+        : `Last snapshot received ${Math.floor((performance.now() - receivedAt) / 1000)} s ago`;
+    }
+
+    async function poll() {
+      if (polling) return;
+      polling = true;
+      try {
+        const response = await fetch("/v1/snapshot", {cache: "no-store"});
+        if (response.headers.get("x-observer-schema") !== "1") {
+          status.textContent = "unavailable(incompatible)";
+          status.hidden = false;
+          children.replaceChildren();
+          receivedAt = null;
+          return;
+        }
+        if (!response.ok) {
+          status.textContent = "unavailable";
+          status.hidden = false;
+          return;
+        }
+        const snapshot = await response.json();
+        const rows = document.createDocumentFragment();
+        for (const child of snapshot.children) {
+          const row = document.createElement("tr");
+          for (const value of [child.agentName, child.childId, child.registryStatus, child.outcome.state, child.completeness.state]) {
+            const cell = document.createElement("td");
+            cell.textContent = value;
+            row.append(cell);
+          }
+          rows.append(row);
+        }
+        children.replaceChildren(rows);
+        receivedAt = performance.now();
+        status.hidden = true;
+      } catch {
+        status.textContent = "unavailable";
+        status.hidden = false;
+      } finally {
+        polling = false;
+        showAge();
+      }
+    }
+
+    showAge();
+    void poll();
+    setInterval(poll, 2000);
+    setInterval(showAge, 1000);
+  </script>
+</body>
+
+</html>
