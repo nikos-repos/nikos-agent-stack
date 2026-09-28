@@ -1,0 +1,53 @@
+{
+  "name": "worktree-deleted",
+  "setup": [
+    "create('worktree-deleted')",
+    "commit disposable workspace and add linked git worktree under profile root",
+    "start HARNESS_AGENT=main from linked checkout with profile.run(args, {cwd: linkedPath})",
+    "after native child spawn, remove only that disposable linked checkout",
+    "inspect child lineage after checkout removal"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: background child"
+  ],
+  "expected": [
+    "missing checkout yields unknown/unavailable lineage, not invented path or branch",
+    "native child registration persists independently of checkout deletion"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Removed linked checkout",
+              "tasks": [
+                {
+                  "name": "removed-checkout",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/removed wait while checkout is removed.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "child launched"
+      }
+    ],
+    "child/removed": [
+      {
+        "text": "checkout already removed",
+        "delayMs": 2000
+      }
+    ]
+  }
+}

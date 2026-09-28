@@ -1,0 +1,48 @@
+{
+  "name": "aborted",
+  "setup": [
+    "create('aborted')",
+    "start HARNESS_AGENT=main in an interactive disposable omp session",
+    "cancel the running task before the delayed child turn returns"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: inline task child"
+  ],
+  "expected": [
+    "caller cancellation yields an aborted native child, never a completed outcome",
+    "caller-signal genuine kill retains the native transcript and tombstones it when a session file exists; tombstoned.json exercises the same terminal facts by wall-clock timeout instead"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Abort the active child",
+              "tasks": [
+                {
+                  "name": "aborted-child",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/aborted wait for cancellation.",
+                  "solutionSpace": "Do not rush."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "child/aborted": [
+      {
+        "text": "too late",
+        "delayMs": 15000
+      }
+    ]
+  }
+}

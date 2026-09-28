@@ -1,0 +1,55 @@
+{
+  "name": "tombstoned",
+  "setup": [
+    "create('tombstoned')",
+    "run HARNESS_AGENT=main with task.maxRuntimeMs set below the child's provider delay",
+    "inspect the real child ref and its sessionFile.tombstone after omp's wall-clock kill"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    },
+    "task": {
+      "maxRuntimeMs": 300
+    }
+  },
+  "agents": [
+    "bundled task: background task child"
+  ],
+  "expected": [
+    "native wall-clock timeout leaves the registered ref aborted and the transcript retained",
+    "an empty sessionFile.tombstone exists beside the retained native transcript; exact timing to confirm in gate",
+    "caller-triggered aborted.json uses the same genuine-kill route, but this case uses the runtime cap"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Tombstone lifecycle",
+              "tasks": [
+                {
+                  "name": "tombstone-child",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/tombstone complete.",
+                  "solutionSpace": "Reply once."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "main complete"
+      }
+    ],
+    "child/tombstone": [
+      {
+        "text": "this delayed answer must not finish before the wall-clock kill",
+        "delayMs": 3000
+      }
+    ]
+  }
+}

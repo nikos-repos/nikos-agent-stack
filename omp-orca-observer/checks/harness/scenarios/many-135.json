@@ -1,0 +1,42 @@
+{
+  "name": "many-135",
+  "setup": [
+    "create('many-135')",
+    "run HARNESS_AGENT=main; wait for all 135 native children to register"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    },
+    "task": {
+      "maxConcurrency": 16
+    }
+  },
+  "agents": [
+    "bundled task: async task child"
+  ],
+  "expected": [
+    "135 native task children exceed a 128-row inventory bound",
+    "a truncated inventory reports incompleteness instead of absence for the remainder"
+  ],
+  "turns": {
+    "main": [
+      {
+        "fanout": {
+          "count": 135,
+          "prefix": "agent-",
+          "agent": "task"
+        }
+      },
+      {
+        "text": "fanout launched"
+      }
+    ],
+    "child/*": [
+      {
+        "text": "fanout child complete",
+        "delayMs": 1500
+      }
+    ]
+  }
+}

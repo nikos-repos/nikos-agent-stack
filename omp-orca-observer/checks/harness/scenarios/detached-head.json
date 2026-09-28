@@ -1,0 +1,51 @@
+{
+  "name": "detached-head",
+  "setup": [
+    "create('detached-head')",
+    "commit a fixture in the disposable workspace",
+    "git switch --detach in that workspace",
+    "run HARNESS_AGENT=main"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: inline child"
+  ],
+  "expected": [
+    "native branch observation is unknown on detached HEAD",
+    "native repo root and cwd remain known from disposable checkout"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Detached HEAD",
+              "tasks": [
+                {
+                  "name": "detached-head-child",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/detached-head inspect detached HEAD.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "head observed"
+      }
+    ],
+    "child/detached-head": [
+      {
+        "text": "detached HEAD answer"
+      }
+    ]
+  }
+}

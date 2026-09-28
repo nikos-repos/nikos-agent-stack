@@ -1,0 +1,49 @@
+{
+  "name": "parked",
+  "setup": [
+    "create('parked')",
+    "run HARNESS_AGENT=main and observe the task child after its async response settles"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: background task child"
+  ],
+  "expected": [
+    "parked is a native registry state, not an invented completion outcome",
+    "latest lifecycle event is retained independently of the parked state"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Park after completion",
+              "tasks": [
+                {
+                  "name": "parked-child",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/parked complete then park.",
+                  "solutionSpace": "Reply once."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "main complete"
+      }
+    ],
+    "child/parked": [
+      {
+        "text": "parked answer"
+      }
+    ]
+  }
+}

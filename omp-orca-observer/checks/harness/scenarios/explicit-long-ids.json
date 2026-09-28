@@ -1,0 +1,49 @@
+{
+  "name": "explicit-long-ids",
+  "setup": [
+    "create('explicit-long-ids')",
+    "run HARNESS_AGENT=main; inspect actual id allocated from the caller-chosen task name"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: inline child"
+  ],
+  "expected": [
+    "the task name is over 48 characters and passes through the native task tool",
+    "allocated native id length and exact spelling are determined by omp, to confirm in gate"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Long explicit task name",
+              "tasks": [
+                {
+                  "name": "caller-chosen-explicit-id-abcdefghijklmnopqrstuvwxyz-0123456789-long",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/explicit-long complete.",
+                  "solutionSpace": "Reply once."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "id observed"
+      }
+    ],
+    "child/explicit-long": [
+      {
+        "text": "explicit id complete"
+      }
+    ]
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "worktree-isolated",
+  "setup": [
+    "create('worktree-isolated')",
+    "commit fixture files in the disposable workspace repo",
+    "run HARNESS_AGENT=main with native task isolation enabled"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    },
+    "task": {
+      "isolation": {
+        "enabled": true,
+        "apply": false,
+        "merge": "patch"
+      }
+    }
+  },
+  "agents": [
+    "blocking: inline child"
+  ],
+  "expected": [
+    "native child worktree differs from the parent checkout",
+    "isolation type and branch are read from native lineage; retained checkout is confined to disposable home"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Isolated checkout",
+              "tasks": [
+                {
+                  "name": "isolated-child",
+                  "agent": "blocking",
+                  "isolated": true,
+                  "task": "HARNESS_AGENT=child/isolated inspect isolated checkout.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "isolation complete"
+      }
+    ],
+    "child/isolated": [
+      {
+        "text": "isolated checkout child"
+      }
+    ]
+  }
+}

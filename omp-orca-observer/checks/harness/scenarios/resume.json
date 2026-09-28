@@ -1,0 +1,50 @@
+{
+  "name": "resume",
+  "setup": [
+    "create('resume')",
+    "run HARNESS_AGENT=main until the native child persists",
+    "exit omp, then reopen the same session via its native resume operation"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: background child"
+  ],
+  "expected": [
+    "resumed native root session restores its persisted child without fabricating a new one",
+    "a fresh process coordinator has a new epoch"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Persist for resume",
+              "tasks": [
+                {
+                  "name": "resume-child",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/resume complete.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "resume source complete"
+      }
+    ],
+    "child/resume": [
+      {
+        "text": "resumable answer"
+      }
+    ]
+  }
+}

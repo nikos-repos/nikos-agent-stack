@@ -1,0 +1,49 @@
+{
+  "name": "one-child",
+  "setup": [
+    "create('one-child')",
+    "run omp with user prompt HARNESS_AGENT=main; wait for its blocking task to finish"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: full tools; inline task child"
+  ],
+  "expected": [
+    "one native task child under the root session",
+    "started then completed lifecycle, with admitted session file and parent task tool-call id"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Native single child",
+              "tasks": [
+                {
+                  "name": "child-one",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/one finish this assignment.",
+                  "solutionSpace": "One short answer."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "main complete"
+      }
+    ],
+    "child/one": [
+      {
+        "text": "child complete"
+      }
+    ]
+  }
+}

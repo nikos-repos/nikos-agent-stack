@@ -1,0 +1,41 @@
+{
+  "name": "cold-restart",
+  "setup": [
+    "create('cold-restart')",
+    "run HARNESS_AGENT=main until background children persist",
+    "stop omp without deleting its disposable profile, then restart on the same native session",
+    "inspect before persisted children have all restored"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: background children"
+  ],
+  "expected": [
+    "new process epoch cannot claim complete inventory before native restoration",
+    "restored native child identities are not synthesized from transcript text"
+  ],
+  "turns": {
+    "main": [
+      {
+        "fanout": {
+          "count": 3,
+          "prefix": "restart-",
+          "agent": "task"
+        }
+      },
+      {
+        "text": "restart source complete"
+      }
+    ],
+    "child/*": [
+      {
+        "text": "persisted child",
+        "delayMs": 1000
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "name": "slow-appending",
+  "setup": [
+    "create('slow-appending')",
+    "run HARNESS_AGENT=main",
+    "read the admitted child's session file between streamed text chunks and again after completion"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: background child"
+  ],
+  "expected": [
+    "child transcript grows while it is being read",
+    "a bounded page reflects only complete records available at the read boundary"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Stream a slow answer",
+              "tasks": [
+                {
+                  "name": "slow-child",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/slow append over time.",
+                  "solutionSpace": "Return several chunks."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "child launched"
+      }
+    ],
+    "child/slow": [
+      {
+        "chunks": [
+          "first ",
+          "second ",
+          "third"
+        ],
+        "chunkDelayMs": 1000
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "name": "worktree-shared",
+  "setup": [
+    "create('worktree-shared')",
+    "commit a fixture in the disposable workspace repo",
+    "run HARNESS_AGENT=main from that workspace"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    },
+    "task": {
+      "isolation": {
+        "enabled": false
+      }
+    }
+  },
+  "agents": [
+    "blocking: inline child"
+  ],
+  "expected": [
+    "native parent and child share checkout/cwd lineage when task isolation is disabled",
+    "branch identity comes from the disposable git repo"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Shared checkout",
+              "tasks": [
+                {
+                  "name": "shared-child",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/shared inspect shared checkout.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "shared complete"
+      }
+    ],
+    "child/shared": [
+      {
+        "text": "shared checkout child"
+      }
+    ]
+  }
+}

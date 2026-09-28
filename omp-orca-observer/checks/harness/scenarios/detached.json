@@ -1,0 +1,50 @@
+{
+  "name": "detached",
+  "setup": [
+    "create('detached')",
+    "run HARNESS_AGENT=main; inspect while task child is still running and after it parks"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: non-blocking, permits async job"
+  ],
+  "expected": [
+    "native task child is registered before its delayed response",
+    "root tool returns while child runs; child eventually parks or becomes idle by native lifecycle"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Detached child",
+              "tasks": [
+                {
+                  "name": "detached-child",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/detached answer after delay.",
+                  "solutionSpace": "One response."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "background task launched"
+      }
+    ],
+    "child/detached": [
+      {
+        "text": "detached child complete",
+        "delayMs": 1500
+      }
+    ]
+  }
+}

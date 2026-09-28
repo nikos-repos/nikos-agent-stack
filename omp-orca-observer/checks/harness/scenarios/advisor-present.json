@@ -1,0 +1,49 @@
+{
+  "name": "advisor-present",
+  "setup": [
+    "create('advisor-present')",
+    "run HARNESS_AGENT=main and inspect the advisor child alongside ordinary task children"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "advisor: advisor true, blocking true"
+  ],
+  "expected": [
+    "native advisor child retains its agent identity and parent lineage",
+    "advisor presence is observed rather than added to a synthetic child registry"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Ask the advisor",
+              "tasks": [
+                {
+                  "name": "advisor-child",
+                  "agent": "advisor",
+                  "task": "HARNESS_AGENT=child/advisor advise.",
+                  "solutionSpace": "One recommendation."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "advisor complete"
+      }
+    ],
+    "child/advisor": [
+      {
+        "text": "advisor recommendation"
+      }
+    ]
+  }
+}

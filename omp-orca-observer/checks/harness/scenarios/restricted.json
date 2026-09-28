@@ -1,0 +1,49 @@
+{
+  "name": "restricted",
+  "setup": [
+    "create('restricted')",
+    "run HARNESS_AGENT=main until restricted child completes"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "restricted: tools [read], blocking true"
+  ],
+  "expected": [
+    "restricted native child is registered as agent restricted",
+    "its advertised tool set excludes write, bash, and task"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Restricted read-only child",
+              "tasks": [
+                {
+                  "name": "restricted-child",
+                  "agent": "restricted",
+                  "task": "HARNESS_AGENT=child/restricted answer without editing.",
+                  "solutionSpace": "Read-only observations."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "main complete"
+      }
+    ],
+    "child/restricted": [
+      {
+        "text": "restricted child complete"
+      }
+    ]
+  }
+}

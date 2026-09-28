@@ -1,0 +1,44 @@
+{
+  "name": "partial-restore",
+  "setup": [
+    "create('partial-restore')",
+    "run HARNESS_AGENT=main until 135 task children are persisted in the disposable profile",
+    "restart omp on that native session",
+    "inspect the restoring inventory repeatedly before and after all registrations complete"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    },
+    "task": {
+      "maxConcurrency": 16
+    }
+  },
+  "agents": [
+    "bundled task: background child"
+  ],
+  "expected": [
+    "partially restored inventory reports partial/unknown, not complete",
+    "post-restoration inventory includes each registered native child up to the configured observation limit"
+  ],
+  "turns": {
+    "main": [
+      {
+        "fanout": {
+          "count": 135,
+          "prefix": "restore-",
+          "agent": "task"
+        }
+      },
+      {
+        "text": "restore source complete"
+      }
+    ],
+    "child/*": [
+      {
+        "text": "restored child",
+        "delayMs": 2000
+      }
+    ]
+  }
+}

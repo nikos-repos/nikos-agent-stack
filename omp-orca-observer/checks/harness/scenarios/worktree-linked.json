@@ -1,0 +1,56 @@
+{
+  "name": "worktree-linked",
+  "setup": [
+    "create('worktree-linked')",
+    "commit fixture files in disposable workspace",
+    "git worktree add a linked checkout under this profile's disposable root",
+    "run HARNESS_AGENT=main from the linked checkout with profile.run(args, {cwd: linkedPath})"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    },
+    "task": {
+      "isolation": {
+        "enabled": false
+      }
+    }
+  },
+  "agents": [
+    "blocking: inline child"
+  ],
+  "expected": [
+    "native parent worktree refers to the disposable linked checkout",
+    "child lineage names the same linked checkout when isolation is disabled"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Linked worktree",
+              "tasks": [
+                {
+                  "name": "linked-child",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/linked inspect linked checkout.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "linked complete"
+      }
+    ],
+    "child/linked": [
+      {
+        "text": "linked checkout child"
+      }
+    ]
+  }
+}

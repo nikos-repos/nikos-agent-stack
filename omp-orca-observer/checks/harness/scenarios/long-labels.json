@@ -1,0 +1,50 @@
+{
+  "name": "long-labels",
+  "setup": [
+    "create('long-labels')",
+    "run HARNESS_AGENT=main with two eval agent() calls"
+  ],
+  "settings": {
+    "eval": {
+      "js": true,
+      "tools": {
+        "enabled": true
+      }
+    }
+  },
+  "agents": [
+    "blocking: eval agent target"
+  ],
+  "expected": [
+    "two native child ids are unique despite labels colliding after sanitation and truncation to 48 characters",
+    "each row retains its own native lifecycle"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "eval",
+            "args": {
+              "language": "js",
+              "code": "const a = await agent('HARNESS_AGENT=child/long-a finish.', { agent: 'blocking', label: 'collision-abcdefghijklmnopqrstuvwxyz-0123456789-AAAA!first' }); const b = await agent('HARNESS_AGENT=child/long-b finish.', { agent: 'blocking', label: 'collision-abcdefghijklmnopqrstuvwxyz-0123456789-AAAA!second' }); console.log(await Promise.all([a.wait(), b.wait()]));"
+            }
+          }
+        ]
+      },
+      {
+        "text": "both labels resolved"
+      }
+    ],
+    "child/long-a": [
+      {
+        "text": "first long label"
+      }
+    ],
+    "child/long-b": [
+      {
+        "text": "second long label"
+      }
+    ]
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "name": "fork",
+  "setup": [
+    "create('fork')",
+    "run HARNESS_AGENT=main until the first child persists",
+    "fork the native root session in the disposable profile, then prompt HARNESS_AGENT=main again"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: inline task child"
+  ],
+  "expected": [
+    "forked root session does not admit child session files solely inherited from the original root",
+    "the newly spawned fork child has its own native parent and session"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Original root",
+              "tasks": [
+                {
+                  "name": "original-child",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/original complete.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "original complete"
+      },
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Fork root",
+              "tasks": [
+                {
+                  "name": "fork-child",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/forked complete.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "fork complete"
+      }
+    ],
+    "child/original": [
+      {
+        "text": "original child"
+      }
+    ],
+    "child/forked": [
+      {
+        "text": "fork child"
+      }
+    ]
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "name": "nested",
+  "setup": [
+    "create('nested')",
+    "run HARNESS_AGENT=main and await both nested children"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    },
+    "task": {
+      "maxRecursionDepth": 3
+    }
+  },
+  "agents": [
+    "blocking: spawns '*' permits nested task children"
+  ],
+  "expected": [
+    "parent task child has root as parent",
+    "grandchild task child has parent child id as parent and the same root session"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Nested parent",
+              "tasks": [
+                {
+                  "name": "nested-parent",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/parent spawn the leaf.",
+                  "solutionSpace": "Return a nested child result."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "root complete"
+      }
+    ],
+    "child/parent": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Nested leaf",
+              "tasks": [
+                {
+                  "name": "nested-leaf",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/parent/leaf finish.",
+                  "solutionSpace": "Reply briefly."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "parent complete"
+      }
+    ],
+    "child/parent/leaf": [
+      {
+        "text": "leaf complete"
+      }
+    ]
+  }
+}

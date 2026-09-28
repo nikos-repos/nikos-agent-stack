@@ -1,0 +1,48 @@
+{
+  "name": "eval-agent",
+  "setup": [
+    "create('eval-agent')",
+    "run HARNESS_AGENT=main with eval JS enabled; await eval agent handle"
+  ],
+  "settings": {
+    "eval": {
+      "js": true,
+      "tools": {
+        "enabled": true
+      }
+    },
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: eval agent target"
+  ],
+  "expected": [
+    "one native eval agent() child with root lineage",
+    "eval tool-call identity is preserved as native spawn evidence"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "eval",
+            "args": {
+              "language": "js",
+              "code": "const h = await agent('HARNESS_AGENT=child/eval complete.', { agent: 'blocking', label: 'eval-child' }); console.log(await h.wait());"
+            }
+          }
+        ]
+      },
+      {
+        "text": "eval child complete"
+      }
+    ],
+    "child/eval": [
+      {
+        "text": "eval answer"
+      }
+    ]
+  }
+}

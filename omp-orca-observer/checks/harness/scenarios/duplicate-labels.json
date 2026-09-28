@@ -1,0 +1,47 @@
+{
+  "name": "duplicate-labels",
+  "setup": [
+    "create('duplicate-labels')",
+    "run HARNESS_AGENT=main; wait for two eval agent handles"
+  ],
+  "settings": {
+    "eval": {
+      "js": true
+    }
+  },
+  "agents": [
+    "blocking: eval agent target"
+  ],
+  "expected": [
+    "two native children requested with identical labels have distinct allocated ids",
+    "both are observable as independent rows"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "eval",
+            "args": {
+              "language": "js",
+              "code": "const a = await agent('HARNESS_AGENT=child/duplicate-a finish.', { agent: 'blocking', label: 'duplicate' }); const b = await agent('HARNESS_AGENT=child/duplicate-b finish.', { agent: 'blocking', label: 'duplicate' }); console.log(await Promise.all([a.wait(), b.wait()]));"
+            }
+          }
+        ]
+      },
+      {
+        "text": "duplicates complete"
+      }
+    ],
+    "child/duplicate-a": [
+      {
+        "text": "a complete"
+      }
+    ],
+    "child/duplicate-b": [
+      {
+        "text": "b complete"
+      }
+    ]
+  }
+}

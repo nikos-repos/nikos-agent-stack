@@ -1,0 +1,42 @@
+{
+  "name": "many-33",
+  "setup": [
+    "create('many-33')",
+    "run HARNESS_AGENT=main; observe inventory after 33 children register and complete"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    },
+    "task": {
+      "maxConcurrency": 8
+    }
+  },
+  "agents": [
+    "bundled task: async task child"
+  ],
+  "expected": [
+    "33 native child rows, not a synthetic inventory",
+    "children outside a 32-row observation bound remain explicitly incomplete"
+  ],
+  "turns": {
+    "main": [
+      {
+        "fanout": {
+          "count": 33,
+          "prefix": "agent-",
+          "agent": "task"
+        }
+      },
+      {
+        "text": "fanout launched"
+      }
+    ],
+    "child/*": [
+      {
+        "text": "fanout child complete",
+        "delayMs": 1000
+      }
+    ]
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "name": "same-id-replacement",
+  "setup": [
+    "create('same-id-replacement')",
+    "run HARNESS_AGENT=main through the first blocking child, then retire its native child; send a new HARNESS_AGENT=main prompt to request the second spawn with the same name"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: inline child"
+  ],
+  "expected": [
+    "two real native spawn records use the caller-chosen task name replacement",
+    "the allocated id and replacement/tombstone behavior are determined by omp, to confirm in gate"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "First generation",
+              "tasks": [
+                {
+                  "name": "replacement",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/old first run.",
+                  "solutionSpace": "Reply once."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "first generation complete"
+      },
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Replacement generation",
+              "tasks": [
+                {
+                  "name": "replacement",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/new second run.",
+                  "solutionSpace": "Reply once."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "replacement complete"
+      }
+    ],
+    "child/old": [
+      {
+        "text": "old generation"
+      }
+    ],
+    "child/new": [
+      {
+        "text": "new generation"
+      }
+    ]
+  }
+}

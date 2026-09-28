@@ -1,0 +1,77 @@
+{
+  "name": "new-session",
+  "setup": [
+    "create('new-session')",
+    "run HARNESS_AGENT=main until first child finishes",
+    "issue /new to omp in the same disposable profile",
+    "prompt HARNESS_AGENT=main again to spawn the second child"
+  ],
+  "settings": {
+    "async": {
+      "enabled": false
+    }
+  },
+  "agents": [
+    "blocking: inline task child"
+  ],
+  "expected": [
+    "new root session excludes the previous root's children",
+    "second child is admitted under the new session and the observer epoch changes"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "Before /new",
+              "tasks": [
+                {
+                  "name": "before-new",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/old-root complete.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "first root complete"
+      },
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "After /new",
+              "tasks": [
+                {
+                  "name": "after-new",
+                  "agent": "blocking",
+                  "task": "HARNESS_AGENT=child/new-root complete.",
+                  "solutionSpace": "Reply."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "new root complete"
+      }
+    ],
+    "child/old-root": [
+      {
+        "text": "old root"
+      }
+    ],
+    "child/new-root": [
+      {
+        "text": "new root"
+      }
+    ]
+  }
+}

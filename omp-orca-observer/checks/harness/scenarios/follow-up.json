@@ -1,0 +1,53 @@
+{
+  "name": "follow-up",
+  "setup": [
+    "create('follow-up')",
+    "run HARNESS_AGENT=main to spawn one native background child",
+    "after the child parks, send HARNESS_AGENT=child/followup as a second native assignment via the existing child handle rather than spawning a new task"
+  ],
+  "settings": {
+    "async": {
+      "enabled": true
+    }
+  },
+  "agents": [
+    "bundled task: background child"
+  ],
+  "expected": [
+    "one child id has two run lifecycles",
+    "the original task spawn call id remains its native spawnCallId for the follow-up run"
+  ],
+  "turns": {
+    "main": [
+      {
+        "calls": [
+          {
+            "tool": "task",
+            "args": {
+              "context": "First child run",
+              "tasks": [
+                {
+                  "name": "follow-up-child",
+                  "agent": "task",
+                  "task": "HARNESS_AGENT=child/followup first assignment.",
+                  "solutionSpace": "Reply once."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "child ready for follow-up"
+      }
+    ],
+    "child/followup": [
+      {
+        "text": "first run"
+      },
+      {
+        "text": "second run on same child"
+      }
+    ]
+  }
+}
