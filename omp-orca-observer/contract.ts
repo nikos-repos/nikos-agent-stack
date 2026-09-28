@@ -4,10 +4,10 @@ export const SNAPSHOT_SCHEMA_VERSION = 1;
 /** Compatibility checks use this as the minimum supported omp version. */
 export const OMP_FLOOR = "18.3.5";
 
-/** Compatibility checks use this as the minimum supported Orca version. */
+/** The minimum Orca version `/observer open` accepts. */
 export const ORCA_FLOOR = "1.4.205";
 
-/** Page responses must stay within this byte budget. */
+/** One page reads at most this many native transcript bytes, before any encoding or envelope. */
 export const PAGE_MAX_BYTES = 262_144;
 
 /** Snapshot responses must stay within this byte budget. */
@@ -149,7 +149,7 @@ export type ReadRequest = {
   signal: AbortSignal;
 };
 
-/** A record end of null lies beyond the bounded scan, and its token continues that scan. */
+/** `reset` means the continuation restarted from byte zero and earlier pages are void; a record end of null lies beyond the bounded scan, and its token continues that scan. */
 export type ReadResult =
   | {
     kind: "page";
@@ -165,6 +165,7 @@ export type ReadResult =
     kind: "record_too_large";
     start: number;
     end: number | null;
+    reset: boolean;
     scannedTo: number;
     token: string;
   }

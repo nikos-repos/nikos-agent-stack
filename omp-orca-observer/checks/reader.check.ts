@@ -126,6 +126,40 @@ try {
   assert.deepEqual(afterHuge.entries, [{ after: true }]);
   assert.equal(afterHuge.atEnd, true);
 
+  const resetFile = join(directory, "reset-huge.jsonl");
+  const beforeReset = `${JSON.stringify({ beforeReset: true })}\n`;
+  await writeFile(resetFile, beforeReset);
+  const beforeResetPage = await readPage(requestFor(resetFile, { maxBytes: limit }), parse);
+  assert.ok(beforeResetPage.kind === "page");
+  const beforeResetInode = (await stat(resetFile)).ino;
+  await rename(resetFile, join(directory, "reset-old.jsonl"));
+  await writeFile(resetFile, hugeRecord + `${JSON.stringify({ afterReset: true })}\n`);
+  assert.notEqual((await stat(resetFile)).ino, beforeResetInode);
+
+  const firstResetScan = await readPage(requestFor(resetFile, {
+    token: beforeResetPage.token, maxBytes: limit,
+  }), parse);
+  assert.ok(firstResetScan.kind === "record_too_large");
+  assert.equal(firstResetScan.reset, true);
+  assert.equal(firstResetScan.start, 0);
+  assert.equal(firstResetScan.end, null);
+  assert.equal(firstResetScan.scannedTo, limit);
+  let resetToken: string | null = firstResetScan.token;
+  for (let step = 2; step <= 3; step++) {
+    const scan = await readPage(requestFor(resetFile, { token: resetToken, maxBytes: limit }), parse);
+    assert.ok(scan.kind === "record_too_large");
+    assert.equal(scan.reset, false);
+    assert.equal(scan.start, 0);
+    assert.equal(scan.end, step === 3 ? 3 * limit : null);
+    assert.equal(scan.scannedTo, step * limit);
+    resetToken = scan.token;
+  }
+  const afterReset = await readPage(requestFor(resetFile, { token: resetToken, maxBytes: limit }), parse);
+  assert.ok(afterReset.kind === "page");
+  assert.equal(afterReset.reset, false);
+  assert.deepEqual(afterReset.entries, [{ afterReset: true }]);
+  assert.equal(afterReset.atEnd, true);
+
   const utf8File = join(directory, "utf8.jsonl");
   const utf8Line = Buffer.from(`${JSON.stringify({ message: "é" })}\n`);
   const split = utf8Line.indexOf(Buffer.from("é")) + 1;

@@ -126,6 +126,7 @@ export async function readPage(request: ReadRequest, parse: ParseSessionContent)
         kind: "record_too_large",
         start,
         end,
+        reset,
         scannedTo: cursor + bytesRead,
         token: encodeToken(next),
       };
@@ -139,6 +140,7 @@ export async function readPage(request: ReadRequest, parse: ParseSessionContent)
         kind: "record_too_large",
         start: cursor,
         end: null,
+        reset,
         scannedTo: next.cursor,
         token: encodeToken(next),
       };
