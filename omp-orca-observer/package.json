@@ -1,0 +1,24 @@
+{
+  "name": "omp-orca-observer",
+  "type": "module",
+  "private": true,
+  "omp": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "files": [
+    "index.ts",
+    "contract.ts",
+    "compat.ts",
+    "coordinator.ts",
+    "reader.ts",
+    "stock-source.ts",
+    "outcomes.ts",
+    "auth.ts",
+    "transport.ts",
+    "commands.ts",
+    "guidance.ts",
+    "viewer/"
+  ]
+}
