@@ -81,7 +81,7 @@ const config = (level: string, verifyCmd: string | null = null): void => {
 const harness = (cwd: string, level: string, verifyCmd: string | null = null, leaseEnabled = false) => {
   process.env.OMP_GATE_MUTATION_LEASE = leaseEnabled ? "on" : "off";
   config(level, verifyCmd);
-  type HandlerResult = { decision?: string; reason: string; continue?: boolean; additionalContext: string; input: { task: string; agent: string; isolated: boolean }; block?: boolean };
+  type HandlerResult = { decision?: string; reason: string; continue?: boolean; additionalContext: string; block?: boolean; systemPrompt?: string[] };
   type EventHandler = (event: unknown, context: ExtensionContext) => unknown;
   type ToolResult = { isError?: boolean; additionalContext?: string; content?: Array<{ type: string; text?: string }> };
   type RegisteredTool = { name: string; execute: (...args: unknown[]) => Promise<ToolResult> | ToolResult };
@@ -302,15 +302,17 @@ test("off skips fabricated-claim enforcement", async () => {
   assert(result === undefined, "off must skip fabricated-claim enforcement");
 });
 
-test("task calls keep native arguments and subagent manifests must match the diff", async () => {
+test("subagents receive the gate contract once and their manifests must match the diff", async () => {
   const probe = harness(repository(), "medium", "true");
   await start(probe);
   await writeChange(probe, "two\n");
   const taskInput = { agent: "reviewer", isolated: true, task: "inspect the change" };
   const routed = await probe.handlers.tool_call({ toolName: "task", toolCallId: "task-1", input: taskInput }, probe.context);
-  assert(routed, "task tool call must return a routing result");
-  assert(routed.input.task.includes("changed-files"), "task calls must receive the gate contract");
-  assert(routed.input.agent === "reviewer" && routed.input.isolated, "the revised task input must keep unmodeled native arguments");
+  assert(routed === undefined, "task arguments must stay untouched so the contract cannot compound through parent history");
+  const child = { ...probe.context, agent: { kind: "sub" } } as unknown as ExtensionContext;
+  const prompt = await probe.handlers.before_agent_start({ systemPrompt: ["base"] }, child);
+  assert(prompt?.systemPrompt?.filter((block) => block.includes("changed-files")).length === 1, "subagents must receive the gate contract exactly once");
+  assert(await probe.handlers.before_agent_start({ systemPrompt: ["base"] }, probe.context) === undefined, "the main session must not receive the subagent contract");
   await probe.handlers.tool_result({
     toolName: "task",
     toolCallId: "task-1",

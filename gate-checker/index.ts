@@ -1223,12 +1223,17 @@ export default function gateChecker(pi: ExtensionAPI): void {
     if (baseline.sha === null) {
       try {
         context.ui.setStatus("gate", `${armingStatus()} · low: no git`);
-      } catch {}
+      } catch { }
       ledger.append("no_git", { reason: "no-git-repo", cwd: context.cwd });
     } else
       try {
         context.ui.setStatus("gate", armingStatus());
-      } catch {}
+      } catch { }
+  });
+  // the contract rides the child's system prompt, not the parent's task arguments: a rewritten
+  // argument persists in parent history, the model copies it into later spawns, and it compounds.
+  pi.on("before_agent_start", ({ systemPrompt }, context) => {
+    if (policy.enabled && context.agent?.kind === "sub") return { systemPrompt: [...systemPrompt, GATE_NUDGE] };
   });
   pi.on("tool_call", async (event, context) => {
     const parsed = parseEvent(toolCallSchema, event);
@@ -1260,13 +1265,6 @@ export default function gateChecker(pi: ExtensionAPI): void {
       };
     const leaseBlock = await mutationLease.onToolCall(parsed, context);
     if (leaseBlock) return { block: true, reason: leaseBlock };
-    // a returned input replaces the tool's arguments, and the parsed view is schema-stripped:
-    // spread the raw input so fields this extension does not model (agent, isolated, env) survive.
-    if (parsed.toolName === "task") {
-      if (parsed.input.tasks)
-        return { input: { ...event.input, context: `${GATE_NUDGE}${parsed.input.context ?? ""}` } };
-      return { input: { ...event.input, task: `${GATE_NUDGE}${parsed.input.task ?? ""}` } };
-    }
   });
   pi.on("tool_result", (event, context) => {
     const parsed = parseEvent(toolResultSchema, event);
