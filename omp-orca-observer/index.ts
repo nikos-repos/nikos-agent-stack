@@ -1,8 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { checkCompat } from "./compat.ts";
 import { processCoordinator, startCoordinator } from "./coordinator.ts";
-import type { ChildFact, Endpoint, ObserverRuntime, OutcomeTracker, SnapshotSource } from "./contract.ts";
+import type { ChildFact, Endpoint, ObserverRuntime } from "./contract.ts";
+import { createOutcomeTracker } from "./outcomes.ts";
 import { readPage } from "./reader.ts";
+import { createStockSource } from "./stock-source.ts";
 import { serve } from "./transport.ts";
 
 type ActiveRuntime = ObserverRuntime & {
@@ -17,10 +19,9 @@ let stopping: Promise<void> | null = null;
 function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
   if (runtime) return;
   const rootSessionFile = ctx.sessionManager.getSessionFile() ?? null;
-  // Phase A has no source or outcome tracker; later waves attach both here.
-  const source: SnapshotSource | null = null;
-  const outcomes: OutcomeTracker | null = null;
-  const coordinator = startCoordinator({ source, outcomes, limit: 100 });
+  const outcomes = createOutcomeTracker();
+  const source = createStockSource(api, rootSessionFile, outcomes);
+  const coordinator = startCoordinator({ source, outcomes, limit: 256 });
   let pendingEndpoint: Promise<Endpoint> | null = null;
   const current: ActiveRuntime = {
     rootSessionFile,
@@ -36,7 +37,7 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
           epoch: coordinator.epoch(),
           snapshot: () => coordinator.snapshot(),
           state: () => coordinator.state(),
-          admittedSessionFile: () => null,
+          admittedSessionFile: source.admittedSessionFile,
           read: request => readPage(request, api.pi.parseSessionContent),
           grants: null,
           port: 0,
@@ -65,6 +66,7 @@ function stopRuntime(): Promise<void> {
   runtime = null;
   if (!previous) return Promise.resolve();
   previous.coordinator.dispose();
+  previous.source?.dispose();
   stopping = previous.close().finally(() => {
     stopping = null;
   });
