@@ -10,13 +10,16 @@ type ChildState = {
 /**
  * @cc [label:product] outcome-current-generation
  * Generations count observed starts, not native run identities. Conflicting terminals
- * stay unknown until another start; evidence loss ignores terminals until then.
- * Callers must forget replaced incarnations. Spawn ids and timestamps are display only.
- * Recording, reading, and child-specific loss refresh recency; global loss preserves
- * relative recency. At most 4,096 live records and 4,096 eviction ids are retained.
- * Older eviction ids become indistinguishable from ids with no lifecycle evidence.
+ * stay unknown until another start; evidence loss ignores terminals until then. Global
+ * loss also applies to untracked children until they start. Forget keeps the global loss
+ * reason; clear resets it. Callers must forget replaced incarnations. Spawn ids and
+ * timestamps are display only. Recording, reading, and child-specific loss refresh
+ * recency; global loss preserves relative recency. At most 4,096 live records and 4,096
+ * eviction ids are retained. Older eviction ids become indistinguishable from ids with
+ * no lifecycle evidence.
  */
 export function createOutcomeTracker(): OutcomeTracker {
+  let globalLossReason: string | undefined;
   const children = new Map<string, ChildState>();
   const evicted = new Set<string>();
 
@@ -39,7 +42,9 @@ export function createOutcomeTracker(): OutcomeTracker {
       const current = children.get(fact.childId);
       const generation = (current?.generation ?? 0) + (fact.status === "started" ? 1 : 0);
       let outcome: RunOutcome;
-      if (fact.status === "started" || current?.outcome.state === "started") {
+      if (!current && fact.status !== "started" && globalLossReason !== undefined) {
+        outcome = { state: "unknown", reason: globalLossReason };
+      } else if (fact.status === "started" || current?.outcome.state === "started") {
         outcome = {
           state: fact.status,
           generation,
@@ -73,12 +78,16 @@ export function createOutcomeTracker(): OutcomeTracker {
       for (const state of children.values()) {
         state.outcome = { state: "unknown", reason };
       }
+      globalLossReason = reason;
     },
 
     outcome(childId) {
       const state = children.get(childId);
       if (!state) {
-        return { state: "unknown", reason: evicted.has(childId) ? "evicted" : "no lifecycle evidence" };
+        return {
+          state: "unknown",
+          reason: globalLossReason ?? (evicted.has(childId) ? "evicted" : "no lifecycle evidence"),
+        };
       }
       children.delete(childId);
       children.set(childId, state);
@@ -93,6 +102,7 @@ export function createOutcomeTracker(): OutcomeTracker {
     clear() {
       children.clear();
       evicted.clear();
+      globalLossReason = undefined;
     },
   };
 }

@@ -141,10 +141,10 @@ assert.deepEqual(loss.outcome(""), {
 });
 
 loss.forget("affected");
-assert.deepEqual(loss.outcome("affected"), { state: "unknown", reason: "no lifecycle evidence" });
+assert.deepEqual(loss.outcome("affected"), { state: "unknown", reason: "global evidence lost" });
 assert.equal(loss.outcome("other").state, "aborted");
 loss.record(fact("affected", "completed"));
-assert.deepEqual(loss.outcome("affected"), { state: "unknown", reason: "terminal without observed start" });
+assert.deepEqual(loss.outcome("affected"), { state: "unknown", reason: "global evidence lost" });
 loss.record(fact("affected", "started"));
 assert.deepEqual(loss.outcome("affected"), {
   state: "started", generation: 1,
@@ -196,6 +196,28 @@ for (let i = 0; i < 8_193; i++) history.record(fact(`child-${i}`, "started"));
 assert.deepEqual(history.outcome("child-0"), { state: "unknown", reason: "no lifecycle evidence" });
 assert.deepEqual(history.outcome("child-1"), { state: "unknown", reason: "evicted" });
 assert.deepEqual(history.outcome("never-seen"), { state: "unknown", reason: "no lifecycle evidence" });
+const untrackedAfterLoss = createOutcomeTracker();
+untrackedAfterLoss.evidenceLost("fact queue overflow");
+assert.deepEqual(untrackedAfterLoss.outcome("missed-child"), {
+  state: "unknown", reason: "fact queue overflow",
+});
+untrackedAfterLoss.record(fact("first-start", "started"));
+assert.deepEqual(untrackedAfterLoss.outcome("first-start"), {
+  state: "started", generation: 1,
+  spawnCallId: { known: true, value: "shared-call" }, at: "2026-09-30T00:00:00.000Z",
+});
+assert.deepEqual(untrackedAfterLoss.outcome("missed-child"), {
+  state: "unknown", reason: "fact queue overflow",
+});
+untrackedAfterLoss.record(fact("missed-child", "started"));
+assert.deepEqual(untrackedAfterLoss.outcome("missed-child"), {
+  state: "started", generation: 1,
+  spawnCallId: { known: true, value: "shared-call" }, at: "2026-09-30T00:00:00.000Z",
+});
+untrackedAfterLoss.clear();
+assert.deepEqual(untrackedAfterLoss.outcome("missed-child"), {
+  state: "unknown", reason: "no lifecycle evidence",
+});
 assert.equal(history.outcome("child-4097").state, "started");
 assert.equal(history.outcome("child-8192").state, "started");
 
