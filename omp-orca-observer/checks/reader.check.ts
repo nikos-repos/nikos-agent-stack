@@ -125,6 +125,28 @@ try {
   assert.ok(afterHuge.kind === "page");
   assert.deepEqual(afterHuge.entries, [{ after: true }]);
   assert.equal(afterHuge.atEnd, true);
+  const tinyFile = join(directory, "tiny-window.jsonl");
+  const tinyRecord = `${JSON.stringify({ tiny: true })}\n`;
+  await writeFile(tinyFile, tinyRecord + `${JSON.stringify({ afterTiny: true })}\n`);
+  const tinyRecordLength = Buffer.byteLength(tinyRecord);
+  let tinyToken: string | null = null;
+  let tinyEnd: number | null = null;
+  for (let step = 1; step <= tinyRecordLength + 2; step++) {
+    const result = await readPage(requestFor(tinyFile, {
+      token: tinyToken, maxBytes: 0,
+    }), parse);
+    assert.ok(result.kind !== "page" || result.atEnd || result.entries?.length !== 0);
+    assert.ok(result.kind === "page" || result.kind === "record_too_large");
+    tinyToken = result.token;
+    if (result.kind === "record_too_large" && result.end !== null) {
+      tinyEnd = result.end;
+      break;
+    }
+  }
+  assert.equal(tinyEnd, tinyRecordLength);
+  const afterTiny = await readPage(requestFor(tinyFile, { token: tinyToken, maxBytes: 0 }), parse);
+  assert.ok(afterTiny.kind === "record_too_large" && afterTiny.start === tinyRecordLength);
+
 
   const resetFile = join(directory, "reset-huge.jsonl");
   const beforeReset = `${JSON.stringify({ beforeReset: true })}\n`;

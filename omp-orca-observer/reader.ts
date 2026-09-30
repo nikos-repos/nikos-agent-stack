@@ -61,9 +61,7 @@ function encodeToken(token: PageToken): string {
 export async function readPage(request: ReadRequest, parse: ParseSessionContent): Promise<ReadResult> {
   if (request.signal.aborted) return { kind: "unavailable", reason: "cancelled" };
 
-  const limit = Number.isNaN(request.maxBytes)
-    ? 0
-    : Math.max(0, Math.min(Math.floor(request.maxBytes), PAGE_MAX_BYTES));
+  const limit = Math.max(1, Math.min(Math.floor(request.maxBytes) || 0, PAGE_MAX_BYTES));
   let token = request.token === null ? null : decodeToken(request.token);
   let reset = request.token !== null && token === null;
   let revalidating = false;
