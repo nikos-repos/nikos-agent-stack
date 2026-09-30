@@ -120,9 +120,9 @@ try {
 
   const git = await startGitSource();
   try {
-    assert.match(git.url, /^git:\/\/127\.0\.0\.1:\d+\/observer\.git$/);
+    assert.match(git.url, /^git\+http:\/\/127\.0\.0\.1:\d+\/harness\/observer\.git$/);
     const clone = join(root, "cloned");
-    const proc = Bun.spawn(["git", "clone", "-q", git.url, clone], {
+    const proc = Bun.spawn(["git", "clone", "-q", git.url.slice("git+".length), clone], {
       cwd: root, env: { PATH: process.env.PATH ?? "", HOME: root, GIT_CONFIG_NOSYSTEM: "1" },
       stdout: "pipe", stderr: "pipe",
     });

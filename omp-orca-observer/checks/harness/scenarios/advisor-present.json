@@ -2,19 +2,22 @@
   "name": "advisor-present",
   "setup": [
     "create('advisor-present')",
-    "run HARNESS_AGENT=main and inspect the advisor child alongside ordinary task children"
+    "run HARNESS_AGENT=main, then resume the root session so native restore registers its persisted advisor transcript"
   ],
   "settings": {
     "async": {
       "enabled": false
+    },
+    "advisor": {
+      "enabled": true
     }
   },
   "agents": [
     "advisor: advisor true, blocking true"
   ],
   "expected": [
-    "native advisor child retains its agent identity and parent lineage",
-    "advisor presence is observed rather than added to a synthetic child registry"
+    "native restore of the root session registers a parked kind: advisor ref from its advisor transcript",
+    "the observer excludes that advisor ref while retaining ordinary task-child rows"
   ],
   "turns": {
     "main": [

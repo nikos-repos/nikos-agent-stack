@@ -1,25 +1,23 @@
-import { once } from "node:events";
-import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
-import { createConnection, createServer } from "node:net";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The URL only serves a disposable copy of the package through loopback git daemon. */
+/** The URL only serves a disposable package copy through a loopback dumb-HTTP server. */
 export type GitSource = { url: string; root: string; stop(): Promise<void> };
 
-/** Starts a local git daemon for installer gates without committing in the source checkout. */
+/** Starts a loopback dumb-HTTP server for installer gates without committing in the source checkout. */
 export async function startGitSource(): Promise<GitSource> {
   const root = await mkdtemp(join(tmpdir(), "omp-observer-git-"));
   const working = join(root, "working");
-  const bare = join(root, "observer.git");
+  const bare = join(root, "harness", "observer.git");
   const env: Record<string, string> = {
     PATH: process.env.PATH ?? "",
     HOME: root,
     XDG_CONFIG_HOME: join(root, "config"),
     GIT_CONFIG_NOSYSTEM: "1",
   };
-  let daemon: { kill(): void; exited: Promise<number> } | undefined;
+  let server: Bun.Server<unknown> | undefined;
   try {
     await mkdir(env.XDG_CONFIG_HOME, { recursive: true });
     const source = fileURLToPath(new URL("../../", import.meta.url));
@@ -39,46 +37,44 @@ export async function startGitSource(): Promise<GitSource> {
     await git(["init", "-q", working]);
     await git(["-C", working, "add", "-A"]);
     await git(["-C", working, "-c", "user.name=Harness Fixture", "-c", "user.email=harness@invalid.example", "commit", "-qm", "Harness package fixture"]);
+    await mkdir(join(root, "harness"), { recursive: true });
     await git(["clone", "-q", "--bare", working, bare]);
-    const reservation = createServer();
-    reservation.listen(0, "127.0.0.1");
-    await once(reservation, "listening");
-    const address = reservation.address();
-    if (!address || typeof address === "string") throw new Error("No loopback git port");
-    const port = address.port;
-    const closed = once(reservation, "close");
-    reservation.close();
-    await closed;
-    daemon = Bun.spawn(["git", "daemon", "--reuseaddr", "--export-all", `--base-path=${root}`,
-      "--listen=127.0.0.1", `--port=${port}`, bare], {
-      cwd: root, env, stdout: "ignore", stderr: "ignore",
+    await git(["-C", bare, "update-server-info"]);
+    server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(request) {
+        if (request.method !== "GET" && request.method !== "HEAD") return new Response(null, { status: 404 });
+        let pathname: string;
+        try {
+          pathname = decodeURIComponent(new URL(request.url).pathname);
+        } catch {
+          return new Response(null, { status: 404 });
+        }
+        const path = join(root, pathname);
+        const pathRelativeToRoot = relative(root, path);
+        if (pathRelativeToRoot.startsWith("..") || pathRelativeToRoot === "" || pathRelativeToRoot.split(sep).includes("..")) {
+          return new Response(null, { status: 404 });
+        }
+        try {
+          const body = await readFile(path);
+          return new Response(request.method === "HEAD" ? null : body);
+        } catch {
+          return new Response(null, { status: 404 });
+        }
+      },
     });
-    let ready = false;
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try {
-        const socket = createConnection({ host: "127.0.0.1", port });
-        await once(socket, "connect");
-        socket.destroy();
-        ready = true;
-        break;
-      } catch {
-        await Bun.sleep(50);
-      }
-    }
-    if (!ready) throw new Error("Disposable git daemon did not bind loopback");
-    const server = daemon;
+    const httpServer = server;
     return {
-      url: `git://127.0.0.1:${port}/${basename(bare)}`,
+      url: `git+http://127.0.0.1:${httpServer.port}/harness/${basename(bare)}`,
       root,
       async stop() {
-        server.kill();
-        await server.exited;
+        await httpServer.stop(true);
         await rm(root, { recursive: true, force: true });
       },
     };
   } catch (error) {
-    daemon?.kill();
-    if (daemon) await daemon.exited;
+    server?.stop(true);
     await rm(root, { recursive: true, force: true });
     throw error;
   }
