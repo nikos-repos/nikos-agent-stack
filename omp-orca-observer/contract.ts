@@ -1,4 +1,10 @@
-/** Readers can reject incompatible snapshot shapes before consuming their contents. */
+/**
+ * Readers can reject incompatible snapshot shapes before consuming their contents.
+ * @cc [label:product] schema-v1-frozen
+ * Frozen by Niko on 2026-09-30: this version, SCHEMA_HEADER, ROUTES, SNAPSHOT_MAX_BYTES, PAGE_MAX_BYTES and the
+ * Snapshot, ChildRow, Known, Completeness, RunOutcome, RunMilestones, Lineage and ReadResult shapes. Any change
+ * to them needs Niko and a new version; the in-process interfaces below stay editable.
+ */
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
 /** Compatibility checks use this as the minimum supported omp version. */
