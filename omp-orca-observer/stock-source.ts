@@ -95,11 +95,15 @@ export function createStockSource(
       fd = fs.openSync(sessionFile, "r");
       const buffer = Buffer.alloc(4096);
       const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
-      const newline = buffer.indexOf(10, 0);
+      const firstNewline = buffer.indexOf(10, 0);
+      const firstEnd = firstNewline < 0 ? bytesRead : firstNewline;
+      const first = JSON.parse(buffer.toString("utf8", 0, firstEnd));
+      const headerStart = first?.type === "title" ? firstNewline + 1 : 0;
+      const newline = buffer.indexOf(10, headerStart);
       if (newline < 0 && bytesRead === buffer.length) {
         return { known: false, reason: "session header too large" };
       }
-      const header = JSON.parse(buffer.toString("utf8", 0, newline < 0 ? bytesRead : newline));
+      const header = JSON.parse(buffer.toString("utf8", headerStart, newline < 0 ? bytesRead : newline));
       return header?.type === "session" && typeof header.cwd === "string" && header.cwd.length > 0
         ? { known: true, value: header.cwd }
         : { known: false, reason: "cwd not recorded" };

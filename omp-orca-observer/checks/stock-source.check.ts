@@ -258,7 +258,9 @@ try {
 
   const restoredCwd = fixture("restored-cwd");
   const restoredFile = restoredCwd.transcript("restored.jsonl");
-  writeFileSync(restoredFile, '{"type":"session","cwd":"/restored/workspace"}\n{"type":"message"}\n');
+  const titleSlot = JSON.stringify({ type: "title", v: 1, title: "restored", updatedAt: 0, pad: " ".repeat(192) });
+  assert.equal(Buffer.byteLength(titleSlot), 256);
+  writeFileSync(restoredFile, `${titleSlot}\n{"type":"session","cwd":"/restored/workspace"}\n{"type":"message"}\n`);
   let viewerConnected = false;
   const restored = harness(restoredCwd.root, [child("restored", restoredFile, { status: "parked" })], () => viewerConnected);
   const readSync = fs.readSync;
