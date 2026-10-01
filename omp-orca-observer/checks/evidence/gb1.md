@@ -220,7 +220,7 @@ The 135-child missing listing and exact output are in the restart annex. After r
 | Criterion | Result |
 |---|---|
 | V02.1 every field/native identity and lineage, all named scenarios | PASS only for shown live (non-restored) field comparisons; same-id reuse limitation above |
-| V02.1 native restored persisted cwd field fidelity | **FAIL (open, needs niko's decision)** — native parked, session-null refs expose unknown cwd although transcript headers record it; source reads cwd only from live session |
+| V02.1 native restored persisted cwd field fidelity | **PASS** on 2026-09-30 re-run after `ae756c9`: native `one-child` restart/restore, snapshot 2 cwd equals child session header; zero observer transcript reads before GET, one 4 KiB read across three snapshots |
 | V02.1 native restored modelRole/resolvedModel fields | PASS in fresh native restoration comparisons: both retained via ref.history; synthetic manual parking is not evidence of native model loss |
 | V02.2 older-root children excluded at every registry status | PASS |
 | V02.3 follow-up new generation/same spawning call/second outcome | PASS |
@@ -3689,4 +3689,623 @@ The complete owned before/after delta was inspected with `diff -u /tmp/gb1-close
 Exact cleanup command: `rm -rf /tmp/gb1-close /tmp/gb1-close-before.md`, exit 0. The subsequent exact-path glob returned `Path not found: /tmp/gb1-close, /tmp/gb1-close-before.md`. All owned scripts, extensions, package, output/capture files, intermediate annexes and before-image are deleted. Every disposable harness profile was torn down by its driver. Comparator/materializer/verifier source, complete normalized outputs and recovery digest remain embedded here.
 
 **Final disposition:** all five review evidence findings are closed. Native restored cwd fidelity remains **FAIL (open, needs niko's decision)**; native restored model fields PASS through registry history. Live endpoint above 256 children remains **UNVERIFIED**. No product/check/harness fix was made.
+
+
+## Re-run after cd7fff0 — 2026-09-30
+
+Dispatch `Gb1CwdRegate`; sole criterion is V02.1 native restored-child persisted cwd. Input commit: `cd7fff0d94a5f11099cddf277171a1f723afe201`. Exclusive write ownership is this evidence file; only the named final matrix row is updated, with all historical results and the historical closure ledger unchanged.
+
+Recovery: exact before-image `/tmp/gb1-cwd-regate-before.md`, SHA-256 `66889a50215e65c059b9252ae5f31dad2db8e357c1ca0447eb38fff2a1b52b5b`. Observed input SHA-256: `stock-source.ts` `83fa92432df28276775a8d23cd11b767b5cda68abb4d73df4668e02dc3606a51`; `index.ts` `abdaccc120369925216513fa1fde28a714faa8acc93b6c1eaab2c3735fdac381`; harness `profile.ts` `4d9b3ce0319f5b8efa8b2d3d1c3d6b07449b4c937ca35135577b16e2799d572b`.
+
+Method: the existing `one-child` harness scenario runs under a persistent `profile.spawn(["--mode","rpc",…])` parent and local stub provider. Restart uses native `--resume <root>`; the probe calls the main session's native read tool with `agent://child-one`, without constructing or modifying registry refs. A disposable equivalent of the harness fs probe wraps the synchronous fs calls used by the current stock source; stack attribution selects only `/omp-orca-observer/stock-source.ts`, and `/proc/self/fd` resolves each read's actual transcript path. It records observer opens, bounded reads, and whole-file reads, with no new product behavior. The extension installs the probe during module evaluation, before session-start collection. Driver transcript oracle reads happen in a separate process and cannot count as observer I/O. Exact throwaway sources, invocation and normalized output are retained below after execution.
+
+No source/check/harness edits, native registry mutation, installs, Orca commands, linters, formatters, commits or project-wide checks. Contract inspected: `stock-source-native-scope`; schema boundary `schema-v1-frozen` remains unchanged. `ncm list` found zero contracts applying to this evidence file.
+
+### Initial oracle stop; completed scenario follows
+
+Command `bun /tmp/gb1-cwd-regate.ts` exited 1 before any GET: the physical first line was `type:"title"`, not `type:"session"`. Both pre-viewer checkpoints had empty observer open/read logs. This run is not an acceptance result. The original driver is retained as `/tmp/gb1-cwd-initial.ts` source below (it was invoked under the original `gb1-cwd-regate.ts` name). The completed driver keeps the cwd equality assertion but moves it after all snapshots and read-log receipts; it records both the physical first line and the actual native session header. No transcript, registry or source is altered to manufacture a pass.
+
+### Source `/tmp/gb1-cwd-initial.ts` (initial invocation name: `/tmp/gb1-cwd-regate.ts`)
+
+SHA-256 `61512927760a571b0803de0e4d54151c1bad3ebc95861a4a0588191e8bf0a995`.
+
+```ts
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const { create } = await import(join(process.cwd(), 'omp-orca-observer/checks/harness/profile.ts'));
+const profile = await create('one-child');
+const eventFile = join(profile.root, 'tmp/gb1-cwd-events.jsonl');
+let child, stdoutTask, stderrTask;
+let events = [];
+let serial = 0;
+const pending = new Map();
+const output = [];
+function emit(label, value) {
+  const line = (label + ' ' + (typeof value === 'string' ? value : JSON.stringify(value)))
+    .replaceAll(profile.root, '<tmp>').replaceAll(process.cwd(), '$PWD')
+    .replace(/http:\/\/127\.0\.0\.1:\d+/g, 'http://127.0.0.1:<port>');
+  output.push(line);
+  console.log(line);
+}
+async function trace() {
+  try { return (await readFile(eventFile, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+}
+async function until(fn, label) {
+  const deadline = Date.now() + 45000;
+  for (; ;) {
+    const result = await fn();
+    if (result) return result;
+    if (Date.now() > deadline) throw new Error('Timeout: ' + label);
+    await Bun.sleep(25);
+  }
+}
+async function request(type, fields) {
+  const id = 'gb1cwd-' + ++serial;
+  const gate = Promise.withResolvers();
+  const timer = setTimeout(() => gate.reject(new Error('RPC timeout: ' + type)), 45000);
+  pending.set(id, value => { clearTimeout(timer); gate.resolve(value); });
+  child.stdin.write(JSON.stringify({ id, type, ...fields }) + '\n');
+  const response = await gate.promise;
+  assert.equal(response.success, true, JSON.stringify(response));
+  return response;
+}
+async function prompt(message) {
+  emit('RPC_COMMAND', message);
+  const response = await request('prompt', { message });
+  await until(() => events.some(event => event.type === 'prompt_result' && event.id === response.id), message);
+}
+async function start(root) {
+  const before = (await trace()).filter(event => event.type === 'ready').length;
+  events = [];
+  const args = ['--mode', 'rpc', '--no-lsp', '--no-title', '--model', 'stub/scripted', '-e', '/tmp/gb1-cwd-extension.ts', ...(root ? ['--resume', root] : [])];
+  emit('COMMAND', ['omp', '--profile', 'one-child', ...args]);
+  child = profile.spawn(args);
+  const current = child;
+  stdoutTask = (async () => {
+    const reader = current.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (; ;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      while (buffer.includes('\n')) {
+        const index = buffer.indexOf('\n');
+        const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+        let event;
+        try { event = JSON.parse(line); } catch { emit('NON_RPC_OUTPUT', line); continue; }
+        events.push(event);
+        if (event.type === 'response') { pending.get(event.id)?.(event); pending.delete(event.id); }
+        if (event.type === 'tool_execution_end' && event.isError) emit('TOOL_ERROR', event);
+      }
+    }
+  })();
+  stderrTask = (async () => { const text = await new Response(current.stderr).text(); if (text.trim()) emit('STDERR', text); })();
+  const ready = await until(async () => (await trace()).filter(event => event.type === 'ready')[before], 'native session ready');
+  emit('READY', ready);
+  return ready;
+}
+async function facts() {
+  const before = (await trace()).filter(event => event.type === 'facts').length;
+  await prompt('/gb1cwd facts');
+  return await until(async () => (await trace()).filter(event => event.type === 'facts')[before], 'native facts');
+}
+async function stop() {
+  child.kill();
+  emit('PROCESS_EXIT', await child.exited);
+  await Promise.all([stdoutTask, stderrTask]);
+  child = null;
+}
+try {
+  const firstReady = await start();
+  await prompt('HARNESS_AGENT=main');
+  await until(async () => (await trace()).some(event => event.type === 'lifecycle' && event.value.id === 'child-one' && event.value.status === 'completed'), 'completed native child');
+  const live = await facts();
+  assert.equal(live.refs.length, 1);
+  emit('BEFORE_RESTART_NATIVE', live);
+  await stop();
+  await start(firstReady.root);
+  const cold = await facts();
+  assert.equal(cold.refs.length, 0);
+  emit('COLD_NATIVE', cold);
+  const beforeRead = (await trace()).filter(event => event.type === 'native-read').length;
+  await prompt('/gb1cwd native-read child-one');
+  const restored = await until(async () => (await trace()).filter(event => event.type === 'native-read')[beforeRead], 'native child restoration');
+  assert.equal(restored.refs.length, 1);
+  assert.equal(restored.refs[0].status, 'parked');
+  assert.equal(restored.refs[0].session, null);
+  emit('NATIVE_RESTORE_READ', restored);
+  await Bun.sleep(1200);
+  const preServe = await facts();
+  assert.deepEqual(preServe.reads, []);
+  assert.deepEqual(preServe.opens, []);
+  assert.deepEqual(preServe.wholeFileReads, []);
+  emit('BEFORE_SERVE_NO_VIEWER', preServe);
+  const notificationCount = (await trace()).filter(event => event.type === 'notification').length;
+  await prompt('/observer serve');
+  const endpoint = await until(async () => (await trace()).filter(event => event.type === 'notification').slice(notificationCount).find(event => /^http:/.test(event.message)), 'observer endpoint');
+  await Bun.sleep(1200);
+  const preSnapshot = await facts();
+  assert.deepEqual(preSnapshot.reads, []);
+  assert.deepEqual(preSnapshot.opens, []);
+  assert.deepEqual(preSnapshot.wholeFileReads, []);
+  emit('BEFORE_SNAPSHOT_NO_VIEWER', preSnapshot);
+  const file = restored.refs[0].sessionFile;
+  const text = await readFile(file, 'utf8');
+  const header = JSON.parse(text.slice(0, text.indexOf('\n')));
+  assert.equal(header.type, 'session');
+  assert.equal(header.cwd, profile.workspace);
+  emit('TRANSCRIPT_FIRST_LINE', { file, header, oracleProcess: 'driver; not observer' });
+  const snapshots = [];
+  for (let ordinal = 1; ordinal <= 3; ordinal++) {
+    const response = await fetch(new URL('/v1/snapshot', endpoint.message));
+    const snapshot = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(snapshot.children.length, 1);
+    snapshots.push(snapshot);
+    emit('GET /v1/snapshot', { ordinal, status: response.status, schema: response.headers.get('x-observer-schema'), inventory: snapshot.inventory, childId: snapshot.children[0].childId, snapshotCwd: snapshot.children[0].lineage.cwd });
+    await Bun.sleep(1200);
+  }
+  assert.deepEqual(snapshots[1].children[0].lineage.cwd, { known: true, value: header.cwd });
+  assert.deepEqual(snapshots[2].children[0].lineage.cwd, { known: true, value: header.cwd });
+  const after = await facts();
+  assert.deepEqual(after.reads, [{ path: file, offset: 0, length: 4096, bytesRead: Math.min(Buffer.byteLength(text), 4096) }]);
+  assert.deepEqual(after.opens, [{ path: file, flags: 'r' }]);
+  assert.deepEqual(after.wholeFileReads, []);
+  assert.equal(after.refs[0].createdAt, restored.refs[0].createdAt);
+  emit('AFTER_SNAPSHOTS_READ_LOG', after);
+  emit('RESTORED_FIELD_FACTS', { childId: 'child-one', status: after.refs[0].status, session: after.refs[0].session, snapshotCwd: snapshots[1].children[0].lineage.cwd, transcriptHeader: header });
+  emit('V02_RESTORED_CWD_RESULT', { pass: true, nativeRestore: true, preSnapshotObserverOpens: 0, preSnapshotObserverReads: 0, acceptedSnapshotOrdinal: 2, observerHeaderReads: after.reads.length, requestedReadBytes: after.reads[0].length, additionalSnapshotUsesCache: true });
+  await stop();
+} catch (error) {
+  emit('DRIVER_ERROR', String(error));
+  emit('LAST_TRACE', (await trace()).slice(-8));
+  process.exitCode = 1;
+} finally {
+  if (child) { child.kill(); await child.exited; await Promise.all([stdoutTask, stderrTask]); }
+  await profile.teardown();
+  emit('PROFILE_REMOVED', 'one-child');
+  await writeFile('/tmp/gb1-cwd-regate.out', output.join('\n') + '\n');
+}
+```
+
+### Initial complete normalized output
+
+Command: `bun /tmp/gb1-cwd-regate.ts`; exit 1. SHA-256 `05d8690a13f6aa3acd3c4395b562c3546204a0202f04588794ed54b86da21d9e`.
+
+```text
+COMMAND ["omp","--profile","one-child","--mode","rpc","--no-lsp","--no-title","--model","stub/scripted","-e","/tmp/gb1-cwd-extension.ts"]
+READY {"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl"}
+RPC_COMMAND HARNESS_AGENT=main
+RPC_COMMAND /gb1cwd facts
+BEFORE_RESTART_NATIVE {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"idle","session":"live","sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667735,"history":{"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+PROCESS_EXIT 143
+COMMAND ["omp","--profile","one-child","--mode","rpc","--no-lsp","--no-title","--model","stub/scripted","-e","/tmp/gb1-cwd-extension.ts","--resume","<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl"]
+READY {"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl"}
+RPC_COMMAND /gb1cwd facts
+COLD_NATIVE {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+RPC_COMMAND /gb1cwd native-read child-one
+NATIVE_RESTORE_READ {"type":"native-read","id":"child-one","result":{"content":[{"type":"text","text":"\"child complete\""}],"details":{"totalLines":1,"displayContent":{"text":"\"child complete\"","startLine":1,"lineNumbers":[1]},"fileSize":16,"meta":{"source":{"type":"internal","value":"agent://child-one"}},"resolvedPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md","contentType":"text/markdown"}},"refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667708,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}]}
+RPC_COMMAND /gb1cwd facts
+BEFORE_SERVE_NO_VIEWER {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667708,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+RPC_COMMAND /observer serve
+RPC_COMMAND /gb1cwd facts
+BEFORE_SNAPSHOT_NO_VIEWER {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667708,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+DRIVER_ERROR AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+'title' !== 'session'
+
+LAST_TRACE [{"type":"lifecycle","value":{"id":"child-one","agent":"blocking","parentToolCallId":"chatcmpl-one-child-main-0-call-0","detached":false,"agentSource":"user","description":"Harness auxiliary reply","status":"completed","sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","index":0}},{"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"idle","session":"live","sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667735,"history":{"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true},{"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl"},{"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[],"reads":[],"opens":[],"wholeFileReads":[],"installed":true},{"type":"native-read","id":"child-one","result":{"content":[{"type":"text","text":"\"child complete\""}],"details":{"totalLines":1,"displayContent":{"text":"\"child complete\"","startLine":1,"lineNumbers":[1]},"fileSize":16,"meta":{"source":{"type":"internal","value":"agent://child-one"}},"resolvedPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md","contentType":"text/markdown"}},"refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667708,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}]},{"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667708,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true},{"type":"notification","message":"http://127.0.0.1:<port>/","level":"info"},{"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.jsonl","createdAt":1790817667708,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-RRsuAf-workspace--/2026-10-01T01-21-07-408Z_01a0f50d-0950-7373-8ea3-3a6d63e2931a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}]
+PROFILE_REMOVED one-child
+```
+
+### Intervening working-tree run, not a cd7fff0 verdict
+
+The second `bun /tmp/gb1-cwd-regate.ts` run exited 0 and observed known cwd at snapshots 2 and 3. However, after this run HEAD remained `cd7fff0d94a5f11099cddf277171a1f723afe201` while `stock-source.ts` had changed to SHA-256 `cf18b6a334d12514ae9ac4680e22c3b105c60bfc3469a0bce64d99225613b26b` (title-slot fix from another worker). It is therefore an interim working-tree observation, not a stable-input cd7fff0 FAIL or final acceptance PASS. A stable committed re-run follows when the orchestrator provides its commit.
+
+### Source `/tmp/gb1-cwd-regate.ts` (completed driver; also used for stable re-run)
+
+SHA-256 `99f77a2a783798cdeb3ad2291a69b1d14e706cf05026feec87ad057bd7575828`.
+
+```ts
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const { create } = await import(join(process.cwd(), 'omp-orca-observer/checks/harness/profile.ts'));
+const profile = await create('one-child');
+const eventFile = join(profile.root, 'tmp/gb1-cwd-events.jsonl');
+let child, stdoutTask, stderrTask;
+let events = [];
+let serial = 0;
+const pending = new Map();
+const output = [];
+function emit(label, value) {
+  const line = (label + ' ' + (typeof value === 'string' ? value : JSON.stringify(value)))
+    .replaceAll(profile.root, '<tmp>').replaceAll(process.cwd(), '$PWD')
+    .replace(/http:\/\/127\.0\.0\.1:\d+/g, 'http://127.0.0.1:<port>');
+  output.push(line);
+  console.log(line);
+}
+async function trace() {
+  try { return (await readFile(eventFile, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+}
+async function until(fn, label) {
+  const deadline = Date.now() + 45000;
+  for (; ;) {
+    const result = await fn();
+    if (result) return result;
+    if (Date.now() > deadline) throw new Error('Timeout: ' + label);
+    await Bun.sleep(25);
+  }
+}
+async function request(type, fields) {
+  const id = 'gb1cwd-' + ++serial;
+  const gate = Promise.withResolvers();
+  const timer = setTimeout(() => gate.reject(new Error('RPC timeout: ' + type)), 45000);
+  pending.set(id, value => { clearTimeout(timer); gate.resolve(value); });
+  child.stdin.write(JSON.stringify({ id, type, ...fields }) + '\n');
+  const response = await gate.promise;
+  assert.equal(response.success, true, JSON.stringify(response));
+  return response;
+}
+async function prompt(message) {
+  emit('RPC_COMMAND', message);
+  const response = await request('prompt', { message });
+  await until(() => events.some(event => event.type === 'prompt_result' && event.id === response.id), message);
+}
+async function start(root) {
+  const before = (await trace()).filter(event => event.type === 'ready').length;
+  events = [];
+  const args = ['--mode', 'rpc', '--no-lsp', '--no-title', '--model', 'stub/scripted', '-e', '/tmp/gb1-cwd-extension.ts', ...(root ? ['--resume', root] : [])];
+  emit('COMMAND', ['omp', '--profile', 'one-child', ...args]);
+  child = profile.spawn(args);
+  const current = child;
+  stdoutTask = (async () => {
+    const reader = current.stdout.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (; ;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      while (buffer.includes('\n')) {
+        const index = buffer.indexOf('\n');
+        const line = buffer.slice(0, index); buffer = buffer.slice(index + 1);
+        let event;
+        try { event = JSON.parse(line); } catch { emit('NON_RPC_OUTPUT', line); continue; }
+        events.push(event);
+        if (event.type === 'response') { pending.get(event.id)?.(event); pending.delete(event.id); }
+        if (event.type === 'tool_execution_end' && event.isError) emit('TOOL_ERROR', event);
+      }
+    }
+  })();
+  stderrTask = (async () => { const text = await new Response(current.stderr).text(); if (text.trim()) emit('STDERR', text); })();
+  const ready = await until(async () => (await trace()).filter(event => event.type === 'ready')[before], 'native session ready');
+  emit('READY', ready);
+  return ready;
+}
+async function facts() {
+  const before = (await trace()).filter(event => event.type === 'facts').length;
+  await prompt('/gb1cwd facts');
+  return await until(async () => (await trace()).filter(event => event.type === 'facts')[before], 'native facts');
+}
+async function stop() {
+  child.kill();
+  emit('PROCESS_EXIT', await child.exited);
+  await Promise.all([stdoutTask, stderrTask]);
+  child = null;
+}
+try {
+  const firstReady = await start();
+  await prompt('HARNESS_AGENT=main');
+  await until(async () => (await trace()).some(event => event.type === 'lifecycle' && event.value.id === 'child-one' && event.value.status === 'completed'), 'completed native child');
+  const live = await facts();
+  assert.equal(live.refs.length, 1);
+  emit('BEFORE_RESTART_NATIVE', live);
+  await stop();
+  await start(firstReady.root);
+  const cold = await facts();
+  assert.equal(cold.refs.length, 0);
+  emit('COLD_NATIVE', cold);
+  const beforeRead = (await trace()).filter(event => event.type === 'native-read').length;
+  await prompt('/gb1cwd native-read child-one');
+  const restored = await until(async () => (await trace()).filter(event => event.type === 'native-read')[beforeRead], 'native child restoration');
+  assert.equal(restored.refs.length, 1);
+  assert.equal(restored.refs[0].status, 'parked');
+  assert.equal(restored.refs[0].session, null);
+  emit('NATIVE_RESTORE_READ', restored);
+  await Bun.sleep(1200);
+  const preServe = await facts();
+  assert.deepEqual(preServe.reads, []);
+  assert.deepEqual(preServe.opens, []);
+  assert.deepEqual(preServe.wholeFileReads, []);
+  emit('BEFORE_SERVE_NO_VIEWER', preServe);
+  const notificationCount = (await trace()).filter(event => event.type === 'notification').length;
+  await prompt('/observer serve');
+  const endpoint = await until(async () => (await trace()).filter(event => event.type === 'notification').slice(notificationCount).find(event => /^http:/.test(event.message)), 'observer endpoint');
+  await Bun.sleep(1200);
+  const preSnapshot = await facts();
+  assert.deepEqual(preSnapshot.reads, []);
+  assert.deepEqual(preSnapshot.opens, []);
+  assert.deepEqual(preSnapshot.wholeFileReads, []);
+  emit('BEFORE_SNAPSHOT_NO_VIEWER', preSnapshot);
+  const file = restored.refs[0].sessionFile;
+  const text = await readFile(file, 'utf8');
+  const firstLine = JSON.parse(text.slice(0, text.indexOf('\n')));
+  const header = text.trim().split('\n').map(line => JSON.parse(line)).find(entry => entry.type === 'session');
+  assert.equal(header?.type, 'session');
+  assert.equal(header.cwd, profile.workspace);
+  emit('TRANSCRIPT_FIRST_TWO_PHYSICAL_LINES', { file, lines: text.split('\n').slice(0, 2), firstLine, sessionHeader: header, oracleProcess: 'driver; not observer' });
+  const snapshots = [];
+  for (let ordinal = 1; ordinal <= 3; ordinal++) {
+    const response = await fetch(new URL('/v1/snapshot', endpoint.message));
+    const snapshot = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(snapshot.children.length, 1);
+    snapshots.push(snapshot);
+    emit('GET /v1/snapshot', { ordinal, status: response.status, schema: response.headers.get('x-observer-schema'), inventory: snapshot.inventory, childId: snapshot.children[0].childId, snapshotCwd: snapshot.children[0].lineage.cwd });
+    await Bun.sleep(1200);
+  }
+  const after = await facts();
+  assert.deepEqual(after.reads, [{ path: file, offset: 0, length: 4096, bytesRead: Math.min(Buffer.byteLength(text), 4096) }]);
+  assert.deepEqual(after.opens, [{ path: file, flags: 'r' }]);
+  assert.deepEqual(after.wholeFileReads, []);
+  assert.equal(after.refs[0].createdAt, restored.refs[0].createdAt);
+  emit('AFTER_SNAPSHOTS_READ_LOG', after);
+  emit('RESTORED_FIELD_FACTS', { childId: 'child-one', status: after.refs[0].status, session: after.refs[0].session, snapshotCwd: snapshots[1].children[0].lineage.cwd, transcriptHeader: header });
+  const pass = snapshots[1].children[0].lineage.cwd.known === true && snapshots[1].children[0].lineage.cwd.value === header.cwd;
+  emit('V02_RESTORED_CWD_RESULT', { pass, nativeRestore: true, firstPhysicalLineType: firstLine.type, preSnapshotObserverOpens: 0, preSnapshotObserverReads: 0, comparedSnapshotOrdinal: 2, observerHeaderReads: after.reads.length, requestedReadBytes: after.reads[0].length, additionalSnapshotUsesCache: true });
+  assert.deepEqual(snapshots[1].children[0].lineage.cwd, { known: true, value: header.cwd });
+  assert.deepEqual(snapshots[2].children[0].lineage.cwd, { known: true, value: header.cwd });
+  await stop();
+} catch (error) {
+  emit('DRIVER_ERROR', String(error));
+  emit('LAST_TRACE', (await trace()).slice(-8));
+  process.exitCode = 1;
+} finally {
+  if (child) { child.kill(); await child.exited; await Promise.all([stdoutTask, stderrTask]); }
+  await profile.teardown();
+  emit('PROFILE_REMOVED', 'one-child');
+  await writeFile('/tmp/gb1-cwd-regate.out', output.join('\n') + '\n');
+}
+```
+
+### Interim complete normalized output
+
+Command: `bun /tmp/gb1-cwd-regate.ts`; exit 0. SHA-256 `e3f67ba3c795d95a85a334bce1ab66b8a3c92e91e9fc6466d75389e22438e4ab`.
+
+```text
+COMMAND ["omp","--profile","one-child","--mode","rpc","--no-lsp","--no-title","--model","stub/scripted","-e","/tmp/gb1-cwd-extension.ts"]
+READY {"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl"}
+RPC_COMMAND HARNESS_AGENT=main
+RPC_COMMAND /gb1cwd facts
+BEFORE_RESTART_NATIVE {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"idle","session":"live","sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","createdAt":1790817779867,"history":{"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+PROCESS_EXIT 143
+COMMAND ["omp","--profile","one-child","--mode","rpc","--no-lsp","--no-title","--model","stub/scripted","-e","/tmp/gb1-cwd-extension.ts","--resume","<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl"]
+READY {"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl"}
+RPC_COMMAND /gb1cwd facts
+COLD_NATIVE {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl","refs":[],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+RPC_COMMAND /gb1cwd native-read child-one
+NATIVE_RESTORE_READ {"type":"native-read","id":"child-one","result":{"content":[{"type":"text","text":"\"child complete\""}],"details":{"totalLines":1,"displayContent":{"text":"\"child complete\"","startLine":1,"lineNumbers":[1]},"fileSize":16,"meta":{"source":{"type":"internal","value":"agent://child-one"}},"resolvedPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.md","contentType":"text/markdown"}},"refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","createdAt":1790817779794,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.md"}}]}
+RPC_COMMAND /gb1cwd facts
+BEFORE_SERVE_NO_VIEWER {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","createdAt":1790817779794,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+RPC_COMMAND /observer serve
+RPC_COMMAND /gb1cwd facts
+BEFORE_SNAPSHOT_NO_VIEWER {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","createdAt":1790817779794,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+TRANSCRIPT_FIRST_TWO_PHYSICAL_LINES {"file":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","lines":["{\"type\":\"title\",\"v\":1,\"title\":\"\",\"updatedAt\":\"2026-10-01T01:22:59.794Z\",\"pad\":\"                                                                                                                                                                              \"}","{\"type\":\"session\",\"version\":3,\"id\":\"01a0f50e-c052-7242-b1b0-9409add81255\",\"timestamp\":\"2026-10-01T01:22:59.794Z\",\"cwd\":\"<tmp>/workspace\",\"parentSession\":\"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl\"}"],"firstLine":{"type":"title","v":1,"title":"","updatedAt":"2026-10-01T01:22:59.794Z","pad":"                                                                                                                                                                              "},"sessionHeader":{"type":"session","version":3,"id":"01a0f50e-c052-7242-b1b0-9409add81255","timestamp":"2026-10-01T01:22:59.794Z","cwd":"<tmp>/workspace","parentSession":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl"},"oracleProcess":"driver; not observer"}
+GET /v1/snapshot {"ordinal":1,"status":200,"schema":"1","inventory":{"state":"complete"},"childId":"child-one","snapshotCwd":{"known":false,"reason":"cwd not recorded"}}
+GET /v1/snapshot {"ordinal":2,"status":200,"schema":"1","inventory":{"state":"complete"},"childId":"child-one","snapshotCwd":{"known":true,"value":"<tmp>/workspace"}}
+GET /v1/snapshot {"ordinal":3,"status":200,"schema":"1","inventory":{"state":"complete"},"childId":"child-one","snapshotCwd":{"known":true,"value":"<tmp>/workspace"}}
+RPC_COMMAND /gb1cwd facts
+AFTER_SNAPSHOTS_READ_LOG {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","createdAt":1790817779794,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.md"}}],"reads":[{"path":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","offset":0,"length":4096,"bytesRead":4096}],"opens":[{"path":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4/child-one.jsonl","flags":"r"}],"wholeFileReads":[],"installed":true}
+RESTORED_FIELD_FACTS {"childId":"child-one","status":"parked","session":null,"snapshotCwd":{"known":true,"value":"<tmp>/workspace"},"transcriptHeader":{"type":"session","version":3,"id":"01a0f50e-c052-7242-b1b0-9409add81255","timestamp":"2026-10-01T01:22:59.794Z","cwd":"<tmp>/workspace","parentSession":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-L4mjMM-workspace--/2026-10-01T01-22-59-626Z_01a0f50e-bfaa-776a-aef8-5b0625f8b0b4.jsonl"}}
+V02_RESTORED_CWD_RESULT {"pass":true,"nativeRestore":true,"firstPhysicalLineType":"title","preSnapshotObserverOpens":0,"preSnapshotObserverReads":0,"comparedSnapshotOrdinal":2,"observerHeaderReads":1,"requestedReadBytes":4096,"additionalSnapshotUsesCache":true}
+PROCESS_EXIT 143
+PROFILE_REMOVED one-child
+```
+
+### Source `/tmp/gb1-cwd-extension.ts` (all three runs)
+
+SHA-256 `4763faacf2d778838a98ef03bae8a29a3af0f56419d16758686839afb4f6dc1e`. Loaded with native `-e`, exclusively inside disposable harness profiles.
+
+```ts
+import fs from 'node:fs';
+import { join } from 'node:path';
+
+const key = Symbol.for('gb1-cwd-read-probe');
+const state = globalThis[key] ??= { reads: [], opens: [], wholeFileReads: [], installed: false };
+if (!state.installed) {
+  state.installed = true;
+  const observer = () => new Error().stack?.includes('/omp-orca-observer/stock-source.ts') === true;
+  const open = fs.openSync;
+  const read = fs.readSync;
+  const readFile = fs.readFileSync;
+  fs.openSync = function(path, ...args) {
+    if (observer()) state.opens.push({ path: String(path), flags: args[0] });
+    return open.call(fs, path, ...args);
+  };
+  fs.readSync = function(fd, buffer, offset, length, position) {
+    const attributable = observer();
+    const path = attributable ? fs.readlinkSync(`/proc/self/fd/${fd}`) : null;
+    const bytesRead = read.call(fs, fd, buffer, offset, length, position);
+    if (attributable) state.reads.push({ path, offset: position, length, bytesRead });
+    return bytesRead;
+  };
+  fs.readFileSync = function(path, ...args) {
+    if (observer()) state.wholeFileReads.push({ path: String(path) });
+    return readFile.call(fs, path, ...args);
+  };
+}
+
+export default function probe(api) {
+  const log = value => fs.appendFileSync(join(process.env.TMPDIR!, 'gb1-cwd-events.jsonl'), JSON.stringify(value) + '\n');
+  const registry = api.pi.AgentRegistry.global();
+  let main = false;
+  const refs = () => registry.list().filter(ref => ref.kind === 'sub').map(ref => ({
+    id: ref.id, parentId: ref.parentId, status: ref.status, session: ref.session ? 'live' : null,
+    sessionFile: ref.sessionFile, createdAt: ref.createdAt, history: ref.history,
+  }));
+  api.on('session_start', (_, ctx) => {
+    main = ctx.agent.kind === 'main';
+    if (!main) return;
+    const notify = ctx.ui.notify.bind(ctx.ui);
+    ctx.ui.notify = (message, level) => {
+      log({ type: 'notification', message, level });
+      return notify(message, level);
+    };
+    log({ type: 'ready', root: ctx.sessionManager.getSessionFile() });
+  });
+  api.events.on('task:subagent:lifecycle', value => {
+    if (main) log({ type: 'lifecycle', value });
+  });
+  api.registerCommand('gb1cwd', {
+    description: 'Disposable native restoration and observer-attributable read evidence',
+    async handler(args, ctx) {
+      if (args.startsWith('native-read ')) {
+        const id = args.slice('native-read '.length);
+        const tool = registry.get('Main').session.getToolByName('read');
+        const result = await tool.execute('gb1-cwd-native-restore', { path: 'agent://' + id });
+        log({ type: 'native-read', id, result, refs: refs() });
+      } else if (args === 'facts') {
+        log({ type: 'facts', root: ctx.sessionManager.getSessionFile(), refs: refs(), ...state });
+      } else throw new Error('Unknown disposable probe command');
+    },
+  });
+}
+```
+
+### Stable committed re-run after ae756c9 — PASS
+
+Exact command:
+
+```sh
+git rev-parse HEAD && sha256sum omp-orca-observer/stock-source.ts && bun /tmp/gb1-cwd-regate.ts && sha256sum omp-orca-observer/stock-source.ts /tmp/gb1-cwd-regate.ts /tmp/gb1-cwd-regate.out
+```
+
+Exit 0. Before-run HEAD: `ae756c91129ce34d8b7a484b7da806e7f0324743`. Before/after source SHA-256: `cf18b6a334d12514ae9ac4680e22c3b105c60bfc3469a0bce64d99225613b26b`. Driver SHA-256: `99f77a2a783798cdeb3ad2291a69b1d14e706cf05026feec87ad057bd7575828`. Complete normalized driver stdout SHA-256: `4a0e4fa8436066dc86922866694e30497aec7a364fb66a70b6cd1959c0ae8dd3`.
+
+The native restored ref is parked with `session:null`. Before `/observer serve` and again after serve but before any GET, observer opens/reads/whole-file reads are all empty. Snapshot 1 returns the previous collection's unknown cwd; snapshot 2 and snapshot 3 both return `{"known":true,"value":"<tmp>/workspace"}`, equal to the native session header. Only one observer-attributable transcript open and one offset-0 read requesting/returning 4096 bytes occur across all three snapshots; no whole-file reads. The child incarnation remains unchanged.
+
+The exact first two physical lines below establish the title-slot boundary: physical line 1 is `type:"title"`; the first session header is physical line 2, with cwd recorded. The orchestrator authorized the native leading-title-slot correction in `ae756c9`; acceptance compares cwd with this first session header, not with the title record. Initial physical-first-line assumption failure and the uncommitted interim run remain explicitly separate above.
+
+```text
+COMMAND ["omp","--profile","one-child","--mode","rpc","--no-lsp","--no-title","--model","stub/scripted","-e","/tmp/gb1-cwd-extension.ts"]
+READY {"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl"}
+RPC_COMMAND HARNESS_AGENT=main
+RPC_COMMAND /gb1cwd facts
+BEFORE_RESTART_NATIVE {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"idle","session":"live","sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","createdAt":1790817959586,"history":{"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+PROCESS_EXIT 143
+COMMAND ["omp","--profile","one-child","--mode","rpc","--no-lsp","--no-title","--model","stub/scripted","-e","/tmp/gb1-cwd-extension.ts","--resume","<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl"]
+READY {"type":"ready","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl"}
+RPC_COMMAND /gb1cwd facts
+COLD_NATIVE {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl","refs":[],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+RPC_COMMAND /gb1cwd native-read child-one
+NATIVE_RESTORE_READ {"type":"native-read","id":"child-one","result":{"content":[{"type":"text","text":"\"child complete\""}],"details":{"totalLines":1,"displayContent":{"text":"\"child complete\"","startLine":1,"lineNumbers":[1]},"fileSize":16,"meta":{"source":{"type":"internal","value":"agent://child-one"}},"resolvedPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.md","contentType":"text/markdown"}},"refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","createdAt":1790817959551,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.md"}}]}
+RPC_COMMAND /gb1cwd facts
+BEFORE_SERVE_NO_VIEWER {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","createdAt":1790817959551,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+RPC_COMMAND /observer serve
+RPC_COMMAND /gb1cwd facts
+BEFORE_SNAPSHOT_NO_VIEWER {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","createdAt":1790817959551,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.md"}}],"reads":[],"opens":[],"wholeFileReads":[],"installed":true}
+TRANSCRIPT_FIRST_TWO_PHYSICAL_LINES {"file":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","lines":["{\"type\":\"title\",\"v\":1,\"title\":\"\",\"updatedAt\":\"2026-10-01T01:25:59.551Z\",\"pad\":\"                                                                                                                                                                              \"}","{\"type\":\"session\",\"version\":3,\"id\":\"01a0f511-7e7f-7325-85e1-da46e721afbb\",\"timestamp\":\"2026-10-01T01:25:59.551Z\",\"cwd\":\"<tmp>/workspace\",\"parentSession\":\"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl\"}"],"firstLine":{"type":"title","v":1,"title":"","updatedAt":"2026-10-01T01:25:59.551Z","pad":"                                                                                                                                                                              "},"sessionHeader":{"type":"session","version":3,"id":"01a0f511-7e7f-7325-85e1-da46e721afbb","timestamp":"2026-10-01T01:25:59.551Z","cwd":"<tmp>/workspace","parentSession":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl"},"oracleProcess":"driver; not observer"}
+GET /v1/snapshot {"ordinal":1,"status":200,"schema":"1","inventory":{"state":"complete"},"childId":"child-one","snapshotCwd":{"known":false,"reason":"cwd not recorded"}}
+GET /v1/snapshot {"ordinal":2,"status":200,"schema":"1","inventory":{"state":"complete"},"childId":"child-one","snapshotCwd":{"known":true,"value":"<tmp>/workspace"}}
+GET /v1/snapshot {"ordinal":3,"status":200,"schema":"1","inventory":{"state":"complete"},"childId":"child-one","snapshotCwd":{"known":true,"value":"<tmp>/workspace"}}
+RPC_COMMAND /gb1cwd facts
+AFTER_SNAPSHOTS_READ_LOG {"type":"facts","root":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl","refs":[{"id":"child-one","parentId":"Main","status":"parked","session":null,"sessionFile":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","createdAt":1790817959551,"history":{"resolvedModel":"stub/scripted","resolvedModelIsFallback":false,"agent":"blocking","readOnly":false,"outputPath":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.md"}}],"reads":[{"path":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","offset":0,"length":4096,"bytesRead":4096}],"opens":[{"path":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a/child-one.jsonl","flags":"r"}],"wholeFileReads":[],"installed":true}
+RESTORED_FIELD_FACTS {"childId":"child-one","status":"parked","session":null,"snapshotCwd":{"known":true,"value":"<tmp>/workspace"},"transcriptHeader":{"type":"session","version":3,"id":"01a0f511-7e7f-7325-85e1-da46e721afbb","timestamp":"2026-10-01T01:25:59.551Z","cwd":"<tmp>/workspace","parentSession":"<tmp>/home/.omp/profiles/one-child/agent/sessions/--tmp-omp-orca-harness-zZJ3yl-workspace--/2026-10-01T01-25-59-376Z_01a0f511-7dd0-7539-9715-92f68c40c70a.jsonl"}}
+V02_RESTORED_CWD_RESULT {"pass":true,"nativeRestore":true,"firstPhysicalLineType":"title","preSnapshotObserverOpens":0,"preSnapshotObserverReads":0,"comparedSnapshotOrdinal":2,"observerHeaderReads":1,"requestedReadBytes":4096,"additionalSnapshotUsesCache":true}
+PROCESS_EXIT 143
+PROFILE_REMOVED one-child
+```
+
+Limits: one naturally restored child in `one-child`, same incarnation, three snapshots, and the valid leading-title-slot form. Malformed/oversized headers, later incarnations, and unrelated criteria were not exercised. This re-gate is evidence-only; the title-slot product fix belongs to another worker. All historical restored-field FAIL records remain unchanged and are superseded only for this criterion by this committed PASS.
+
+| Command | Tested state | Result | Limitation |
+|---|---|---|---|
+| `bun /tmp/gb1-cwd-regate.ts` (initial source) | Native restart/restore at initial input, before GET | baseline failure | Oracle stopped on physical title line; not an end-to-end cwd verdict |
+| `bun /tmp/gb1-cwd-regate.ts` (completed source, interim) | Working-tree title-slot fix, native restore + 3 GETs | passed | HEAD still cd7fff0; not stable committed acceptance |
+| Stable command above | ae756c9, one native restored parked child, pre-viewer probes, 3 GETs | passed | Scoped scenario; second snapshot equals native header cwd |
+| Project-wide builds/tests, formatters, linters | Outside dispatch | not run (orchestrator-owned) | No installs, product edits, commits or pushes |
+
+### Retained-source/output integrity and owned delta check
+
+Exact command: `bun /tmp/gb1-cwd-integrity.mjs`; exit 0. It verified the entire original evidence prefix byte-for-byte except the one named matrix row, all three executed driver/extension source hashes, and all three complete normalized output hashes. It independently asserted native parked restoration, the title/session physical-line boundary, zero pre-viewer reads, one bounded read and matching second/third snapshot cwd. This is an evidence check, not another runtime run.
+
+For reproduction after cleanup, reconstruct `/tmp/gb1-cwd-regate-before.md` from the historical prefix before this appended section and restore the historical matrix row quoted in the initial evidence; its expected recovery SHA-256 is recorded above.
+
+Source `/tmp/gb1-cwd-integrity.mjs`:
+
+```js
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+const path = 'omp-orca-observer/checks/evidence/gb1.md';
+const evidence = await readFile(path, 'utf8');
+const before = await readFile('/tmp/gb1-cwd-regate-before.md', 'utf8');
+const oldRow = before.split('\n')[222];
+const newRow = evidence.split('\n')[222];
+assert.ok(newRow.includes('**PASS**') && newRow.includes('ae756c9'));
+assert.ok(evidence.startsWith(before.replace(oldRow, newRow)), 'all baseline bytes except named row unchanged');
+const section = evidence.slice(evidence.indexOf('## Re-run after cd7fff0 — 2026-09-30'));
+assert.ok(!section.includes(process.cwd()));
+const sources = [
+  ['### Source `/tmp/gb1-cwd-initial.ts`', '61512927760a571b0803de0e4d54151c1bad3ebc95861a4a0588191e8bf0a995'],
+  ['### Source `/tmp/gb1-cwd-regate.ts`', '99f77a2a783798cdeb3ad2291a69b1d14e706cf05026feec87ad057bd7575828'],
+  ['### Source `/tmp/gb1-cwd-extension.ts`', '4763faacf2d778838a98ef03bae8a29a3af0f56419d16758686839afb4f6dc1e'],
+];
+for (const [heading, expected] of sources) {
+  const tail = section.slice(section.indexOf(heading));
+  const start = tail.indexOf('```ts\n') + '```ts\n'.length;
+  const source = tail.slice(start, tail.indexOf('```', start));
+  assert.equal(createHash('sha256').update(source).digest('hex'), expected, heading);
+}
+const outputs = [
+  ['### Initial complete normalized output', '05d8690a13f6aa3acd3c4395b562c3546204a0202f04588794ed54b86da21d9e'],
+  ['### Interim complete normalized output', 'e3f67ba3c795d95a85a334bce1ab66b8a3c92e91e9fc6466d75389e22438e4ab'],
+  ['### Stable committed re-run after ae756c9', '4a0e4fa8436066dc86922866694e30497aec7a364fb66a70b6cd1959c0ae8dd3'],
+];
+let stable;
+for (const [heading, expected] of outputs) {
+  const tail = section.slice(section.indexOf(heading));
+  const start = tail.indexOf('```text\n') + '```text\n'.length;
+  const stdout = tail.slice(start, tail.indexOf('```', start));
+  assert.equal(createHash('sha256').update(stdout).digest('hex'), expected, heading);
+  if (heading.includes('Stable')) stable = stdout;
+}
+const lines = stable.trim().split('\n');
+const snapshots = lines.filter(line => line.startsWith('GET /v1/snapshot ')).map(line => JSON.parse(line.slice(line.indexOf('{'))));
+assert.equal(snapshots.length, 3);
+for (const row of snapshots.slice(1)) assert.deepEqual(row.snapshotCwd, { known: true, value: '<tmp>/workspace' });
+const pre = JSON.parse(lines.find(line => line.startsWith('BEFORE_SNAPSHOT_NO_VIEWER ')).slice('BEFORE_SNAPSHOT_NO_VIEWER '.length));
+assert.deepEqual(pre.reads, []);
+assert.deepEqual(pre.opens, []);
+const after = JSON.parse(lines.find(line => line.startsWith('AFTER_SNAPSHOTS_READ_LOG ')).slice('AFTER_SNAPSHOTS_READ_LOG '.length));
+assert.equal(after.reads.length, 1);
+assert.equal(after.reads[0].length, 4096);
+assert.equal(after.reads[0].offset, 0);
+assert.equal(after.refs[0].session, null);
+const physical = JSON.parse(lines.find(line => line.startsWith('TRANSCRIPT_FIRST_TWO_PHYSICAL_LINES ')).slice('TRANSCRIPT_FIRST_TWO_PHYSICAL_LINES '.length));
+assert.equal(JSON.parse(physical.lines[0]).type, 'title');
+assert.equal(JSON.parse(physical.lines[1]).cwd, snapshots[1].snapshotCwd.value);
+console.log('EVIDENCE_INTEGRITY', JSON.stringify({ pass: true, historicalBytesUnchangedExceptNamedRow: true, retainedSources: 3, retainedOutputs: 3, stableSnapshots: 3, nativeRestoredCwdVerdict: 'PASS', observerReadsBeforeViewer: 0, boundedHeaderReads: 1 }));
+```
+
+Exact output:
+
+```text
+EVIDENCE_INTEGRITY {"pass":true,"historicalBytesUnchangedExceptNamedRow":true,"retainedSources":3,"retainedOutputs":3,"stableSnapshots":3,"nativeRestoredCwdVerdict":"PASS","observerReadsBeforeViewer":0,"boundedHeaderReads":1}
+```
+
+Check receipt: `bun /tmp/gb1-cwd-integrity.mjs | preserved historical evidence + exact retained sources/outputs + stable runtime receipts | passed | scoped evidence integrity, not project-wide validation`.
+
+Consequential removals: none in the repository. Only disposable scripts/extensions/output copies are removed after their exact source/output retention; no production/support file is deleted. Earlier review findings and final-disposition paragraphs are historical, unchanged by instruction; the named matrix row and this dated re-run carry the current restored-cwd verdict.
+
+### Cleanup receipt
+
+Exact command: `rm /tmp/gb1-cwd-regate.ts /tmp/gb1-cwd-extension.ts /tmp/gb1-cwd-integrity.mjs /tmp/gb1-cwd-regate.out /tmp/gb1-cwd-regate-before.md`; exit 0. Earlier preserved initial/interim copies were moved verbatim into this evidence and their empty temporary files deleted. The exact-path glob `/tmp/gb1-cwd-*` returned `No files found matching pattern`. All three disposable profiles were torn down by their driver, with `PROFILE_REMOVED one-child` recorded for each run. All executed throwaway sources, invocations and complete normalized outputs remain embedded here.
+
+**Current scoped verdict: V02.1 native restored-child cwd PASS at ae756c9.** No other criterion, historical ledger row or historical evidence paragraph was changed.
 
