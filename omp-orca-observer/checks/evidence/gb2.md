@@ -5139,7 +5139,7 @@ Overall: **PASS for the five requested re-run criteria**, using the binding reso
 | --- | --- | --- |
 | v03 native results/statuses/session data identical across variants | Earlier strict **FAIL**; **PASS normalized re-run** | Earlier child output/status agreed, but native duration/TTFT/task elapsed text and timestamp encodings differed even in absent repeat. With the slice's exact timing/random normalization printed below, absent-repeat passes first, then disabled/enabled/slow/throwCollect/throwBus/incompatible all equal absent. Each normalized full native state has sha256 `bda0ce0bfc35a09854ffb85eb179fe5bc3e4543e0c3187d144520c8f9c6a3354`; all seven native diffs are empty. |
 | v03 one registry listener; nested/restricted child shutdown leaves root epoch unchanged | **PASS** | Real nested/restricted runs, native child extension-runner `session_shutdown` dispatch, unchanged publisher epoch, active/peak listener 1. |
-| v03 no serve means zero observer network/transcript I/O | **PASS re-gated on d9f78a0 (viewer idle window)** | Prior ae756c9 no-serve/cache evidence stands. `bun <tmp>/gb2-d9f78a0-final.mjs "$PWD"` exits 0 on committed `d9f78a0`: initial cold-restored session-less child has 1 header read at first GET +21 ms; no further reads while idle. At +35,003 ms a native task creates `idle-1`; omp's own 2,000-ms TTL parks it, uncached/session-less at +38,220 ms. Five registry callbacks and four collects through +43,302 ms make 0 transcript reads / 0 snapshot requests. Reopening makes exactly 1 read at second GET +72 ms; following HTTP-200 snapshot knows cwd. Both reads: offset 0, buffer offset 0, length 4,096. Closest native alternative is explicitly a natively parked new child, not second cold restoration (settled roster latch prevented reveal/read restoration). Sources, invocations, normalized outputs, phase counts and limits: “Re-run after d9f78a0 (viewer idle window)”. |
+| v03 no serve means zero observer network/transcript I/O | **PASS re-gated on 1b8d704 (request-scoped header reads)** | `bun <tmp>/gb2-1b8d704.mjs "$PWD"` exits 0 on committed `1b8d704`: no serve gives 0 observer network operations / 0 transcript reads; serve without GET gives 0 reads. First GET reads the cold-restored session-less child's header once, at request +1 ms. Native task spawn starts at +2,002 ms; omp's 2,000-ms TTL parks the new uncached/session-less `idle-1`, unknown cwd reconciled by +5,496 ms. Five registry callbacks and nine collects through +40,024 ms cause 0 reads / 0 snapshot requests, including the entire first 30 s. Next GET at first GET +40,025 ms reads exactly its one header, at that request +0 ms. Ordered handler/callback brackets prove both reads occur inside authorized request handling, not a later collect. Both reads: offset 0, buffer offset 0, requested length 4,096. Following HTTP-200 generation 14 knows both cwds; `idle-1` snapshot cwd and its actual session-header cwd both normalize to `<tmp>/profile/workspace`. Following GET and forced reconcile add 0 reads. Exact sources/diffs, invocations, normalized outputs and phase counts: “Re-run after 1b8d704 (request-scoped header reads)”. |
 | v03 many-135 callback CPU, heap growth and each collect cost | **PASS** | Enabled run: 540 registry callbacks / 13,535 µs; 270 bus callbacks / 16,769 µs; 38 collects / 105,866 µs; process heap growth 150,981,007 bytes. Every collect's wall/CPU/heap sample is retained. These measure whole collect work, not only registry copying. |
 | v03 exact per-message context roles/lengths/digests | Earlier strict **FAIL**; **PASS normalized re-run** | Earlier initial contexts agreed but raw parent tool-result elapsed text differed, including absent repeat. Re-run applies the same normalization to full request messages before hashing, forwarding original bodies unchanged to the harness stub. All eight variants have four HTTP-200 model requests and ten per-message role/normalized-byte-length/digest records, exactly equal; context sha256 is `06effaec0abf4b9e694fad064aad75c01273073e5cc4121623a0d50d2a66aeee`. Every per-message record is retained. |
 | v03 overflow reason persists, no terminal from partial evidence | Earlier **FAIL**; **PASS re-run** | Earlier many-33: 21 unknown (`fact queue overflow`), 12 unknown (`no lifecycle evidence`); tracker-only next-start seam passed. Re-run queue=2 native many-33 has 33/33 final loss-affected rows with the exact overflow reason; 59 snapshot frames / 1,263 affected-row observations pass the consumed loss/start timeline check. All 33 terminal-only injections preserve the reason; all 33 next-start/terminal pairs then produce completed outcomes, never a terminal before that start. Injection recovery is through the native lifecycle bus on real admitted refs, not a naturally scheduled second assignment. |
@@ -9325,3 +9325,498 @@ rm -- <tmp>/gb2-d9f78a0-before.md <tmp>/gb2-d9f78a0.mjs <tmp>/gb2-d9f78a0-park.m
 ```
 
 Observed cleanup exit 0, stdout/stderr empty. All standalone temporary files from this re-gate, including the before-image, were removed. The complete owned diff was captured and inspected before this cleanup receipt; it contains only the named ledger replacement and this appended re-run section.
+
+## Re-run after 1b8d704 (request-scoped header reads) — 2026-09-30
+
+Assigned criteria: nfr-8's exact within-30-seconds native-parking scenario and restored cwd. Input revision: `1b8d7047292efb39fe7d59b06b9e94c3019a8b9b`. Binding slice snapshot `93CF`; contract `stock-source-native-scope` requires transcript headers to be read only by `resolveHeaders()` while the publisher handles an authorized snapshot request, with definite results cached per incarnation. `index.ts:38-41` invokes it in that callback; `transport.ts:42-46` calls that callback only on GET snapshot handling after host/method checks.
+
+Exclusive write ownership: this evidence file only, append plus the named zero-I/O ledger row. Exact before-image: `<tmp>/gb2-1b8d704-before.md`, sha256 `d4eee855f55ef31f5adf19988a3539714ad39adac4261458a8f2b3f2d244e6b7`. Recovery command: `cp omp-orca-observer/checks/evidence/gb2.md <tmp>/gb2-1b8d704-before.md && sha256sum <tmp>/gb2-1b8d704-before.md`, exit 0. No earlier evidence is deleted; no production source is edited.
+
+The disposable runner below reuses the preceding attributable observer-only fs/network wrappers and native idle TTL parking, moving spawn from +35 s to +2 s and observing until +40 s. It additionally brackets both HTTP handling and the authorized snapshot callback with ordered log events: read-event sequence membership proves request scope even when timestamps share a millisecond. All omp launches use harness-created disposable environments, persistent RPC parents and local stubs; package instrumentation affects only a HEAD-verified temporary copy. No Orca, formatter, linter, project-wide validation, commit or push is run.
+
+### Recorded disposable probe: gb2-1b8d704.mjs
+
+Exact runner source, sha256 `25b6be36d94fc3a284f0596161a3111c700ac9705f8a26efc5ffb938702948fb`:
+
+```javascript
+import assert from 'node:assert/strict';
+import { cp, readFile, writeFile, open } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+const repo = process.argv[2], pkg = join(repo, 'omp-orca-observer');
+const { create } = await import(join(pkg, 'checks/harness/profile.ts'));
+const { startStub } = await import(join(pkg, 'checks/harness/stub-provider.ts'));
+const p = await create('cold-restart');
+const normalize = s => s.replaceAll(p.root, '<tmp>/profile').replaceAll(repo, '$PWD').replace(/127\.0\.0\.1:\d+/g, '127.0.0.1:<port>').replace(/\d{4}-\d\d-\d\dT[\d:.]+Z_[a-f0-9-]+/g, '<session>').replace(/--tmp-omp-orca-harness-[A-Za-z0-9]+-workspace--/g, '<workspace-key>');
+const output = (tag, data) => console.log(normalize(tag + ' ' + JSON.stringify(data)));
+const copy = join(p.root, 'observer-copy'), logFile = join(p.root, 'observer-probe.jsonl');
+const instrumentation =`import fs from 'node:fs';
+const root=new URL('../',import.meta.url).pathname;
+const paths=new Map();
+let sequence=0;
+export function log(kind,data={}){const seq=++sequence;fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({seq,atMs:Date.now(),kind,...data})+'\\n');return seq;}
+function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
+function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
+export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
+export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
+export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
+export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
+export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+`;
+let rpc, stub, lastGetAt;
+async function launch(extra = []) {
+ const child = p.spawn(['--mode', 'rpc', '--no-title', '--no-lsp', '--extension', join(p.root, 'control.ts'), ...extra]);
+ const events = []; let buffer = '', next = 0, closed = false;
+ const out = (async () => { for await (const bytes of child.stdout) { buffer += new TextDecoder().decode(bytes); let at; while ((at = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, at); buffer = buffer.slice(at + 1); try { events.push(JSON.parse(line)); } catch { events.push({ type: 'nonjson', line }); } } } })();
+ const err = new Response(child.stderr).text();
+ async function wait(pred, from = 0) { const end = Date.now() + 90000; while (Date.now() < end) { const row = events.slice(from).find(pred); if (row) return row; await Bun.sleep(10); } throw Error('RPC timeout ' + JSON.stringify(events.slice(-8))); }
+ async function request(type, data = {}) { const id = 'gb2-idle-' + ++next; child.stdin.write(JSON.stringify({ id, type, ...data }) + '\n'); const response = await wait(e => e.type === 'response' && e.id === id); assert.equal(response.success, true); return response; }
+ async function command(message) { const from = events.length; await request('prompt', { message }); await wait(e => e.type === 'prompt_result', from); return events.slice(from); }
+ await wait(e => e.type === 'ready');
+ return { async report() { const ev = await command('/gb2io'); const note = ev.find(e => e.type === 'extension_ui_request' && e.message?.startsWith('GB2_IO ')); assert(note); return JSON.parse(note.message.slice(7)); }, command, async prompt() { const from = events.length; await request('prompt', { message: 'HARNESS_AGENT=main' }); await wait(e => e.type === 'agent_end', from); return events.slice(from); }, async close() { if (closed) return; closed = true; child.kill(); await child.exited; await out; output('PROCESS_CLOSE', { stderr: await err }); } };
+}
+async function logs() { try { return (await readFile(logFile, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } }
+const reads = rows => rows.filter(r => /^fs\.(readSync|readFileSync|readFile|handle\.read|Bun\.file)$/.test(r.kind) && (r.path?.endsWith('.jsonl') || r.args?.some(a => typeof a === 'string' && a.endsWith('.jsonl'))));
+const refs = report => report.refs.filter(r => r.kind === 'sub');
+const view = report => ({ atSinceLastGetMs: lastGetAt === undefined ? null : Date.now() - lastGetAt, state: report.state, generation: report.snapshot?.generation, inventory: report.snapshot?.inventory, refs: refs(report), cwd: report.snapshot?.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) });
+function capture(phase, rows) { const relative = at => lastGetAt === undefined ? null : at - lastGetAt; const counts = {}; for (const row of rows) counts[row.kind] = (counts[row.kind] ?? 0) + 1; output('IO_SUMMARY', { phase, transcriptReads: reads(rows).length, counts, collectAtSinceLastGetMs: rows.filter(r => r.kind === 'collect').map(r => relative(r.atMs)), readWindows: reads(rows).map(r => ({ seq: r.seq, path: r.path, atSinceLastGetMs: relative(r.atMs), position: r.position, bufferOffset: r.bufferOffset, length: r.length })) }); for (const row of rows.filter(r => r.kind.startsWith('network.') || r.kind.startsWith('snapshot.') || reads([r]).length || r.kind === 'registry_callback')) output('ATTRIBUTABLE_IO', { phase, row: { ...row, atMs: undefined, atSinceLastGetMs: relative(row.atMs) } }); }
+const toolEvents = events => events.filter(e => e.type === 'tool_execution_start' || e.type === 'tool_execution_end').map(e => ({ type: e.type, toolName: e.toolName, args: e.args, isError: e.isError, result: e.type === 'tool_execution_end' ? e.result : undefined }));
+function parked(report, count) { assert.equal(refs(report).length, count); for (const ref of refs(report)) { assert.equal(ref.status, 'parked'); assert.equal(ref.hasSession, false); } assert.equal(report.snapshot.children.length, count); }
+function assertRequestScoped(rows) {
+ const windows = [];
+ for (let i = 0; i < rows.length; i++) {
+  if (rows[i].kind !== 'network.request') continue;
+  const begin = rows[i], endIndex = rows.findIndex((r, at) => at > i && r.kind === 'network.request.end' && r.requestId === begin.seq);
+  assert(endIndex > i, 'handler exit recorded');
+  const body = rows.slice(i + 1, endIndex), callbackStart = body.findIndex(r => r.kind === 'snapshot.begin'), callbackEnd = body.findIndex(r => r.kind === 'snapshot.end');
+  assert(callbackStart >= 0 && callbackEnd > callbackStart, 'authorized callback bracket recorded');
+  const headerReads = reads(body);
+  for (const row of headerReads) { const at = body.indexOf(row); assert(at > callbackStart && at < callbackEnd, 'read inside authorized callback'); assert(row.atMs >= begin.atMs && row.atMs <= rows[endIndex].atMs); }
+  windows.push({ requestId: begin.seq, startMs: begin.atMs, endMs: rows[endIndex].atMs, callbackStartSeq: body[callbackStart].seq, callbackEndSeq: body[callbackEnd].seq, readSeqs: headerReads.map(r => r.seq) });
+ }
+ assert.equal(windows.reduce((n, w) => n + w.readSeqs.length, 0), reads(rows).length, 'no reads outside request windows');
+ output('REQUEST_SCOPE_WINDOWS', windows);
+}
+async function headerCwd(ref) {
+ const handle = await open(ref.sessionFile, 'r');
+ try {
+  const buffer = Buffer.alloc(4096), { bytesRead } = await handle.read(buffer, 0, 4096, 0);
+  const lines = buffer.toString('utf8', 0, bytesRead).split('\n');
+  const first = JSON.parse(lines[0]), header = first.type === 'title' ? JSON.parse(lines[1]) : first;
+  assert.equal(header.type, 'session'); assert.equal(typeof header.cwd, 'string');
+  output('NATIVE_HEADER_CWD', { childId: ref.id, sessionFile: ref.sessionFile, firstSlotType: first.type, headerCwd: header.cwd, probeReadOffset: 0, probeRequestedLength: 4096, attribution: 'independent runner read, not observer' });
+  return header.cwd;
+ } finally { await handle.close(); }
+}
+try {
+ const revision = Bun.spawn(['git', 'rev-parse', 'HEAD'], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); const head = (await new Response(revision.stdout).text()).trim(); assert.equal(await revision.exited, 0); assert.equal(head, '1b8d7047292efb39fe7d59b06b9e94c3019a8b9b');
+ await cp(pkg, copy, { recursive: true, filter: path => !path.split('/').some(s => ['node_modules', '.git', 'evidence'].includes(s)) });
+ const hashes = {}; for (const file of ['index.ts', 'stock-source.ts', 'coordinator.ts', 'reader.ts', 'transport.ts', 'contract.ts', 'compat.ts', 'outcomes.ts', 'package.json']) { const text = await readFile(join(copy, file), 'utf8'); assert.equal(text, await readFile(join(pkg, file), 'utf8')); const committed = Bun.spawn(['git', 'show', head + ':omp-orca-observer/' + file], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); assert.equal(text, await new Response(committed.stdout).text()); assert.equal(await committed.exited, 0); hashes[file] = createHash('sha256').update(text).digest('hex'); } output('COPY_SOURCE_STATE', { head, hashes });
+ await writeFile(join(copy, 'gb2-instrument.ts'), instrumentation);
+ const changes = {
+  'stock-source.ts': s => s.replace('import fs from "node:fs";', 'import { observerFs as fs, log } from "./gb2-instrument.ts";').replace('    collect(limit) {', '    collect(limit) {\n      log("collect");').replace('    processCoordinator()?.markDirty();', '    log("registry_callback");\n    processCoordinator()?.markDirty();'),
+  'reader.ts': s => s.replace('import { open } from "node:fs/promises";', 'import { observerOpen as open } from "./gb2-instrument.ts";'),
+  'transport.ts': s => 'import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";\n' + s.replace('Bun.serve(', 'observerServe(').replace('Bun.file(', 'observerFile(').replace('await fetch(', 'await observerFetch(').replace('  async function handle(request: Request): Promise<Response> {', '  async function handle(request: Request): Promise<Response> {\n    const requestId = log("network.request", { method: request.method, path: new URL(request.url).pathname });').replace('      return new Response("Internal Server Error", { status: 500, headers });\n    }', '      return new Response("Internal Server Error", { status: 500, headers });\n    } finally {\n      log("network.request.end", { requestId });\n    }'),
+  'index.ts': s => 'import { log } from "./gb2-instrument.ts";\n' + s.replace('            source.resolveHeaders();\n            return coordinator.snapshot();', '            log("snapshot.begin");\n            try {\n              source.resolveHeaders();\n              return coordinator.snapshot();\n            } finally {\n              log("snapshot.end");\n            }'),
+  'coordinator.ts': s => s + '\n// Expose the loaded copy, avoiding duplicate extension-loader module instances.\nglobalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;\n',
+ };
+ for (const [file, change] of Object.entries(changes)) { const before = await readFile(join(copy, file), 'utf8'), after = change(before); assert.notEqual(before, after); await writeFile(join(copy, file), after); }
+ for (const file of [...Object.keys(changes), 'gb2-instrument.ts']) { const diff = Bun.spawn(['diff', '-u', '--label', 'real/' + file, '--label', 'copy/' + file, file === 'gb2-instrument.ts' ? '/dev/null' : join(pkg, file), join(copy, file)], { stdout: 'pipe', stderr: 'pipe' }); console.log(normalize('COPY_DIFF\n' + await new Response(diff.stdout).text())); assert.equal(await diff.exited, 1); assert.equal(await new Response(diff.stderr).text(), ''); }
+ const control = `export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n`;
+ output('CONTROL_SOURCE', control); await writeFile(join(p.root, 'control.ts'), control);
+ const scenario = JSON.parse(await readFile(join(pkg, 'checks/harness/scenarios/cold-restart.json'), 'utf8'));
+ scenario.turns.main[0].fanout.count = 1;
+ scenario.turns.main.push({ calls: [{ tool: 'read', args: { path: 'agent://restart-1' } }] }, { text: 'first native restoration complete' }, { fanout: { count: 1, prefix: 'idle-', agent: 'task' } }, { text: 'idle child spawned natively' });
+ output('SCENARIO_DELTA', { firstFanoutCount: 1, appendMainTurns: scenario.turns.main.slice(2) });
+ const configPath = join(p.home, '.omp/profiles/cold-restart/agent/config.yml');
+ const config = JSON.parse(await readFile(configPath, 'utf8'));
+ config.task.agentIdleTtlMs = 2000;
+ await writeFile(configPath, JSON.stringify(config));
+ output('DISPOSABLE_NATIVE_SETTING', { key: 'task.agentIdleTtlMs', value: 2000 });
+ stub = await startStub({ scenario, capture: p.capture }); const models = join(p.home, '.omp/profiles/cold-restart/agent/models.yml'); await writeFile(models, (await readFile(models, 'utf8')).replace(/baseUrl: .*/, 'baseUrl: ' + stub.url));
+ output('VERSION', await p.run(['--version'])); const linked = await p.run(['plugin', 'link', copy]); output('LINK', linked); assert.equal(linked.exitCode, 0);
+ rpc = await launch(); await rpc.prompt(); let before = await rpc.report(); const deadline = Date.now() + 60000; while (refs(before).length !== 1 || refs(before).some(r => r.status === 'running')) { assert(Date.now() < deadline); await Bun.sleep(100); before = await rpc.report(); } output('NATIVE_BEFORE_RESTART', view(before)); await rpc.close();
+ rpc = await launch(['--resume', before.sessionFile]); const initialEvents = await rpc.prompt(); await Bun.sleep(5500); const a = await rpc.report(); output('INITIAL_NATIVE_RESTORATION', { ...view(a), toolEvents: toolEvents(initialEvents) }); parked(a, 1); assert(initialEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'read' && e.args?.path === 'agent://restart-1'));
+ const phaseA = await logs(); capture('no-serve', phaseA); assert.equal(reads(phaseA).length, 0); assert.equal(phaseA.filter(r => r.kind.startsWith('network.')).length, 0); output('PRE_SERVE_COUNTS', { networkOperations: 0, transcriptReads: 0 });
+ const serveEvents = await rpc.command('/observer serve'); const url = serveEvents.find(e => e.type === 'extension_ui_request' && /^http:/.test(e.message ?? ''))?.message; assert(url); await Bun.sleep(5500); const phaseB = await logs(); capture('serve-without-GET', phaseB.slice(phaseA.length)); assert.equal(reads(phaseB).length, 0); assert.equal(phaseB.filter(r => r.kind === 'network.request').length, 0); output('SERVE_WITHOUT_GET_COUNTS', { transcriptReads: 0 });
+ async function get(tag) { const start = Date.now(); const response = await fetch(new URL('/v1/snapshot', url)); assert.equal(response.status, 200); const snapshot = await response.json(); const all = await logs(); lastGetAt = all.findLast(r => r.kind === 'network.request' && r.path === '/v1/snapshot').atMs; output(tag, { requestStartMs: start, responseAtSinceGetMs: Date.now() - lastGetAt, status: response.status, generation: snapshot.generation, cwd: snapshot.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) }); return snapshot; }
+ await get('FIRST_GET'); await Bun.sleep(750); const firstLogs = await logs(); capture('one-GET-header-load', firstLogs.slice(phaseB.length)); const firstReads = reads(firstLogs); assert.equal(firstReads.length, 1); for (const row of firstReads) { assert.equal(row.kind, 'fs.readSync'); assert.equal(row.position, 0); assert.equal(row.bufferOffset, 0); assert.equal(row.length, 4096); assert(refs(a).some(r => r.sessionFile === row.path)); assert.equal(firstReads.filter(r => r.path === row.path).length, 1); }
+ const firstGetAt = lastGetAt; const cached = await rpc.report(); output('CACHED_WITHOUT_ANOTHER_GET', view(cached)); for (const row of cached.snapshot.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace });
+ while (Date.now() - lastGetAt < 2000) await Bun.sleep(Math.max(10, 2000 - (Date.now() - lastGetAt)));
+ const preSpawn = await logs(); capture('viewer-stopped-before-spawn', preSpawn.slice(firstLogs.length)); assert.equal(reads(preSpawn.slice(firstLogs.length)).length, 0); assert(Date.now() - lastGetAt < 30000, 'spawn within first 30 s');
+ output('NATIVE_SPAWN_AT', { atSinceLastGetMs: Date.now() - lastGetAt }); const idleEvents = await rpc.prompt(); output('IDLE_NATIVE_TASK', { atSinceLastGetMs: Date.now() - lastGetAt, toolEvents: toolEvents(idleEvents) }); assert(idleEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'task'));
+ let idle1 = await rpc.report(); const parkedDeadline = Date.now() + 30000;
+ while (!refs(idle1).some(r => r.id === 'idle-1' && r.status === 'parked' && !r.hasSession) || idle1.snapshot.children.find(r => r.childId === 'idle-1')?.lineage.cwd.known !== false) { assert(Date.now() < parkedDeadline, 'native idle TTL parks child'); output('NATIVE_PARK_SAMPLE', view(idle1)); await Bun.sleep(300); idle1 = await rpc.report(); }
+ output('IDLE_RECONCILED', view(idle1)); parked(idle1, 2); assert(Date.now() - firstGetAt < 30000, 'parked within first 30 s'); const newChild = refs(idle1).find(r => r.id === 'idle-1'); const uncached = idle1.snapshot.children.find(r => r.childId === 'idle-1'); assert.deepEqual(uncached.lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ while (Date.now() - firstGetAt < 40000) { await Bun.sleep(Math.min(5000, 40000 - (Date.now() - firstGetAt))); const sample = await rpc.report(); output('VIEWER_STOPPED_SAMPLE', view(sample)); assert.deepEqual(sample.snapshot.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' }); }
+ const idle2 = await rpc.report(); output('IDLE_FORCED_RECONCILE', view(idle2)); assert(idle2.snapshot.generation > idle1.snapshot.generation); assert.deepEqual(idle2.snapshot.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ const idleLogs = await logs(), idleDelta = idleLogs.slice(firstLogs.length); capture('viewer-stopped-entire-period-through-40s', idleDelta); capture('viewer-stopped-first-30s', idleDelta.filter(r => r.atMs - firstGetAt < 30000)); capture('viewer-stopped-after-30s', idleDelta.filter(r => r.atMs - firstGetAt >= 30000)); assert.equal(reads(idleDelta).length, 0); assert.equal(idleDelta.filter(r => r.kind === 'network.request').length, 0); assert(idleDelta.filter(r => r.kind === 'registry_callback').length > 0); assert(idleDelta.filter(r => r.kind === 'collect').length >= 3);
+ const reopened = await get('REOPEN_GET'); assert.deepEqual(reopened.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' }); await Bun.sleep(750); const reopenLogs = await logs(); capture('one-reopen-GET-header-load', reopenLogs.slice(idleLogs.length)); const reopenReads = reads(reopenLogs.slice(idleLogs.length)); assert.equal(reopenReads.length, 1); assert.equal(reopenReads[0].path, newChild.sessionFile); assert.equal(reopenReads[0].position, 0); assert.equal(reopenReads[0].bufferOffset, 0); assert.equal(reopenReads[0].length, 4096);
+ const nativeCwd = await headerCwd(newChild); const restoredNativeCwd = await headerCwd(refs(a)[0]);
+ const following = await get('FOLLOWING_SNAPSHOT'); for (const row of following.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace }); assert.equal(following.children.find(r => r.childId === 'idle-1').lineage.cwd.value, nativeCwd); assert.equal(following.children.find(r => r.childId === 'restart-1').lineage.cwd.value, restoredNativeCwd); output('CWD_EQUALITY', { childId: 'idle-1', transcriptHeaderCwd: nativeCwd, followingSnapshotCwd: following.children.find(r => r.childId === 'idle-1').lineage.cwd.value, equal: true, restoredChildHeaderCwd: restoredNativeCwd, restoredChildSnapshotCwd: following.children.find(r => r.childId === 'restart-1').lineage.cwd.value });
+ let finalReport = await rpc.report(); const reconcileDeadline = Date.now() + 30000;
+ while (finalReport.snapshot.generation <= following.generation) { assert(Date.now() < reconcileDeadline, 'forced reconcile observed'); await Bun.sleep(300); finalReport = await rpc.report(); }
+ output('FINAL_FORCED_RECONCILE', view(finalReport)); const finalLogs = await logs(); capture('following-snapshot-and-forced-reconcile', finalLogs.slice(reopenLogs.length)); assert.equal(reads(finalLogs).length, 2); assert(finalReport.snapshot.generation > following.generation);
+ assertRequestScoped(finalLogs);
+ output('CRITERION_RESULT', { criterion: 'nfr-8 request-scoped within-30s native parking and restored cwd', result: 'PASS', firstHeaderReads: 1, idleFirst30sHeaderReads: 0, idleThrough40sHeaderReads: 0, reopenHeaderReads: 1, followingHeaderReads: 0, totalHeaderReads: 2, idleChild: 'idle-1', idleChildMechanism: 'native task followed by native 2000-ms TTL parking', firstGetAtMs: firstGetAt, reopenAtSinceFirstGetMs: reopenReads[0].atMs - firstGetAt, snapshotRequests: finalLogs.filter(r => r.kind === 'network.request').length, readsInsideAuthorizedRequestCallbacks: true, cwdEqualsNativeHeader: true });
+} catch (error) { output('CRITERION_RESULT', { criterion: 'nfr-8 request-scoped within-30s native parking and restored cwd', result: 'FAIL', error: String(error), stack: error instanceof Error ? error.stack : null }); process.exitCode = 1; }
+finally { await rpc?.close(); await stub?.stop(); await p.teardown(); output('CLEANUP', { profileAndCopyRemoved: true, processesAndStubsStopped: true }); }
+```
+
+Exact recorder source:
+
+```javascript
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const [repo, runner, destination] = process.argv.slice(2);
+const source = await readFile(runner, 'utf8'), self = await readFile(process.argv[1], 'utf8');
+const norm = s => s.replaceAll(repo, '$PWD').replaceAll('/tmp/', '<tmp>/');
+const hash = s => createHash('sha256').update(s).digest('hex');
+const child = Bun.spawn(['bun', runner, repo], { stdout: 'pipe', stderr: 'pipe' });
+let stdout = '';
+const capture = (async () => { for await (const bytes of child.stdout) { const text = new TextDecoder().decode(bytes); stdout += text; process.stdout.write(norm(text)); } })();
+const stderrTask = new Response(child.stderr).text();
+const exitCode = await child.exited; await capture; const stderr = await stderrTask;
+const text = '\n### Recorded disposable probe: ' + runner.split('/').at(-1) + '\n\nExact runner source, sha256 `' + hash(source) + '`:\n\n```javascript\n' + source + '```\n\nExact recorder source:\n\n```javascript\n' + self + '```\n\nInvocation: `bun ' + norm(process.argv[1]) + ' "$PWD" ' + norm(runner) + ' ' + norm(destination) + '`. It launches `bun ' + norm(runner) + ' "$PWD"`; all runner writes are temporary. Full normalized output:\n\n```text\n' + norm(stdout) + 'STDERR ' + JSON.stringify(norm(stderr)) + '\nRUNNER_EXIT ' + exitCode + '\n```\n';
+await writeFile(destination, text);
+console.log('STDERR', JSON.stringify(norm(stderr))); console.log('RUNNER_EXIT', exitCode); console.log('SECTION_SHA256', hash(text)); process.exitCode = exitCode;
+```
+
+Invocation: `bun <tmp>/gb2-1b8d704-record.mjs "$PWD" <tmp>/gb2-1b8d704.mjs <tmp>/gb2-1b8d704-section.md`. It launches `bun <tmp>/gb2-1b8d704.mjs "$PWD"`; all runner writes are temporary. Full normalized output:
+
+```text
+COPY_SOURCE_STATE {"head":"1b8d7047292efb39fe7d59b06b9e94c3019a8b9b","hashes":{"index.ts":"ea01471679d07cc8eefe735f5fbd19a81049b2d72064325f957ade89ff8a5ddc","stock-source.ts":"a3053d7c13fff7e05a6ff0d4b8d395c5abebfacf80f03adc94e3a02716902b72","coordinator.ts":"196d7565c21484e2c7747f4b93882b9b3ae2c7f56fe649e02657343be662aec5","reader.ts":"4a8e1f2349f9a2f4a207a1cb520d3ddbcade5cac8dc8d078f20d16ecd22bc0d0","transport.ts":"3f51b670b584ebb9a2ad21b9f587fef616de000c122ec0efd86c161d187f7571","contract.ts":"1013a18efab4fa167a544eb20381c142d4a84505af474fd6c8ce6c6154f5207f","compat.ts":"5a37510105ec3f963a6e0cd42fbf9c3dc256c3b0414e331b3d045e6516457efd","outcomes.ts":"e90b27b87d337e131c0e66f0ca3c45955313baabf1e787787ab4eaa9467f8da9","package.json":"a061992c949fd605e3d3e3b6487bd8c17707f1325d4b680343a61f661d5aff2a"}}
+COPY_DIFF
+--- real/stock-source.ts
++++ copy/stock-source.ts
+@@ -1,4 +1,4 @@
+-import fs from "node:fs";
++import { observerFs as fs, log } from "./gb2-instrument.ts";
+ import { join, relative, resolve, sep } from "node:path";
+ import type { AgentRef, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+ import type { ChildRow, Completeness, Known, OutcomeTracker, SnapshotSource } from "./contract.ts";
+@@ -121,6 +121,7 @@
+     }
+   }
+   const unsubscribe = registry.onChange(() => {
++    log("registry_callback");
+     processCoordinator()?.markDirty();
+   });
+   let disposed = false;
+@@ -183,6 +184,7 @@
+       if (changed) processCoordinator()?.markDirty();
+     },
+     collect(limit) {
++      log("collect");
+       pending.clear();
+       if (disposed || rootSessionFile === null || artifactRoot === null) {
+         return {
+
+COPY_DIFF
+--- real/reader.ts
++++ copy/reader.ts
+@@ -1,5 +1,5 @@
+ import { createHash } from "node:crypto";
+-import { open } from "node:fs/promises";
++import { observerOpen as open } from "./gb2-instrument.ts";
+ import type { FileHandle } from "node:fs/promises";
+ import { PAGE_MAX_BYTES } from "./contract.ts";
+ import type { ParseSessionContent, ReadRequest, ReadResult } from "./contract.ts";
+
+COPY_DIFF
+--- real/transport.ts
++++ copy/transport.ts
+@@ -1,3 +1,4 @@
++import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";
+ import {
+   PAGE_MAX_BYTES,
+   ROUTES,
+@@ -15,13 +16,14 @@
+     [SCHEMA_HEADER]: String(SNAPSHOT_SCHEMA_VERSION),
+   };
+   const viewerHeaders = { ...headers, "Content-Type": "text/html; charset=utf-8" };
+-  const viewer = Bun.file(new URL("./viewer/index.html", import.meta.url));
++  const viewer = observerFile(new URL("./viewer/index.html", import.meta.url));
+   const marker = ":childId";
+   const markerAt = ROUTES.page.indexOf(marker);
+   const pagePrefix = ROUTES.page.slice(0, markerAt);
+   const pageSuffix = ROUTES.page.slice(markerAt + marker.length);
+ 
+   async function handle(request: Request): Promise<Response> {
++    const requestId = log("network.request", { method: request.method, path: new URL(request.url).pathname });
+     try {
+       const host = request.headers.get("host");
+       if (host !== numericHost && host !== localHost) {
+@@ -77,10 +79,12 @@
+       return new Response("Not Found", { status: 404, headers });
+     } catch {
+       return new Response("Internal Server Error", { status: 500, headers });
++    } finally {
++      log("network.request.end", { requestId });
+     }
+   }
+ 
+-  const server = Bun.serve({ hostname: "127.0.0.1", port: options.port, fetch: handle });
++  const server = observerServe({ hostname: "127.0.0.1", port: options.port, fetch: handle });
+   const port = server.port;
+   if (port === undefined) {
+     await server.stop(true);
+
+COPY_DIFF
+--- real/index.ts
++++ copy/index.ts
+@@ -1,3 +1,4 @@
++import { log } from "./gb2-instrument.ts";
+ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+ import { checkCompat } from "./compat.ts";
+ import { processCoordinator, startCoordinator } from "./coordinator.ts";
+@@ -36,8 +37,13 @@
+         pendingEndpoint = serve({
+           epoch: coordinator.epoch(),
+           snapshot: () => {
+-            source.resolveHeaders();
+-            return coordinator.snapshot();
++            log("snapshot.begin");
++            try {
++              source.resolveHeaders();
++              return coordinator.snapshot();
++            } finally {
++              log("snapshot.end");
++            }
+           },
+           state: () => coordinator.state(),
+           admittedSessionFile: source.admittedSessionFile,
+
+COPY_DIFF
+--- real/coordinator.ts
++++ copy/coordinator.ts
+@@ -162,3 +162,6 @@
+   active = coordinator;
+   return coordinator;
+ }
++
++// Expose the loaded copy, avoiding duplicate extension-loader module instances.
++globalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;
+
+COPY_DIFF
+--- real/gb2-instrument.ts
++++ copy/gb2-instrument.ts
+@@ -0,0 +1,12 @@
++import fs from 'node:fs';
++const root=new URL('../',import.meta.url).pathname;
++const paths=new Map();
++let sequence=0;
++export function log(kind,data={}){const seq=++sequence;fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({seq,atMs:Date.now(),kind,...data})+'\n');return seq;}
++function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
++function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
++export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
++export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
++export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
++export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
++export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+
+CONTROL_SOURCE "export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n"
+SCENARIO_DELTA {"firstFanoutCount":1,"appendMainTurns":[{"calls":[{"tool":"read","args":{"path":"agent://restart-1"}}]},{"text":"first native restoration complete"},{"fanout":{"count":1,"prefix":"idle-","agent":"task"}},{"text":"idle child spawned natively"}]}
+DISPOSABLE_NATIVE_SETTING {"key":"task.agentIdleTtlMs","value":2000}
+VERSION {"exitCode":0,"stdout":"omp/18.4.4\n","stderr":""}
+LINK {"exitCode":0,"stdout":"✔ Linked omp-orca-observer from <tmp>/profile/observer-copy\n","stderr":""}
+NATIVE_BEFORE_RESTART {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"idle","createdAt":1790826056261,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+PROCESS_CLOSE {"stderr":""}
+INITIAL_NATIVE_RESTORATION {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}}],"toolEvents":[{"type":"tool_execution_start","toolName":"read","args":{"path":"agent://restart-1"}},{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"\"persisted child\""}],"details":{"totalLines":1,"displayContent":{"text":"\"persisted child\"","startLine":1,"lineNumbers":[1]},"fileSize":17,"meta":{"source":{"type":"internal","value":"agent://restart-1"}},"resolvedPath":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.md","contentType":"text/markdown"}}}]}
+IO_SUMMARY {"phase":"no-serve","transcriptReads":0,"counts":{"registry_callback":5,"collect":4,"fs.statSync":4,"fs.opendirSync":4,"fs.dir.readSync":10,"fs.dir.closeSync":4},"collectAtSinceLastGetMs":[null,null,null,null],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"no-serve","row":{"seq":1,"kind":"registry_callback","atSinceLastGetMs":null}}
+ATTRIBUTABLE_IO {"phase":"no-serve","row":{"seq":14,"kind":"registry_callback","atSinceLastGetMs":null}}
+ATTRIBUTABLE_IO {"phase":"no-serve","row":{"seq":15,"kind":"registry_callback","atSinceLastGetMs":null}}
+ATTRIBUTABLE_IO {"phase":"no-serve","row":{"seq":16,"kind":"registry_callback","atSinceLastGetMs":null}}
+ATTRIBUTABLE_IO {"phase":"no-serve","row":{"seq":1,"kind":"registry_callback","atSinceLastGetMs":null}}
+PRE_SERVE_COUNTS {"networkOperations":0,"transcriptReads":0}
+IO_SUMMARY {"phase":"serve-without-GET","transcriptReads":0,"counts":{"fs.Bun.file":1,"network.serve":1,"collect":1,"fs.statSync":1,"fs.opendirSync":1,"fs.dir.readSync":3,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[null],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"serve-without-GET","row":{"seq":17,"kind":"network.serve","atSinceLastGetMs":null}}
+SERVE_WITHOUT_GET_COUNTS {"transcriptReads":0}
+FIRST_GET {"requestStartMs":1790826069347,"responseAtSinceGetMs":1,"status":200,"generation":3,"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-GET-header-load","transcriptReads":1,"counts":{"network.request":1,"snapshot.begin":1,"fs.openSync":1,"fs.readSync":1,"fs.closeSync":1,"snapshot.end":1,"network.request.end":1,"collect":1,"fs.statSync":1,"fs.opendirSync":1,"fs.dir.readSync":3,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[164],"readWindows":[{"seq":28,"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","atSinceLastGetMs":1,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"seq":25,"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"seq":26,"kind":"snapshot.begin","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"seq":28,"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":1}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"seq":30,"kind":"snapshot.end","atSinceLastGetMs":1}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"seq":31,"kind":"network.request.end","requestId":25,"atSinceLastGetMs":1}}
+CACHED_WITHOUT_ANOTHER_GET {"atSinceLastGetMs":765,"state":{"state":"ready"},"generation":4,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"viewer-stopped-before-spawn","transcriptReads":0,"counts":{},"collectAtSinceLastGetMs":[],"readWindows":[]}
+NATIVE_SPAWN_AT {"atSinceLastGetMs":2002}
+IDLE_NATIVE_TASK {"atSinceLastGetMs":2065,"toolEvents":[{"type":"tool_execution_start","toolName":"task","args":{"context":"Run each assigned harness child independently.","tasks":[{"name":"idle-1","agent":"task","task":"HARNESS_AGENT=child/idle-1 complete the harness assignment.","solutionSpace":"Reply with the assigned child's result."}]}},{"type":"tool_execution_end","toolName":"task","isError":false,"result":{"content":[{"type":"text","text":"Spawned agent `idle-1` (job `idle-1`).\n\nResults auto-deliver; NEVER poll. Completely blocked? Call `wait` to receive the first settled job or peer message.\nCoordinate while peers run via `write agent://<id>` (or `agent://all` to broadcast).\n\n`read proc://` lists jobs/services; `read proc://<id>` inspects status/output without consuming delivery. `write proc://<id>/kill` cancels/stops; omit `content`.\n\nJob IDs are process-local; delivered results expire shortly (~30s), unconsumed results within ~5min. Agent output/transcripts remain readable at `agent://<id>` / `history://<id>`. `write agent://<id>` messages a live agent.\n\n`completed`: subagent yielded successfully; claimed artifacts unverified."}],"details":{"projectAgentsDir":null,"results":[],"totalDurationMs":0,"progress":[{"index":0,"id":"idle-1","agent":"task","agentSource":"bundled","modelRole":"task","status":"pending","task":"Complete assignment thoroughly:\n\nHARNESS_AGENT=child/idle-1 complete the harness assignment.","assignment":"HARNESS_AGENT=child/idle-1 complete the harness assignment.","recentTools":[],"recentOutput":[],"toolCount":0,"requests":0,"tokens":0,"cost":0,"durationMs":0}],"async":{"state":"running","jobId":"idle-1","type":"task"}}}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":2076,"state":{"state":"ready"},"generation":4,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":2386,"state":{"state":"ready"},"generation":5,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":2697,"state":{"state":"ready"},"generation":5,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":3008,"state":{"state":"ready"},"generation":5,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":3320,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":3631,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":3942,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":4253,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":4564,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":4875,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":5186,"state":{"state":"ready"},"generation":6,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IDLE_RECONCILED {"atSinceLastGetMs":5496,"state":{"state":"ready"},"generation":7,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":10507,"state":{"state":"ready"},"generation":8,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":15521,"state":{"state":"ready"},"generation":9,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":20532,"state":{"state":"ready"},"generation":10,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":25544,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":30556,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":35567,"state":{"state":"ready"},"generation":13,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+VIEWER_STOPPED_SAMPLE {"atSinceLastGetMs":40011,"state":{"state":"ready"},"generation":13,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IDLE_FORCED_RECONCILE {"atSinceLastGetMs":40024,"state":{"state":"ready"},"generation":13,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"viewer-stopped-entire-period-through-40s","transcriptReads":0,"counts":{"registry_callback":5,"collect":9,"fs.statSync":18,"fs.opendirSync":9,"fs.dir.readSync":44,"fs.dir.closeSync":9},"collectAtSinceLastGetMs":[2171,3173,5178,10197,15216,20232,25250,30268,35288],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-entire-period-through-40s","row":{"seq":39,"kind":"registry_callback","atSinceLastGetMs":2076}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-entire-period-through-40s","row":{"seq":49,"kind":"registry_callback","atSinceLastGetMs":3137}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-entire-period-through-40s","row":{"seq":50,"kind":"registry_callback","atSinceLastGetMs":3138}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-entire-period-through-40s","row":{"seq":51,"kind":"registry_callback","atSinceLastGetMs":3139}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-entire-period-through-40s","row":{"seq":62,"kind":"registry_callback","atSinceLastGetMs":5139}}
+IO_SUMMARY {"phase":"viewer-stopped-first-30s","transcriptReads":0,"counts":{"registry_callback":5,"collect":7,"fs.statSync":14,"fs.opendirSync":7,"fs.dir.readSync":34,"fs.dir.closeSync":7},"collectAtSinceLastGetMs":[2171,3173,5178,10197,15216,20232,25250],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-first-30s","row":{"seq":39,"kind":"registry_callback","atSinceLastGetMs":2076}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-first-30s","row":{"seq":49,"kind":"registry_callback","atSinceLastGetMs":3137}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-first-30s","row":{"seq":50,"kind":"registry_callback","atSinceLastGetMs":3138}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-first-30s","row":{"seq":51,"kind":"registry_callback","atSinceLastGetMs":3139}}
+ATTRIBUTABLE_IO {"phase":"viewer-stopped-first-30s","row":{"seq":62,"kind":"registry_callback","atSinceLastGetMs":5139}}
+IO_SUMMARY {"phase":"viewer-stopped-after-30s","transcriptReads":0,"counts":{"collect":2,"fs.statSync":4,"fs.opendirSync":2,"fs.dir.readSync":10,"fs.dir.closeSync":2},"collectAtSinceLastGetMs":[30268,35288],"readWindows":[]}
+REOPEN_GET {"requestStartMs":1790826109379,"responseAtSinceGetMs":1,"status":200,"generation":13,"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-reopen-GET-header-load","transcriptReads":1,"counts":{"network.request":1,"snapshot.begin":1,"fs.openSync":1,"fs.readSync":1,"fs.closeSync":1,"snapshot.end":1,"network.request.end":1,"collect":1,"fs.statSync":2,"fs.opendirSync":1,"fs.dir.readSync":5,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[31],"readWindows":[{"seq":136,"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","atSinceLastGetMs":0,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"seq":133,"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"seq":134,"kind":"snapshot.begin","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"seq":136,"kind":"fs.readSync","args":[39,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"seq":138,"kind":"snapshot.end","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"seq":139,"kind":"network.request.end","requestId":133,"atSinceLastGetMs":1}}
+NATIVE_HEADER_CWD {"childId":"idle-1","sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","firstSlotType":"title","headerCwd":"<tmp>/profile/workspace","probeReadOffset":0,"probeRequestedLength":4096,"attribution":"independent runner read, not observer"}
+NATIVE_HEADER_CWD {"childId":"restart-1","sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","firstSlotType":"title","headerCwd":"<tmp>/profile/workspace","probeReadOffset":0,"probeRequestedLength":4096,"attribution":"independent runner read, not observer"}
+FOLLOWING_SNAPSHOT {"requestStartMs":1790826110134,"responseAtSinceGetMs":0,"status":200,"generation":14,"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+CWD_EQUALITY {"childId":"idle-1","transcriptHeaderCwd":"<tmp>/profile/workspace","followingSnapshotCwd":"<tmp>/profile/workspace","equal":true,"restoredChildHeaderCwd":"<tmp>/profile/workspace","restoredChildSnapshotCwd":"<tmp>/profile/workspace"}
+FINAL_FORCED_RECONCILE {"atSinceLastGetMs":4363,"state":{"state":"ready"},"generation":15,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790826056229,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790826071430,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T03-40-55-837Z_01a0f58d-089d-74dd-a725-485090837e33/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"following-snapshot-and-forced-reconcile","transcriptReads":0,"counts":{"network.request":1,"snapshot.begin":1,"snapshot.end":1,"network.request.end":1,"collect":1,"fs.statSync":2,"fs.opendirSync":1,"fs.dir.readSync":5,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[4282],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"following-snapshot-and-forced-reconcile","row":{"seq":150,"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"following-snapshot-and-forced-reconcile","row":{"seq":151,"kind":"snapshot.begin","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"following-snapshot-and-forced-reconcile","row":{"seq":152,"kind":"snapshot.end","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"following-snapshot-and-forced-reconcile","row":{"seq":153,"kind":"network.request.end","requestId":150,"atSinceLastGetMs":0}}
+REQUEST_SCOPE_WINDOWS [{"requestId":25,"startMs":1790826069354,"endMs":1790826069355,"callbackStartSeq":26,"callbackEndSeq":30,"readSeqs":[28]},{"requestId":133,"startMs":1790826109379,"endMs":1790826109380,"callbackStartSeq":134,"callbackEndSeq":138,"readSeqs":[136]},{"requestId":150,"startMs":1790826110135,"endMs":1790826110135,"callbackStartSeq":151,"callbackEndSeq":152,"readSeqs":[]}]
+CRITERION_RESULT {"criterion":"nfr-8 request-scoped within-30s native parking and restored cwd","result":"PASS","firstHeaderReads":1,"idleFirst30sHeaderReads":0,"idleThrough40sHeaderReads":0,"reopenHeaderReads":1,"followingHeaderReads":0,"totalHeaderReads":2,"idleChild":"idle-1","idleChildMechanism":"native task followed by native 2000-ms TTL parking","firstGetAtMs":1790826069354,"reopenAtSinceFirstGetMs":40025,"snapshotRequests":3,"readsInsideAuthorizedRequestCallbacks":true,"cwdEqualsNativeHeader":true}
+PROCESS_CLOSE {"stderr":""}
+CLEANUP {"profileAndCopyRemoved":true,"processesAndStubsStopped":true}
+STDERR ""
+RUNNER_EXIT 0
+```
+
+### Verdict and exact phase counts
+
+**PASS on committed 1b8d704 for nfr-8's exact early-spawn scenario and restored cwd.** The cold-restored `restart-1` is parked/session-less before serving. The newly uncached `idle-1` is created by a real native task starting +2,002 ms after the first GET, not by registry mutation or a synthetic replacement. Its session becomes detached by the native 2,000-ms TTL; the registry callback occurs +5,139 ms, the next collect +5,178 ms, and the sampled snapshot has unknown cwd at +5,496 ms. It remains unknown through +40,024 ms without any viewer polling.
+
+| Phase | Observer transcript reads | Exact observations / request-relative timing |
+| --- | ---: | --- |
+| No `/observer serve` | 0 | Zero network operations; four collects across the initial and resumed persistent parents. Cold-restored ref is parked/session-less with unknown cwd. |
+| Serve, no GET | 0 | One `network.serve`, zero `network.request`; one collect. Viewer HTML file handle creation is not a transcript read. |
+| One first GET | 1 | `restart-1.jsonl`: offset 0, buffer offset 0, requested length 4,096; GET +1 ms. Handler sequence 25–31; authorized callback sequence 26–30; read sequence 28. |
+| Viewer stopped, entire first 30 s | 0 | Native spawn +2,002 ms; five registry callbacks +2,076 / 3,137 / 3,138 / 3,139 / 5,139 ms. Seven post-cache collects +2,171 / 3,173 / 5,178 / 10,197 / 15,216 / 20,232 / 25,250 ms; no snapshot requests. |
+| Viewer stopped, +30 s through +40,024 ms | 0 | Additional collects +30,268 / 35,288 ms; child still parked/session-less, cwd unknown, generation 13. Nine post-cache collects total. |
+| Next GET | 1 | At first GET +40,025 ms, exactly `idle-1.jsonl` is read: offset 0, buffer offset 0, requested length 4,096; next GET +0 ms. Handler sequence 133–139; authorized callback sequence 134–138; read sequence 136. |
+| Following snapshot and forced reconcile | 0 | Third GET returns HTTP 200, generation 14, both cwds known. Handler 150–153, callback 151–152, no read sequence. Forced reconcile generation 15 preserves both known values without additional reads. |
+
+The first header load is synchronous inside the first GET, whose response remains the pre-reconcile generation 3 (cwd unknown); the next ordinary collect at +164 ms publishes cached cwd, proven by the direct non-HTTP coordinator report at +765 ms. This +1-to-+765-ms interval has exactly one total read. The reopened GET likewise returns pre-reconcile generation 13 (new child's cwd unknown); its next collect at +31 ms publishes the cached header result. The following snapshot at second GET +756 ms therefore knows the cwd. No claim is made that a request instantly rebuilds the snapshot.
+
+Independent bounded runner reads verify the actual native session headers after the reopening request; they are explicitly outside the observer logger and are not included in observer read counts. Both transcripts have a `title` first slot and a `session` header second slot. For `idle-1`, actual session-header cwd = `<tmp>/profile/workspace`; following snapshot `lineage.cwd` = `{"known":true,"value":"<tmp>/profile/workspace"}`. The restored child's header/snapshot cwd also agree at that same normalized value. Exact native paths are normalized solely by the displayed runner replacements; timestamps, read sequence ids and relative milliseconds are not altered.
+
+Total observer reads: exactly two, one per uncached session-less child; total authorized snapshot requests: exactly three. Ordered event membership plus recorded begin/end timestamps proves every read is inside both HTTP handling and the authorized callback, including the same-millisecond second read. There are no transcript reads between requests, including the first 30 seconds after the viewer leaves. Directory walks, tombstone stats, instrumentation-log writes and native task/provider I/O are not transcript reads by observer code. This proves the backend API/lineage surface only; no browser or Orca UI was exercised. Other earlier criteria and ledger rows remain unchanged.
+
+### Source extraction and evidence integrity
+
+The temporary runner was extracted from the preceding accepted native-TTL runner with this exact extraction source:
+
+```javascript
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const [repo, destination] = process.argv.slice(2);
+const evidence = await readFile(join(repo, 'omp-orca-observer/checks/evidence/gb2.md'), 'utf8');
+const section = evidence.slice(evidence.indexOf('### Recorded disposable probe: gb2-d9f78a0-final.mjs'));
+const match = section.match(/```javascript\n([\s\S]*?)```/);
+assert(match);
+await writeFile(destination, match[1]);
+console.log('EXTRACTED prior native TTL runner to temporary destination');
+```
+
+Invocation: `bun <tmp>/gb2-1b8d704-extract.mjs "$PWD" <tmp>/gb2-1b8d704.mjs`. Observed exit 0, output `EXTRACTED prior native TTL runner to temporary destination`. Its temp-only changes are fully represented by the exact final runner source above; no repository script was created.
+
+Exact read-only integrity checker source:
+
+```javascript
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+const [repo, baseline, runner, recorder] = process.argv.slice(2);
+const before = await readFile(baseline, 'utf8'), after = await readFile(join(repo, 'omp-orca-observer/checks/evidence/gb2.md'), 'utf8');
+const prefix = '| v03 no serve means zero observer network/transcript I/O |';
+const oldRow = before.split('\n').find(r => r.startsWith(prefix)), newRow = after.split('\n').find(r => r.startsWith(prefix));
+assert(oldRow && newRow && newRow.includes('1b8d704'));
+const retained = before.replace(oldRow, newRow);
+assert(after.startsWith(retained), 'all earlier bytes retained except the authorized ledger row');
+const section = after.slice(retained.length), hash = s => createHash('sha256').update(s).digest('hex');
+assert(section.includes('## Re-run after 1b8d704 (request-scoped header reads) — 2026-09-30'));
+const block = section.match(/Exact runner source, sha256 `([a-f0-9]{64})`:\n\n```javascript\n([\s\S]*?)```/);
+assert(block); assert.equal(hash(block[2]), block[1]); assert.equal(block[2], await readFile(runner, 'utf8'));
+assert(section.includes('```javascript\n' + await readFile(recorder, 'utf8') + '```'));
+const criterion = JSON.parse(section.match(/^CRITERION_RESULT (.+)$/m)[1]);
+assert.equal(criterion.result, 'PASS'); assert.equal(criterion.idleFirst30sHeaderReads, 0); assert.equal(criterion.idleThrough40sHeaderReads, 0); assert.equal(criterion.firstHeaderReads, 1); assert.equal(criterion.reopenHeaderReads, 1); assert.equal(criterion.followingHeaderReads, 0); assert.equal(criterion.totalHeaderReads, 2); assert.equal(criterion.snapshotRequests, 3); assert.equal(criterion.readsInsideAuthorizedRequestCallbacks, true); assert.equal(criterion.cwdEqualsNativeHeader, true);
+const spawn = JSON.parse(section.match(/^NATIVE_SPAWN_AT (.+)$/m)[1]), park = JSON.parse(section.match(/^IDLE_RECONCILED (.+)$/m)[1]);
+assert(spawn.atSinceLastGetMs >= 2000 && spawn.atSinceLastGetMs < 30000); assert(park.atSinceLastGetMs < 30000); assert(park.refs.some(r => r.id === 'idle-1' && r.status === 'parked' && r.hasSession === false));
+const summary = [...section.matchAll(/^IO_SUMMARY (.+)$/gm)].map(m => JSON.parse(m[1]));
+assert.equal(summary.find(r => r.phase === 'viewer-stopped-entire-period-through-40s').transcriptReads, 0);
+assert(summary.find(r => r.phase === 'viewer-stopped-entire-period-through-40s').collectAtSinceLastGetMs.some(ms => ms >= 35000));
+const windows = JSON.parse(section.match(/^REQUEST_SCOPE_WINDOWS (.+)$/m)[1]); assert.equal(windows.length, 3); assert.deepEqual(windows.map(w => w.readSeqs.length), [1, 1, 0]);
+const cwd = JSON.parse(section.match(/^CWD_EQUALITY (.+)$/m)[1]); assert.equal(cwd.transcriptHeaderCwd, cwd.followingSnapshotCwd); assert.equal(cwd.restoredChildHeaderCwd, cwd.restoredChildSnapshotCwd); assert.equal(cwd.transcriptHeaderCwd, '<tmp>/profile/workspace');
+assert(section.includes('RUNNER_EXIT 0')); assert(section.includes('CLEANUP {"profileAndCopyRemoved":true,"processesAndStubsStopped":true}'));
+assert(!/["' ]\/(?:home|Users)\//.test(section));
+for (const marker of ['TO' + 'DO: implement', 'FIX' + 'ME:', 'NotImplemented' + 'Error']) assert(!section.includes(marker));
+console.log('EVIDENCE_INTEGRITY PASS: prior bytes retained except zero-I/O ledger; exact sources verified; +2s spawn, native parking before 30s, zero reads through 40s, callback-scoped header reads and native cwd equality verified');
+console.log('CHECKED_EVIDENCE_SHA256', hash(after));
+```
+
+Invocation: `bun <tmp>/gb2-1b8d704-integrity.mjs "$PWD" <tmp>/gb2-1b8d704-before.md <tmp>/gb2-1b8d704.mjs <tmp>/gb2-1b8d704-record.mjs`. Exact normalized output:
+
+```text
+EVIDENCE_INTEGRITY PASS: prior bytes retained except zero-I/O ledger; exact sources verified; +2s spawn, native parking before 30s, zero reads through 40s, callback-scoped header reads and native cwd equality verified
+CHECKED_EVIDENCE_SHA256 1eb2a1d416c518879e2e3217885edd3e6fd7e7841b1a97fc5268c5d646706509
+STDERR ""
+INTEGRITY_EXIT 0
+```
+
+The checksum identifies the evidence before this integrity receipt. Exact support recorder source:
+
+```javascript
+import { readFile, writeFile } from 'node:fs/promises';
+const [repo, baseline, runner, recorder, checker, extractor, destination] = process.argv.slice(2);
+const norm = s => s.replaceAll(repo, '$PWD').replaceAll('/tmp/', '<tmp>/');
+let text = '\n### Source extraction and evidence integrity\n\nThe temporary runner was extracted from the preceding accepted native-TTL runner with this exact extraction source:\n\n```javascript\n' + await readFile(extractor, 'utf8') + '```\n\nInvocation: `bun ' + norm(extractor) + ' "$PWD" ' + norm(runner) + '`. Observed exit 0, output `EXTRACTED prior native TTL runner to temporary destination`. Its temp-only changes are fully represented by the exact final runner source above; no repository script was created.\n\nExact read-only integrity checker source:\n\n```javascript\n' + await readFile(checker, 'utf8') + '```\n';
+const command = ['bun', checker, repo, baseline, runner, recorder];
+const child = Bun.spawn(command, { stdout: 'pipe', stderr: 'pipe' });
+const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+text += '\nInvocation: `bun ' + norm(checker) + ' "$PWD" ' + norm(baseline) + ' ' + norm(runner) + ' ' + norm(recorder) + '`. Exact normalized output:\n\n```text\n' + norm(stdout) + 'STDERR ' + JSON.stringify(norm(stderr)) + '\nINTEGRITY_EXIT ' + exitCode + '\n```\n\nThe checksum identifies the evidence before this integrity receipt. Exact support recorder source:\n\n```javascript\n' + await readFile(process.argv[1], 'utf8') + '```\n\nInvocation: `bun ' + norm(process.argv[1]) + ' "$PWD" ' + [baseline, runner, recorder, checker, extractor, destination].map(norm).join(' ') + '`. This script writes only the temporary section; appending it uses guarded edits.\n';
+await writeFile(destination, text);
+process.stdout.write(norm(stdout)); console.log('STDERR', JSON.stringify(norm(stderr))); console.log('INTEGRITY_EXIT', exitCode); process.exitCode = exitCode;
+```
+
+Invocation: `bun <tmp>/gb2-1b8d704-support.mjs "$PWD" <tmp>/gb2-1b8d704-before.md <tmp>/gb2-1b8d704.mjs <tmp>/gb2-1b8d704-record.mjs <tmp>/gb2-1b8d704-integrity.mjs <tmp>/gb2-1b8d704-extract.mjs <tmp>/gb2-1b8d704-support-section.md`. This script writes only the temporary section; appending it uses guarded edits.
+
+### Final verification and cleanup receipt
+
+The complete owned unified delta was captured and inspected using `diff -u --label before/gb2.md --label after/gb2.md <tmp>/gb2-1b8d704-before.md omp-orca-observer/checks/evidence/gb2.md`. Exit 1 is the expected “files differ” result, not a check failure: the only prior line replaced is the zero-I/O ledger row; every other change appends this dated section. All earlier bytes except that row are independently preserved by the integrity assertion. No original evidence or production code was removed.
+
+Final invocation, after the support-source receipt was appended:
+
+```sh
+bun <tmp>/gb2-1b8d704-integrity.mjs "$PWD" <tmp>/gb2-1b8d704-before.md <tmp>/gb2-1b8d704.mjs <tmp>/gb2-1b8d704-record.mjs && rm -- <tmp>/gb2-1b8d704-before.md <tmp>/gb2-1b8d704-extract.mjs <tmp>/gb2-1b8d704.mjs <tmp>/gb2-1b8d704-record.mjs <tmp>/gb2-1b8d704-section.md <tmp>/gb2-1b8d704-integrity.mjs <tmp>/gb2-1b8d704-support.mjs <tmp>/gb2-1b8d704-support-section.md
+```
+
+Observed exit 0, stderr empty, exact stdout:
+
+```text
+EVIDENCE_INTEGRITY PASS: prior bytes retained except zero-I/O ledger; exact sources verified; +2s spawn, native parking before 30s, zero reads through 40s, callback-scoped header reads and native cwd equality verified
+CHECKED_EVIDENCE_SHA256 461eef2fffda66c69a1aca38f0e52c07985cff93813a4408b337670e51ff4715
+```
+
+This checksum identifies the checked evidence before this final receipt. All eight standalone `/tmp` files, including the exact before-image, were deleted successfully; the runtime had already awaited shutdown of both persistent RPC parents, both stub servers and the harness profile, deleting its package copy, sessions, control extension and disposable repository. Recovery is the inspected owned unified delta against the recorded before-image hash, not any reset to HEAD. No permanent test was added; the complete runnable assert-based native check is embedded above as required evidence.
