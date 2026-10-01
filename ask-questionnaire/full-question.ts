@@ -73,8 +73,12 @@ export function installFullQuestionReader(pi: ExtensionAPI): void {
 				if (!context.invokeTool) throw new Error("native ask tool is unavailable");
 				const width = Math.max(1, (process.stdout.columns || 80) - NATIVE_BOX_INSET);
 				const hidden = (params as AskParams).questions
-					// pi-tui renders a tab as 3 columns; Bun.stringWidth counts it as 0.
-					.map(question => question.question.replaceAll("\t", "   "))
+					// display copy only, params stay untouched: same CR rule as pi-tui sanitizeCarriageReturns
+					// (a raw CR moves the cursor and overwrites text); pi-tui renders a tab as 3 columns,
+					// Bun.stringWidth counts it as 0.
+					.map(question =>
+						question.question.replaceAll("\r\n", "\n").replace(/\r+/g, " ").replaceAll("\t", "   "),
+					)
 					.filter(question => wrap(question, width).length > NATIVE_HEADER_ROWS);
 				if (hidden.length > 0) await readQuestions(context, hidden, signal);
 				return context.invokeTool(params as Record<string, unknown>, { signal, onUpdate });
