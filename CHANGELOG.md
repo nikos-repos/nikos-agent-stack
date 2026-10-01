@@ -1,5 +1,11 @@
 # changelog
 
+## unreleased
+
+### fixed
+
+- ask: long `ask` questions no longer get cut off in short panes. the native dialog shows 4 rows of a question, and `Ctrl+O` could not grow it in a pane of about 20 rows. in interactive tui sessions, `ask-questionnaire` now re-registers `ask` and, when a question would be truncated, first opens a scrollable full-question reader, then hands the call to the native ask unchanged. known cost: the transcript shows omp's generic tool card for `ask` instead of the native card.
+
 ## 2.5.1 — 2026-09-25
 
 ### fixed

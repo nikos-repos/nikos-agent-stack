@@ -13,10 +13,13 @@
 // it uses only documented public extension events (before_agent_start,
 // tool_call, tool_result, and session lifecycle). no omp core patches, no
 // private imports, no re-implementation of the ask ui or transport.
+// full-question.ts adds one reader in front of the native ask dialog for
+// questions the dialog would cut off; answering stays native.
 // ============================================================================
 
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { installQuestionnaireStop } from "./stop-decision.ts";
+import { installFullQuestionReader } from "./full-question.ts";
 
 export { questionnaireStop } from "./stop-decision.ts";
 
@@ -39,6 +42,7 @@ const QUESTIONNAIRE_READ_TOOLS = new Set([
 
 export default function askQuestionnaire(pi: ExtensionAPI): void {
 	let pending: { owner: string; reason: string } | null = null;
+	installFullQuestionReader(pi);
 
 	const reset = (): void => {
 		pending = null;

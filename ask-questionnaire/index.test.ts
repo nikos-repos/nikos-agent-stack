@@ -59,7 +59,8 @@ class FakeApi {
 		if (!list) return undefined;
 		let result: unknown;
 		for (const handler of list) {
-			const value = await handler(payload);
+			// omp always passes a context; "print" is its headless default mode.
+			const value = await handler(payload, { mode: "print" });
 			if (value !== undefined && result === undefined) result = value;
 		}
 		return result as T | undefined;

@@ -141,6 +141,8 @@ when the rich ask dialog is available:
 
 if rich ask ui is not available but omp has its interactive selector/editor fallback, native ask keeps selection, custom input, and notes. the fallback maps option labels and descriptions, but it drops `preview` content.
 
+the native dialog shows at most 4 wrapped rows of a question, and its `Ctrl+O` expansion cannot grow past the dialog's height cap, so in a short pane (about 20 rows) the rest of a long question cannot be read. in an interactive tui session (`ctx.mode === "tui"`) this extension re-registers `ask` with the native description and schema. when a question wraps past 4 rows at the current terminal width, a full-question reader opens first: `↑`/`↓` and `PgUp`/`PgDn` scroll, `Enter` or `Esc` moves on to the native dialog. the call then runs the native ask with unchanged params, so answers, cancel, notes, and results stay native. native ask sends its waiting notification, speaks, and starts `ask.timeout` only after the reader closes. while `ask` is re-registered, the transcript shows omp's generic tool card instead of the native ask card. sessions in any other mode keep the native tool untouched.
+
 for a valid `recommended` index, native ask adds the exact suffix `(Recommended)` to that option. on timeout, the rich dialog keeps existing answers. for each unanswered question, it first uses the option referenced by an active option note; otherwise it clamps `recommended` to the available options and defaults to the first option when `recommended` is absent. the result marks the automatic choice with `timedOut: true`.
 
 native result details can contain:
@@ -273,7 +275,7 @@ the manifest exposes this package surface:
 | manifest field | current behavior |
 |---|---|
 | `omp.extensions` | loads `./gate-checker/index.ts`, `./omnipotence/index.ts`, `./ask-questionnaire/index.ts`, `./orchestrate-prompt/index.ts`, `./n-code-mode/index.ts`, and `./advisor/index.ts` |
-| `files` | publishes `ask-questionnaire/index.ts`, `ask-questionnaire/stop-decision.ts`, and `stop-slot.ts` among the package files |
+| `files` | publishes `ask-questionnaire/index.ts`, `ask-questionnaire/stop-decision.ts`, `ask-questionnaire/full-question.ts`, and `stop-slot.ts` among the package files |
 | `bin` | provides `nikos-gates`, `omnipotence`, `ncm`, and `nikos-advisor`; none is questionnaire-specific |
 | `exports` | provides only `./gate-cli` and `./omnipotence` |
 
@@ -311,7 +313,7 @@ check `ask.timeout`, the current plan mode, the active option note, and the `rec
 
 ### no waiting notification or speech
 
-check native `ask.notify` and `speech.enabled`. the defaults are `"on"` and `false`. these settings belong to omp, not this extension.
+check native `ask.notify` and `speech.enabled`. the defaults are `"on"` and `false`. these settings belong to omp, not this extension. when the full-question reader opens first, native ask sends its notification, speaks, and starts `ask.timeout` only after the reader closes.
 
 ### the dialog does not show a preview
 
@@ -330,8 +332,8 @@ while pending, the questionnaire stop decision supplies the declaration reason a
 - native option labels cannot use `Other (type your own)`, `Chat about this`, or `Next →` because native ui reserves them.
 - native ask is exclusive. omp does not safely queue concurrent ask calls on the shared interactive surface.
 - the extension does not validate answer quality, answer count, selected options, custom input, notes, timeout status, or chat redirect details.
-- the extension owns no dialog, editor, preview renderer, timeout, notification, speech, transport, or collaboration answer route. those are native omp surfaces.
+- apart from the full-question reader, the extension owns no dialog, editor, preview renderer, timeout, notification, speech, transport, or collaboration answer route. those are native omp surfaces.
 - rich native ui can render `preview`; the native fallback drops it.
 - no text detector, request-text trigger, rpc trigger, headless trigger, questionnaire setting, questionnaire slash command, questionnaire bin, or questionnaire export exists in this package.
 
-sources: [extension scope and handlers](../ask-questionnaire/index.ts#L1-L112), [pinned native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts), [pinned native settings](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/config/settings-schema.ts)
+sources: [extension scope and handlers](../ask-questionnaire/index.ts#L1-L116), [full-question reader](../ask-questionnaire/full-question.ts), [pinned native ask source](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/tools/ask.ts), [pinned native settings](https://unpkg.com/@oh-my-pi/pi-coding-agent@17.2.15/src/config/settings-schema.ts)

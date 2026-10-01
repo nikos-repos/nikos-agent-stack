@@ -61,6 +61,7 @@ const expectedFiles = [
 	"docs/omnipotence-user-guide.md",
 	"ask-questionnaire/index.ts",
 	"ask-questionnaire/stop-decision.ts",
+	"ask-questionnaire/full-question.ts",
 	"orchestrate-prompt/index.ts",
 	"orchestrate-prompt/prompt.md",
 	"docs/orchestrate-prompt-user-guide.md",
