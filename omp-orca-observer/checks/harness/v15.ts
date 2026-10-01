@@ -3,8 +3,9 @@ import { fileURLToPath } from "node:url";
 import { parseSessionContent } from "@oh-my-pi/pi-coding-agent";
 import {
   ROUTES, SCHEMA_HEADER, SNAPSHOT_SCHEMA_VERSION,
-  type ChildRow, type Coordinator, type Endpoint, type SnapshotSource, type ReadResult
+  type ChildRow, type Coordinator, type Endpoint, type Grants, type SnapshotSource, type ReadResult
 } from "../../contract.ts";
+import { createGrants } from "../../auth.ts";
 import { processCoordinator, startCoordinator } from "../../coordinator.ts";
 import { readPage } from "../../reader.ts";
 import { serve } from "../../transport.ts";
@@ -52,22 +53,35 @@ async function snapshotReady(coordinator: Coordinator): Promise<void> {
   assert.ok(snapshot, "Synthetic coordinator did not produce a snapshot");
 }
 
+async function exchange(endpoint: Endpoint, grants: Grants): Promise<{ Authorization: string }> {
+  const { code } = grants.bootstrap([childId], 60_000);
+  const response = await fetch(new URL(ROUTES.session, endpoint.url), {
+    method: "POST", body: JSON.stringify({ code }),
+  });
+  assert.equal(response.status, 200);
+  const session = await response.json() as { credential: string };
+  return { Authorization: `Bearer ${session.credential}` };
+}
+
 async function main(): Promise<void> {
   assert.equal(processCoordinator(), null);
   let coordinator: Coordinator | undefined;
   let endpoint: Endpoint | undefined;
+  let grants: Grants | undefined;
   try {
     const firstSource = source();
     coordinator = startCoordinator({ source: firstSource, outcomes: null, limit: 8 });
     assert.strictEqual(processCoordinator(), coordinator);
     await snapshotReady(coordinator);
     const initial = coordinator;
+    grants = createGrants(Date.now, initial.epoch());
     endpoint = await serve({
       epoch: initial.epoch(), snapshot: () => initial.snapshot(), state: () => initial.state(),
       admittedSessionFile: id => firstSource.admittedSessionFile(id),
-      read: request => readPage(request, parseSessionContent), grants: null, port: 0,
+      read: request => readPage(request, parseSessionContent), grants, port: 0,
     });
-    const snapshotResponse = await fetch(new URL(ROUTES.snapshot, endpoint.url));
+    const authorization = await exchange(endpoint, grants);
+    const snapshotResponse = await fetch(new URL(ROUTES.snapshot, endpoint.url), { headers: authorization });
     assert.equal(snapshotResponse.status, 200);
     assert.equal(snapshotResponse.headers.get(SCHEMA_HEADER), String(SNAPSHOT_SCHEMA_VERSION));
     assert.equal(snapshotResponse.headers.get("cache-control"), "no-store");
@@ -77,7 +91,7 @@ async function main(): Promise<void> {
     assert.equal(snapshot.children[0]?.childId, childId);
     assert.equal(Object.hasOwn(snapshot, "orca"), false);
     const pagePath = ROUTES.page.replace(":childId", encodeURIComponent(childId));
-    const firstPageResponse = await fetch(new URL(`${pagePath}?mode=entries`, endpoint.url));
+    const firstPageResponse = await fetch(new URL(`${pagePath}?mode=entries`, endpoint.url), { headers: authorization });
     assert.equal(firstPageResponse.status, 200);
     const firstPage = await firstPageResponse.json() as ReadResult;
     assert.equal(firstPage.kind, "page");
@@ -89,6 +103,8 @@ async function main(): Promise<void> {
     const oldToken = firstPage.token;
     await endpoint.close();
     endpoint = undefined;
+    grants.dispose();
+    grants = undefined;
     coordinator.dispose();
     coordinator = undefined;
     assert.equal(processCoordinator(), null);
@@ -98,17 +114,21 @@ async function main(): Promise<void> {
     assert.notEqual(coordinator.epoch(), snapshot.epoch);
     await snapshotReady(coordinator);
     const restarted = coordinator;
+    grants = createGrants(Date.now, restarted.epoch());
     endpoint = await serve({
       epoch: restarted.epoch(), snapshot: () => restarted.snapshot(), state: () => restarted.state(),
       admittedSessionFile: id => restartedSource.admittedSessionFile(id),
-      read: request => readPage(request, parseSessionContent), grants: null, port: 0,
+      read: request => readPage(request, parseSessionContent), grants, port: 0,
     });
-    const restartedResponse = await fetch(new URL(ROUTES.snapshot, endpoint.url));
+    const restartedAuthorization = await exchange(endpoint, grants);
+    const restartedResponse = await fetch(new URL(ROUTES.snapshot, endpoint.url), { headers: restartedAuthorization });
     assert.equal(restartedResponse.status, 200);
     const newSnapshot = await restartedResponse.json() as { epoch: string; children: ChildRow[] };
     assert.equal(newSnapshot.epoch, restarted.epoch());
     assert.equal(newSnapshot.children[0]?.childId, childId);
-    const resetResponse = await fetch(new URL(`${pagePath}?mode=entries&token=${encodeURIComponent(oldToken)}`, endpoint.url));
+    const resetResponse = await fetch(new URL(`${pagePath}?mode=entries&token=${encodeURIComponent(oldToken)}`, endpoint.url), {
+      headers: restartedAuthorization,
+    });
     assert.equal(resetResponse.status, 200);
     const reset = await resetResponse.json() as ReadResult;
     assert.equal(reset.kind, "page");
@@ -117,6 +137,7 @@ async function main(): Promise<void> {
     assert.ok((reset.entries?.length ?? 0) > 0);
   } finally {
     await endpoint?.close();
+    grants?.dispose();
     coordinator?.dispose();
   }
   assert.equal(processCoordinator(), null);

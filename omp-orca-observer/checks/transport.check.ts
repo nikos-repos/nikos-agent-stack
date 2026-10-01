@@ -27,6 +27,7 @@ const snapshot: Snapshot = {
   inventory: { state: "complete" },
   children: [],
 };
+const grants = createFakeGrants(snapshot.epoch);
 let available = true;
 let beganRead!: () => void;
 let observedAbort!: () => void;
@@ -35,7 +36,7 @@ const readAborted = new Promise<void>(resolve => { observedAbort = resolve; });
 const options: ServeOptions = {
   epoch: snapshot.epoch,
   port: 0,
-  grants: null,
+  grants,
   snapshot: () => available ? snapshot : null,
   state: () => available ? { state: "ready" } : { state: "unavailable", reason: "check" },
   admittedSessionFile: childId => childId === "known" ? "./known.jsonl" : null,
@@ -89,16 +90,20 @@ try {
   }
 
   assert.equal((await request(endpoint, ROUTES.viewer)).status, 200);
-  assert.equal((await request(endpoint, ROUTES.snapshot)).status, 200);
-  assert.equal((await request(endpoint, ROUTES.session, { method: "POST" })).status, 404);
+  const { code } = grants.bootstrap(["known", "unknown"], 60_000);
+  const exchange = await request(endpoint, ROUTES.session, { method: "POST", body: JSON.stringify({ code }) });
+  assert.equal(exchange.status, 200);
+  const session = await exchange.json() as { credential: string };
+  const authorization = { Authorization: `Bearer ${session.credential}` };
+  assert.equal((await request(endpoint, ROUTES.snapshot, { headers: authorization })).status, 200);
   available = false;
-  assert.equal((await request(endpoint, ROUTES.snapshot)).status, 503);
+  assert.equal((await request(endpoint, ROUTES.snapshot, { headers: authorization })).status, 503);
   assert.equal((await request(endpoint, ROUTES.viewer, { headers: { Host: "example.invalid" } })).status, 421);
   assert.equal((await request(endpoint, ROUTES.snapshot, { method: "POST" })).status, 405);
-  assert.equal((await request(endpoint, pagePath("unknown"))).status, 404);
+  assert.equal((await request(endpoint, pagePath("unknown"), { headers: authorization })).status, 404);
 
   const client = new AbortController();
-  const pending = fetch(new URL(pagePath("known"), endpoint.url), { signal: client.signal });
+  const pending = fetch(new URL(pagePath("known"), endpoint.url), { headers: authorization, signal: client.signal });
   const rejected = assert.rejects(pending);
   await within(readBegan);
   client.abort();
@@ -114,6 +119,7 @@ try {
     await reused.stop(true);
   }
 } finally {
+  grants.dispose();
   if (!closed) await endpoint.close();
 }
 

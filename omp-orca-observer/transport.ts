@@ -15,9 +15,6 @@ import {
  * @cc [label:security] transport-authorized-reads
  * Snapshot collection and native reads require request-time authorization. The read callback owns its
  * native handle and must close it when the supplied signal aborts.
- * @cc [label:ceiling] transport-null-grants
- * Null grants preserve phase-a unauthenticated access in the single policy branch below.
- * until: wave C2 supplies grants in every caller and removes null from ServeOptions.
  * @cc [label:ceiling] transport-request-limit
  * The 16 limit counts concurrent in-flight requests; idle keep-alive sockets are not counted and are closed by Bun.serve's default 10 s idle timeout.
  * until: Bun.serve exposes an open-connection count or connection hook.
@@ -70,22 +67,7 @@ export async function serve(options: ServeOptions): Promise<Endpoint> {
       }
     }
   }
-  const access = grants === null ? {
-    requestLimit: Infinity,
-    acceptsOrigin: (_origin: string | null) => true,
-    session: async (_request: Request) => new Response("Not Found", { status: 404, headers }),
-    authorize: (_request: Request, _childId: string | null): Authorization | null => ({
-      credential: "",
-      signal: shutdown.signal,
-    }),
-    snapshot: (snapshot: Snapshot | null, _credential: string) => snapshot === null
-      ? Response.json({ state: options.state() }, { status: 503, headers })
-      : Response.json(snapshot, { headers }),
-    read(request: ReadRequest, _authorization: Authorization): Promise<ReadResult> | null {
-      request.signal = AbortSignal.any([request.signal, shutdown.signal]);
-      return options.read(request);
-    },
-  } : {
+  const access = {
     requestLimit: 16,
     acceptsOrigin: (origin: string | null) =>
       origin === null || origin === numericOrigin || origin === localOrigin,

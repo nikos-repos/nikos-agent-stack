@@ -1,26 +1,75 @@
 import assert from "node:assert/strict";
+import { spyOn } from "bun:test";
 import type { ExtensionAPI, ExtensionAgentIdentity, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { checkCompat } from "../compat.ts";
 import { processCoordinator, startCoordinator } from "../coordinator.ts";
-import { SNAPSHOT_MAX_BYTES, type ChildFact, type ChildRow, type OutcomeTracker, type SnapshotSource } from "../contract.ts";
+import {
+  SNAPSHOT_MAX_BYTES,
+  type ChildFact,
+  type ChildRow,
+  type Endpoint,
+  type OutcomeTracker,
+  type ServeOptions,
+  type SnapshotSource,
+} from "../contract.ts";
 import orcaObserver from "../index.ts";
+import * as transport from "../transport.ts";
+import * as commands from "../commands.ts";
 
-type Handler = (event: unknown, ctx: ExtensionContext) => void | Promise<void>;
+type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
+type CommandHandler = Parameters<ExtensionAPI["registerCommand"]>[1]["handler"];
 const identity: ExtensionAgentIdentity = { kind: "main", id: "Main", name: "main", depth: 0 };
+const registryListeners = new Set<() => void>();
+const busListeners = new Set<(payload: unknown) => void>();
+const mutatingCalls: string[] = [];
+const registry = new Proxy({
+  list: () => [],
+  get: () => undefined,
+  onChange(listener: () => void) {
+    registryListeners.add(listener);
+    return () => { registryListeners.delete(listener); };
+  },
+}, {
+  get(target, property, receiver) {
+    if (property in target) return Reflect.get(target, property, receiver);
+    return () => { mutatingCalls.push(String(property)); };
+  },
+  set(_target, property) {
+    mutatingCalls.push(String(property));
+    return true;
+  },
+});
 
-function makeApi(version: string, handlers = new Map<string, Handler>(), eventBusAvailable = true): ExtensionAPI {
+function makeApi(
+  version: string,
+  handlers = new Map<string, Handler>(),
+  eventBusAvailable = true,
+  commands = new Map<string, CommandHandler>(),
+): ExtensionAPI {
   return {
     pi: {
       VERSION: version,
+      MAIN_AGENT_ID: identity.id,
       AgentRegistry: {
-        global: () => ({ list: () => [], get: () => undefined, onChange: () => () => { } }),
+        global: () => registry,
       },
       parseSessionContent: () => ({ entries: [], malformedRecords: 0 }),
       logger: { info: () => { } },
     },
-    events: eventBusAvailable ? { on: () => () => { } } : {},
-    on: (name: string, handler: Handler) => { handlers.set(name, handler); },
-    registerCommand: () => { },
+    events: eventBusAvailable ? {
+      on: (_name: string, listener: (payload: unknown) => void) => {
+        busListeners.add(listener);
+        return () => { busListeners.delete(listener); };
+      },
+    } : {},
+    on: (name: string, handler: Handler) => {
+      const previous = handlers.get(name);
+      handlers.set(name, previous ? async (event, ctx) => {
+        const result = await previous(event, ctx);
+        return (await handler(event, ctx)) ?? result;
+      } : handler);
+    },
+    registerCommand: (name: string, command: { handler: CommandHandler }) => { commands.set(name, command.handler); },
   } as unknown as ExtensionAPI;
 }
 
@@ -34,18 +83,42 @@ assert.equal(checkCompat(makeApi("18.3.5", new Map(), false), identity).state, "
 
 const originalSetInterval = globalThis.setInterval;
 const originalClearInterval = globalThis.clearInterval;
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
 const originalNow = Date.now;
 let tick: () => void = () => { throw new Error("coordinator timer is not scheduled"); };
-const timer = { unref() { return this; } };
+const timers = new Set<object>();
+function scheduleTimer() {
+  const timer = { unref() { return this; } };
+  timers.add(timer);
+  return timer;
+}
 let now = 1000;
 globalThis.setInterval = ((callback: () => void) => {
   tick = callback;
-  return timer;
+  return scheduleTimer();
 }) as unknown as typeof setInterval;
-globalThis.clearInterval = (() => {
+globalThis.clearInterval = ((handle: unknown) => {
+  timers.delete(handle as object);
   tick = () => { throw new Error("coordinator timer was cleared"); };
 }) as typeof clearInterval;
+globalThis.setTimeout = (() => scheduleTimer()) as unknown as typeof setTimeout;
+globalThis.clearTimeout = ((handle: unknown) => { timers.delete(handle as object); }) as typeof clearTimeout;
 Date.now = () => now;
+const endpoints = new Set<Endpoint>();
+const served: ServeOptions[] = [];
+const mockedServe = spyOn(transport, "serve").mockImplementation(async options => {
+  served.push(options);
+  const endpoint: Endpoint = {
+    url: "http://127.0.0.1/",
+    port: 80,
+    async close() { endpoints.delete(endpoint); },
+  };
+  endpoints.add(endpoint);
+  return endpoint;
+});
+const registerCommandsSpy = spyOn(commands, "registerCommands");
+let cleanupRuntime: (() => unknown) | undefined;
 
 try {
   const received: ChildFact[] = [];
@@ -152,35 +225,123 @@ try {
 
   const mainHandlers = new Map<string, Handler>();
   const subHandlers = new Map<string, Handler>();
+  const mainCommands = new Map<string, CommandHandler>();
+  const subCommands = new Map<string, CommandHandler>();
+  let sessionFile = "root-session";
   const mainCtx = {
     agent: identity,
-    sessionManager: { getSessionFile: () => "root-session" },
+    mode: "tui",
+    hasUI: true,
+    cwd: ".",
+    ui: { notify: () => { } },
+    sessionManager: { getSessionFile: () => sessionFile, getBranch: () => [] },
   } as unknown as ExtensionContext;
+  const commandCtx = mainCtx as Parameters<CommandHandler>[1];
   const subCtx = {
     agent: { kind: "sub", id: "child", name: "task", depth: 1 },
-    sessionManager: { getSessionFile: () => "child-session" },
+    sessionManager: { getSessionFile: () => "child-session", getBranch: () => [] },
   } as unknown as ExtensionContext;
-  orcaObserver(makeApi("18.3.5", mainHandlers));
-  orcaObserver(makeApi("18.3.5", subHandlers));
+  orcaObserver(makeApi("18.3.5", mainHandlers, true, mainCommands));
+  orcaObserver(makeApi("18.3.5", subHandlers, true, subCommands));
+  cleanupRuntime = () => mainHandlers.get("session_shutdown")!({}, mainCtx);
+  assert.equal(timers.size, 0, "factory registration must not schedule work");
+  assert.equal(registryListeners.size, 0);
+  assert.equal(endpoints.size, 0);
+  assert.equal(await mainHandlers.get("before_agent_start")!({}, mainCtx), undefined);
+
   await mainHandlers.get("session_start")!({}, mainCtx);
   const first = processCoordinator();
   assert.ok(first);
+  await mainCommands.get("observer")!("serve", commandCtx);
+  const firstGrants = served.at(-1)!.grants;
+  const firstCredential = firstGrants.exchange(firstGrants.bootstrap(["child"], 60_000).code)!;
+  const firstSignal = firstGrants.signal(firstCredential.credential, "child")!;
+  assert.equal(firstGrants.allows(firstCredential.credential, "child"), true);
+  assert.equal(firstSignal.aborted, false);
+  assert.equal(endpoints.size, 1);
+  assert.equal(registryListeners.size, 1);
   await subHandlers.get("session_start")!({}, subCtx);
+  await subCommands.get("observer")!("revoke all", commandCtx);
+  assert.equal(firstGrants.allows(firstCredential.credential, "child"), true, "another instance cannot revoke publisher grants");
+  assert.equal(firstSignal.aborted, false);
+  assert.equal(endpoints.size, 1);
   await subHandlers.get("session_shutdown")!({}, subCtx);
   assert.equal(processCoordinator(), first);
+  assert.equal(registryListeners.size, 1);
+
+  sessionFile = "switched-session";
   await mainHandlers.get("session_switch")!({}, mainCtx);
-  assert.notEqual(processCoordinator()?.epoch(), first.epoch());
+  const switched = processCoordinator();
+  assert.ok(switched);
+  assert.notEqual(switched.epoch(), first.epoch());
+  assert.equal(endpoints.size, 0);
+  await mainCommands.get("observer")!("serve", commandCtx);
+  const switchedGrants = served.at(-1)!.grants;
+  assert.notEqual(switchedGrants, firstGrants);
+  assert.equal(switchedGrants.epoch, switched.epoch());
+  assert.equal(firstGrants.allows(firstCredential.credential, "child"), false);
+  assert.equal(switchedGrants.allows(firstCredential.credential, "child"), false);
+  assert.equal(firstSignal.aborted, true);
+
+  const switchedCredential = switchedGrants.exchange(switchedGrants.bootstrap(["child"], 60_000).code)!;
+  const switchedSignal = switchedGrants.signal(switchedCredential.credential, "child")!;
+  switched.dispose();
+  assert.equal(switchedGrants.allows(switchedCredential.credential, "child"), false, "coordinator invalidation revokes grants");
+  assert.equal(switchedSignal.aborted, true);
+  sessionFile = "branched-session";
+  await mainHandlers.get("session_branch")!({}, mainCtx);
+  assert.notEqual(processCoordinator()?.epoch(), switched.epoch());
+  assert.equal(endpoints.size, 0);
+  await mainCommands.get("observer")!("serve", commandCtx);
+  const finalGrants = served.at(-1)!.grants;
+  const finalCredential = finalGrants.exchange(finalGrants.bootstrap(["child"], 60_000).code)!;
+  const finalSignal = finalGrants.signal(finalCredential.credential, "child")!;
+  const pendingCode = finalGrants.bootstrap(["child"], 60_000).code;
+  assert.equal(timers.size, 2, "the coordinator and active grants each own a timer");
+
   await mainHandlers.get("session_shutdown")!({}, mainCtx);
+  assert.equal(processCoordinator(), null);
+  assert.equal(timers.size, 0);
+  assert.equal(registryListeners.size, 0);
+  assert.equal(busListeners.size, 0);
+  assert.equal(endpoints.size, 0);
+  assert.equal(finalGrants.allows(finalCredential.credential, "child"), false);
+  assert.equal(finalGrants.exchange(pendingCode), null);
+  assert.equal(finalSignal.aborted, true);
+  assert.deepEqual(finalGrants.status(), { liveCredentials: 0, grantedChildIds: [], pendingCodes: 0 });
+  assert.equal(await mainHandlers.get("before_agent_start")!({}, mainCtx), undefined);
+  assert.deepEqual(mutatingCalls, []);
+
   const raceHandlers = new Map<string, Handler>();
   orcaObserver(makeApi("18.3.5", raceHandlers));
+  cleanupRuntime = () => raceHandlers.get("session_shutdown")!({}, mainCtx);
   await raceHandlers.get("session_start")!({}, mainCtx);
-  const switching = raceHandlers.get("session_switch")!({}, mainCtx);
-  const shuttingDown = raceHandlers.get("session_shutdown")!({}, mainCtx);
-  await Promise.all([switching, shuttingDown]);
+  const runtimeOf = registerCommandsSpy.mock.calls.at(-1)![1];
+  const old = runtimeOf()!;
+  assert.ok(old);
+  assert.equal(old.endpoint, null);
+  await raceHandlers.get("session_switch")!({}, mainCtx);
+  await assert.rejects(old.serve(), /stopping/);
+  await raceHandlers.get("session_shutdown")!({}, mainCtx);
   assert.equal(processCoordinator(), null);
+  assert.equal(timers.size, 0);
+  assert.equal(registryListeners.size, 0);
+  assert.equal(busListeners.size, 0);
+  assert.equal(endpoints.size, 0);
+  assert.deepEqual(mutatingCalls, []);
 } finally {
-  processCoordinator()?.dispose();
-  globalThis.setInterval = originalSetInterval;
-  globalThis.clearInterval = originalClearInterval;
-  Date.now = originalNow;
+  try {
+    await cleanupRuntime?.();
+    processCoordinator()?.dispose();
+    for (const options of served) options.grants.dispose();
+    await Promise.all([...endpoints].map(endpoint => endpoint.close()));
+  } finally {
+    mockedServe.mockRestore();
+    registerCommandsSpy.mockRestore();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    Date.now = originalNow;
+  }
 }

@@ -189,14 +189,14 @@ export type Grants = {
   dispose(): void;
 };
 
-/** Grants may be null only until wave C2 migrates all callers; port zero requests an ephemeral port. */
+/** Every endpoint authenticates through one epoch's grant store; port zero requests an ephemeral port. */
 export type ServeOptions = {
   epoch: string;
   snapshot(): Snapshot | null;
   state(): ObserverState;
   admittedSessionFile(childId: string): string | null;
   read(request: ReadRequest): Promise<ReadResult>;
-  grants: Grants | null;
+  grants: Grants;
   port: number;
 };
 
@@ -214,12 +214,12 @@ export type Coordinator = {
   dispose(): void;
 };
 
-/** Publisher process handles can leave grants null only until the same wave-C2 migration. */
+/** Publisher process handles; the grant store belongs to the coordinator's current epoch. */
 export type ObserverRuntime = {
   coordinator: Coordinator;
   source: SnapshotSource | null;
   outcomes: OutcomeTracker | null;
-  grants: Grants | null;
+  grants: Grants;
   endpoint: Endpoint | null;
   serve(): Promise<Endpoint>;
 };

@@ -57,19 +57,18 @@ export function registerCommands(pi: ExtensionAPI, runtime: () => ObserverRuntim
   pi.registerCommand("observer", {
     description: "serve, grant, revoke, inspect, or open the read-only child observer",
     handler: async (args, ctx) => {
-      if (ctx.agent.kind !== "main") {
+      if (ctx.agent?.kind !== "main") {
         ctx.ui.notify("observer unavailable: this session is not the publisher", "warning");
         return;
       }
       const observer = runtime();
       const source = observer?.source;
-      const grants = observer?.grants;
-      if (!observer || !source || !grants) {
-        const reason = !observer ? "publisher runtime is not active"
-          : !source ? "publisher source is unavailable" : "publisher grants are unavailable";
+      if (!observer || !source) {
+        const reason = !observer ? "publisher runtime is not active" : "publisher source is unavailable";
         ctx.ui.notify(`observer unavailable: ${reason}`, "warning");
         return;
       }
+      const grants = observer.grants;
       const coordinator = observer.coordinator;
       const epoch = coordinator.epoch();
       const [command, ...tokens] = args.trim().split(/\s+/);
@@ -83,7 +82,7 @@ export function registerCommands(pi: ExtensionAPI, runtime: () => ObserverRuntim
 
       function requireCurrentPublisher(): void {
         const current = runtime();
-        if (ctx.agent.kind !== "main" || !current || current.coordinator !== coordinator
+        if (ctx.agent?.kind !== "main" || !current || current.coordinator !== coordinator
           || current.source !== source || current.grants !== grants || current.coordinator.epoch() !== epoch) {
           throw new Error("observer unavailable: publisher changed while the command was running");
         }

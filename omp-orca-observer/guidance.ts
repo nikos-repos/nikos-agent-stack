@@ -13,7 +13,7 @@ export function registerGuidance(pi: ExtensionAPI, active: () => boolean): void 
   const delivered = new Set<string | undefined>();
 
   pi.on("before_agent_start", (_event, ctx) => {
-    if (!active() || ctx.agent.kind !== "main" || delivered.has(ctx.sessionManager.getSessionFile())) return;
+    if (!active() || ctx.agent?.kind !== "main" || delivered.has(ctx.sessionManager.getSessionFile())) return;
     return {
       message: {
         customType: guidanceCustomType,
@@ -24,13 +24,13 @@ export function registerGuidance(pi: ExtensionAPI, active: () => boolean): void 
   });
 
   pi.on("message_start", (event, ctx) => {
-    if (ctx.agent.kind === "main" && event.message.role === "custom" && event.message.customType === guidanceCustomType) {
+    if (ctx.agent?.kind === "main" && event.message.role === "custom" && event.message.customType === guidanceCustomType) {
       delivered.add(ctx.sessionManager.getSessionFile());
     }
   });
 
   const scanRestoredBranch = (_event: unknown, ctx: ExtensionContext) => {
-    if (ctx.agent.kind !== "main") return;
+    if (ctx.agent?.kind !== "main") return;
     if (ctx.sessionManager.getBranch().some((entry) => entry.type === "custom_message" && entry.customType === guidanceCustomType)) {
       delivered.add(ctx.sessionManager.getSessionFile());
     }

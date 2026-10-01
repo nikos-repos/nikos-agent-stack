@@ -38,16 +38,22 @@ function harness(kind: "main" | "sub" = "main") {
   return {
     state,
     handlers,
-    async emit<R = void>(event: { type: string;[key: string]: unknown }): Promise<R | undefined> {
+    ctx,
+    async emit<R = void>(event: { type: string;[key: string]: unknown }, context: ExtensionContext = ctx): Promise<R | undefined> {
       const handler = handlers.get(event.type);
       assert.ok(handler, `missing ${event.type} handler`);
-      return await handler(event, ctx) as R | undefined;
+      return await handler(event, context) as R | undefined;
     },
   };
 }
 
 const before = { type: "before_agent_start", prompt: "continue", systemPrompt: [] };
 const api = harness();
+const missingAgent = { ...api.ctx, agent: undefined } as unknown as ExtensionContext;
+await api.emit({ type: "session_start" }, missingAgent);
+assert.equal(await api.emit({ type: "message_start", message: { role: "custom", customType: "nikos-agent-stack.omp-orca-observer.guidance", content: "guidance" } }, missingAgent), undefined);
+assert.equal(await api.emit(before, missingAgent), undefined);
+assert.ok((await api.emit<BeforeAgentStartEventResult>(before))?.message, "missing agent does not affect a later main session");
 assert.equal(api.handlers.has("context"), false, "guidance must not register a context handler");
 await api.emit({ type: "session_start" });
 assert.equal(api.state.branchReads, 1, "restored history is scanned at session start");

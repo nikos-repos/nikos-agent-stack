@@ -195,7 +195,7 @@ function harness(cwd: string) {
     mode: "tui",
     hasUI: true,
     cwd,
-    agent: { kind: "main", id: "Main", name: "main", depth: 0 },
+    agent: { kind: "main", id: "Main", name: "main", depth: 0 } as CommandContext["agent"] | undefined,
     ui: {
       notify(message: string, type?: "info" | "warning" | "error") {
         notices.push({ message, type });
@@ -273,12 +273,11 @@ async function main() {
     }
     assert.deepEqual(await calls(), []);
 
-    // Every command rejects a missing publisher, source, grant store, or a child session (even depth zero).
-    for (const unavailable of ["runtime", "source", "grants", "child"] as const) {
+    // Every command rejects a missing publisher, source, or a child session (even depth zero).
+    for (const unavailable of ["runtime", "source", "child"] as const) {
       const fixture = createHarness();
       if (unavailable === "runtime") fixture.current.value = null;
       if (unavailable === "source") fixture.observer.source = null;
-      if (unavailable === "grants") fixture.observer.grants = null;
       if (unavailable === "child") fixture.ctx.agent = { kind: "sub", id: "A", name: "task", depth: 0 };
       for (const command of ["serve", "grant A", "revoke A", "status", "url A", "open A"]) {
         await fixture.run(command);
@@ -288,6 +287,12 @@ async function main() {
       assert.equal(fixture.serving.calls, 0);
       assert.deepEqual(fixture.revocations, []);
     }
+    const missingAgent = createHarness();
+    (missingAgent.ctx as { agent?: unknown }).agent = undefined;
+    await missingAgent.run("status");
+    assert.equal(missingAgent.lastMessage(), "observer unavailable: this session is not the publisher");
+    assert.equal(missingAgent.issues.length, 0);
+    assert.deepEqual(missingAgent.revocations, []);
 
     // The mode check precedes both code creation and CLI probes, including RPC hosts that claim UI.
     for (const mode of ["rpc", "json", "print", "tui"] as const) {

@@ -31,7 +31,7 @@ type Turn = {
   fanout?: { count: number; prefix: string; agent: string; isolated?: boolean };
 };
 
-/** A scenario owns each agent path's ordered turns; the final user marker HARNESS_AGENT=<path> selects its path. */
+/** A scenario owns each agent path's ordered turns; the last user message carrying HARNESS_AGENT=<path> selects its path (main-session guidance may follow it). */
 export type Scenario = {
   name: string;
   setup: string[];
@@ -127,7 +127,7 @@ export async function startStub(options: {
       : undefined;
     const model = typeof body.model === "string" ? body.model : "scripted";
     const lastUser = [...messages].reverse().find((message): message is { role: string; content: unknown } =>
-      typeof message === "object" && message !== null && message.role === "user");
+      typeof message === "object" && message !== null && message.role === "user" && (JSON.stringify(message.content) ?? "").includes("HARNESS_AGENT="));
     const userText = typeof lastUser?.content === "string" ? lastUser.content
       : JSON.stringify(lastUser?.content ?? "") ?? "";
     const agentPath = model === "advisor" ? "advisor"

@@ -1,7 +1,10 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { createGrants } from "./auth.ts";
+import { registerCommands } from "./commands.ts";
 import { checkCompat } from "./compat.ts";
 import { processCoordinator, startCoordinator } from "./coordinator.ts";
 import type { ChildFact, Endpoint, ObserverRuntime } from "./contract.ts";
+import { registerGuidance } from "./guidance.ts";
 import { createOutcomeTracker } from "./outcomes.ts";
 import { readPage } from "./reader.ts";
 import { createStockSource } from "./stock-source.ts";
@@ -9,6 +12,7 @@ import { serve } from "./transport.ts";
 
 type ActiveRuntime = ObserverRuntime & {
   rootSessionFile: string | null;
+  closing: boolean;
   close(): Promise<void>;
 };
 
@@ -22,16 +26,20 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
   const outcomes = createOutcomeTracker();
   const source = createStockSource(api, rootSessionFile, outcomes);
   const coordinator = startCoordinator({ source, outcomes, limit: 256 });
+  const grants = createGrants(Date.now, coordinator.epoch());
+  coordinator.onInvalidate(() => grants.revoke("all"));
   let pendingEndpoint: Promise<Endpoint> | null = null;
   const current: ActiveRuntime = {
     rootSessionFile,
     coordinator,
     source,
     outcomes,
-    grants: null,
+    grants,
     endpoint: null,
+    closing: false,
     serve() {
       if (current.endpoint) return Promise.resolve(current.endpoint);
+      if (current.closing && !pendingEndpoint) return Promise.reject(new Error("observer runtime is stopping"));
       if (!pendingEndpoint) {
         pendingEndpoint = serve({
           epoch: coordinator.epoch(),
@@ -42,7 +50,7 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
           state: () => coordinator.state(),
           admittedSessionFile: source.admittedSessionFile,
           read: request => readPage(request, api.pi.parseSessionContent),
-          grants: null,
+          grants,
           port: 0,
         }).then(endpoint => {
           current.endpoint = endpoint;
@@ -66,22 +74,31 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
 function stopRuntime(): Promise<void> {
   if (stopping) return stopping;
   const previous = runtime;
-  runtime = null;
   if (!previous) return Promise.resolve();
-  previous.coordinator.dispose();
-  previous.source?.dispose();
+  previous.closing = true;
   stopping = previous.close().finally(() => {
+    previous.grants.dispose();
+    previous.source?.dispose();
+    previous.outcomes?.clear();
+    previous.coordinator.dispose();
+    runtime = null;
     stopping = null;
   });
   return stopping;
 }
 
-/** Registering the extension never starts observer work; only the elected main session can publish. */
+/**
+ * Registration never starts observer work; only the elected main session can publish.
+ * Loaded hooks survive /new; disabling or uninstalling takes effect on the next process launch.
+ */
 export default function orcaObserver(api: ExtensionAPI): void {
   const instance = Symbol("observer session");
   let bound = false;
   let compatible = false;
   let unsubscribe: (() => void) | null = null;
+
+  registerCommands(api, () => (publisher === instance ? runtime : null));
+  registerGuidance(api, () => runtime !== null);
 
   api.on("session_start", (_event, ctx) => {
     if (!bound) {
@@ -133,24 +150,5 @@ export default function orcaObserver(api: ExtensionAPI): void {
     if (publisher !== instance) return;
     publisher = null;
     await stopRuntime();
-  });
-
-  api.registerCommand("observer", {
-    description: "Serve the current session's read-only observer",
-    async handler(args, ctx) {
-      if (publisher !== instance || !compatible) return;
-      if (args.trim() !== "serve") {
-        ctx.ui.notify("Usage: /observer serve", "warning");
-        return;
-      }
-      const current = runtime;
-      if (!current) return;
-      try {
-        const endpoint = await current.serve();
-        if (publisher === instance && runtime === current) ctx.ui.notify(endpoint.url, "info");
-      } catch {
-        if (publisher === instance && runtime === current) ctx.ui.notify("Observer endpoint unavailable", "error");
-      }
-    },
   });
 }
