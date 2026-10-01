@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { holdNextRead, reads, releaseHeldRead, waitForHeldRead } from "./harness/fs-probe.ts";
 import { startGitSource } from "./harness/git-source.ts";
 import { create } from "./harness/profile.ts";
+import { CURRENT_SETUP_VERSION } from "@oh-my-pi/pi-tui/setup/setup-version";
 import type { Capture, Scenario } from "./harness/stub-provider.ts";
 
 const scenarioNames = ["one-child", "nested", "restricted", "detached", "eval-agent",
@@ -185,6 +186,21 @@ try {
         Bun.sleep(50).then(() => "running"),
       ]);
       assert.equal(rpcState, "running");
+      await profile.assertStubOnly();
+      const profileConfig = join(profile.home, ".omp", "profiles", "one-child", "agent", "config.yml");
+      const originalConfig = await readFile(profileConfig);
+      const parsedConfig = Bun.YAML.parse(originalConfig.toString("utf8")) as {
+        setupVersion: number;
+        modelRoles: Record<string, string>;
+      };
+      assert.equal(parsedConfig.setupVersion, CURRENT_SETUP_VERSION);
+      parsedConfig.modelRoles.default = "openai-codex/gpt-6.1-sol";
+      try {
+        await writeFile(profileConfig, `${JSON.stringify(parsedConfig, null, 2)}\n`);
+        await assert.rejects(profile.assertStubOnly());
+      } finally {
+        await writeFile(profileConfig, originalConfig);
+      }
     } finally {
       await profile.teardown();
     }

@@ -2,8 +2,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Database } from "bun:sqlite";
+import { CURRENT_SETUP_VERSION } from "@oh-my-pi/pi-tui/setup/setup-version";
 import { startStub, type Scenario } from "./stub-provider.ts";
-
 type HarnessProcess = Pick<ReturnType<typeof Bun.spawn>, "kill" | "exited"> & {
   stdin: NonNullable<Exclude<ReturnType<typeof Bun.spawn>["stdin"], number>>;
   stdout: NonNullable<Exclude<ReturnType<typeof Bun.spawn>["stdout"], number>>;
@@ -20,10 +21,12 @@ export type HarnessProfile = {
   stubUrl: string;
   run(args: string[], options?: { cwd: string }): Promise<{ exitCode: number; stdout: string; stderr: string }>;
   spawn(args: string[], options?: { cwd: string }): HarnessProcess;
+  /** Drivers call this before typing any prompt into an interactive session. */
+  assertStubOnly(): Promise<void>;
   teardown(): Promise<void>;
 };
 
-/** Creates a disposable profile; only explicit Orca-terminal gates inherit routing variables. */
+/** Creates a disposable profile; Orca terminals inherit only the CLI routing variables. */
 export async function create(name: string, options: { orcaTerminal?: boolean } = {}): Promise<HarnessProfile> {
   if (!/^[A-Za-z0-9_-]+$/.test(name) || active.has(name)) throw new Error("Invalid or active harness profile name");
   const root = await mkdtemp(join(tmpdir(), "omp-orca-harness-"));
@@ -46,6 +49,7 @@ export async function create(name: string, options: { orcaTerminal?: boolean } =
     await writeFile(join(config, "models.yml"), `providers:\n  stub:\n    baseUrl: ${stub.url}\n    api: openai-completions\n    auth: none\n    models:\n      - id: scripted\n        name: Harness scripted model\n        api: openai-completions\n        reasoning: false\n        input: [text]\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }\n        contextWindow: 128000\n        maxTokens: 4096\n      - id: aux\n        name: Harness auxiliary model\n        api: openai-completions\n        reasoning: false\n        input: [text]\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }\n        contextWindow: 128000\n        maxTokens: 4096\n      - id: advisor\n        name: Harness advisor model\n        api: openai-completions\n        reasoning: false\n        input: [text]\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }\n        contextWindow: 128000\n        maxTokens: 4096\n`);
     const settings = {
       ...scenario.settings,
+      setupVersion: CURRENT_SETUP_VERSION,
       modelRoles: {
         default: "stub/scripted",
         task: "stub/scripted",
@@ -75,8 +79,8 @@ export async function create(name: string, options: { orcaTerminal?: boolean } =
     env.XDG_DATA_HOME = join(root, "data");
     env.XDG_STATE_HOME = join(root, "state");
     if (options.orcaTerminal === true) {
-      for (const [key, value] of Object.entries(process.env)) {
-        if ((key.startsWith("ORCA_") || key === "WSLENV") && value !== undefined) env[key] = value;
+      for (const key of ["ORCA_CLI_COMMAND", "ORCA_WSL_CLI_DIR", "WSLENV"]) {
+        if (process.env[key] !== undefined) env[key] = process.env[key];
       }
     }
     function spawn(args: string[], options?: { cwd: string }): HarnessProcess {
@@ -115,11 +119,38 @@ export async function create(name: string, options: { orcaTerminal?: boolean } =
     const git = Bun.spawn(["git", "init", "-q", workspace], { cwd: root, env, stdout: "pipe", stderr: "pipe" });
     const gitError = await new Response(git.stderr).text();
     if (await git.exited !== 0) throw new Error(`Disposable git init failed: ${gitError}`);
+    async function assertStubOnly(): Promise<void> {
+      const settings = Bun.YAML.parse(await readFile(join(config, "config.yml"), "utf8")) as {
+        setupVersion?: number;
+        modelRoles?: Record<string, unknown>;
+      };
+      if (typeof settings.setupVersion !== "number" || settings.setupVersion < CURRENT_SETUP_VERSION
+        || !settings.modelRoles || !Object.values(settings.modelRoles).every(
+          model => typeof model === "string" && model.startsWith("stub/"),
+        )) {
+        throw new Error("Harness profile must use the current setup version and stub-only model roles");
+      }
+      const databasePath = join(config, "agent.db");
+      if (await Bun.file(databasePath).exists()) {
+        const database = new Database(databasePath, { readonly: true });
+        try {
+          const credentialsTable = database.query(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'auth_credentials'",
+          ).get();
+          if (credentialsTable && database.query("SELECT 1 FROM auth_credentials LIMIT 1").get()) {
+            throw new Error("Harness profile must not contain stored auth credentials");
+          }
+        } finally {
+          database.close();
+        }
+      }
+    }
     const linked = await run(["plugin", "link", source]);
     if (linked.exitCode !== 0) throw new Error(`Disposable plugin link failed: ${linked.stderr}`);
+    await assertStubOnly();
     active.set(name, { root, stop: stub.stop, running });
     return {
-      root, home, workspace, capture, stubUrl: stub.url, run, spawn,
+      root, home, workspace, capture, stubUrl: stub.url, run, spawn, assertStubOnly,
       async teardown() { await teardown(name); }
     };
   } catch (error) {
