@@ -145,12 +145,17 @@ export async function serve(options: ServeOptions): Promise<Endpoint> {
       if (!access.acceptsOrigin(request.headers.get("origin"))) {
         return new Response("Forbidden", { status: 403, headers });
       }
+      const url = new URL(request.url);
+      const path = url.pathname;
+      const hasBody = (request.headers.has("content-length") && request.headers.get("content-length") !== "0")
+        || request.headers.has("transfer-encoding");
+      if (hasBody && !(request.method === "POST" && path === ROUTES.session)) {
+        return new Response("Request body not allowed", { status: 400, headers });
+      }
       if (server.pendingRequests > access.requestLimit) {
         return new Response("Too Many Requests", { status: 429, headers });
       }
 
-      const url = new URL(request.url);
-      const path = url.pathname;
       if (request.method === "POST" && path === ROUTES.session) {
         return await access.session(request);
       }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import {
   ROUTES,
@@ -33,14 +34,20 @@ let beganRead!: () => void;
 let observedAbort!: () => void;
 const readBegan = new Promise<void>(resolve => { beganRead = resolve; });
 const readAborted = new Promise<void>(resolve => { observedAbort = resolve; });
+let snapshotCalls = 0;
+let readCalls = 0;
 const options: ServeOptions = {
   epoch: snapshot.epoch,
   port: 0,
   grants,
-  snapshot: () => available ? snapshot : null,
+  snapshot: () => {
+    snapshotCalls++;
+    return available ? snapshot : null;
+  },
   state: () => available ? { state: "ready" } : { state: "unavailable", reason: "check" },
   admittedSessionFile: childId => childId === "known" ? "./known.jsonl" : null,
   read({ signal }) {
+    readCalls++;
     return new Promise<ReadResult>(resolve => {
       const onAbort = () => {
         observedAbort();
@@ -75,6 +82,27 @@ async function request(endpoint: Endpoint, path: string, init?: RequestInit): Pr
   }
   return response;
 }
+async function rawGetWithBody(endpoint: Endpoint, path: string, authorization: Record<string, string>): Promise<number> {
+  const { promise, resolve, reject } = Promise.withResolvers<number>();
+  const socket = createConnection({ host: "127.0.0.1", port: endpoint.port });
+  let response = "";
+  socket.setTimeout(2000, () => socket.destroy(new Error("Timed out waiting for raw GET response")));
+  socket.on("error", reject);
+  socket.on("data", chunk => {
+    response += chunk.toString();
+    if (response.includes("\r\n\r\n")) socket.end();
+  });
+  socket.on("close", () => {
+    const status = /^HTTP\/1\.[01] (\d{3})/.exec(response)?.[1];
+    if (status === undefined) reject(new Error("Missing status in raw GET response"));
+    else resolve(Number(status));
+  });
+  const body = '{"action":"abort"}';
+  socket.on("connect", () => socket.write(
+    `GET ${path} HTTP/1.1\r\nHost: 127.0.0.1:${endpoint.port}\r\nAuthorization: ${authorization.Authorization}\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+  ));
+  return within(promise);
+}
 
 const pagePath = (childId: string) => ROUTES.page.replace(":childId", encodeURIComponent(childId));
 
@@ -96,6 +124,12 @@ try {
   const session = await exchange.json() as { credential: string };
   const authorization = { Authorization: `Bearer ${session.credential}` };
   assert.equal((await request(endpoint, ROUTES.snapshot, { headers: authorization })).status, 200);
+  const readCallsBeforeRejectedBody = readCalls;
+  const snapshotCallsBeforeRejectedBody = snapshotCalls;
+  const bodyResponse = await rawGetWithBody(endpoint, pagePath("known"), authorization);
+  assert.equal(bodyResponse, 400);
+  assert.equal(snapshotCalls, snapshotCallsBeforeRejectedBody);
+  assert.equal(readCalls, readCallsBeforeRejectedBody);
   available = false;
   assert.equal((await request(endpoint, ROUTES.snapshot, { headers: authorization })).status, 503);
   assert.equal((await request(endpoint, ROUTES.viewer, { headers: { Host: "example.invalid" } })).status, 421);
