@@ -230,6 +230,14 @@ export function createStockSource(
               cwd = { known: false, reason: "cwd not recorded" };
             }
           }
+          if (cwd.known) {
+            try {
+              fs.statSync(cwd.value);
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              cwd = { known: false, reason: code === "ENOENT" || code === "ENOTDIR" ? "cwd no longer exists" : "cwd not accessible" };
+            }
+          }
           let tombstoned = false;
           try {
             fs.statSync(`${ref.sessionFile}.tombstone`);

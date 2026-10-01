@@ -240,6 +240,7 @@ try {
     lastActivity: 3000,
   });
   const live = harness(native.root, [nativeRef]);
+  mkdirSync(cwd);
   const nativeRow = live.source.collect(256).rows[0]!;
   assert.deepEqual(nativeRow.modelRole, { known: true, value: "native-role" });
   assert.deepEqual(nativeRow.resolvedModel, { known: true, value: "history/served" });
@@ -260,7 +261,13 @@ try {
   const restoredFile = restoredCwd.transcript("restored.jsonl");
   const titleSlot = JSON.stringify({ type: "title", v: 1, title: "restored", updatedAt: 0, pad: " ".repeat(192) });
   assert.equal(Buffer.byteLength(titleSlot), 256);
-  writeFileSync(restoredFile, `${titleSlot}\n{"type":"session","cwd":"/restored/workspace"}\n{"type":"message"}\n`);
+  const restoredWorkspace = join(directory, "restored-workspace");
+  const replacementWorkspace = join(directory, "replacement-workspace");
+  const liveWorkspace = join(directory, "live-workspace");
+  mkdirSync(restoredWorkspace);
+  mkdirSync(replacementWorkspace);
+  mkdirSync(liveWorkspace);
+  writeFileSync(restoredFile, `${titleSlot}\n${JSON.stringify({ type: "session", cwd: restoredWorkspace })}\n{"type":"message"}\n`);
   const restored = harness(restoredCwd.root, [child("restored", restoredFile, { status: "parked" })]);
   const readSync = fs.readSync;
   let transcriptReads = 0;
@@ -278,7 +285,7 @@ try {
 
     restored.source.resolveHeaders();
     assert.equal(transcriptReads, 1);
-    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: restoredWorkspace });
     restored.source.collect(256);
     restored.source.resolveHeaders();
     assert.equal(transcriptReads, 1);
@@ -291,26 +298,39 @@ try {
 
     restored.source.resolveHeaders();
     assert.equal(transcriptReads, 2);
-    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: restoredWorkspace });
     restored.source.collect(256);
     restored.source.resolveHeaders();
     assert.equal(transcriptReads, 2);
 
-    writeFileSync(restoredFile, '{"type":"session","cwd":"/replacement/workspace"}\n');
+    writeFileSync(restoredFile, `${JSON.stringify({ type: "session", cwd: replacementWorkspace })}\n`);
     const replacementRef = { ...offlineReplacement, createdAt: offlineReplacement.createdAt + 1 };
     restored.registry.refs = [replacementRef];
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
     assert.equal(transcriptReads, 2);
     restored.source.resolveHeaders();
     assert.equal(transcriptReads, 3);
-    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/replacement/workspace" });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: replacementWorkspace });
 
-    const liveCwd = "/live/workspace";
+    const tempCwd = mkdtempSync(join(tmpdir(), "observer-live-cwd-"));
+    const liveCwd = tempCwd;
     restored.registry.refs = [{
       ...replacementRef,
       session: { sessionManager: { getCwd: () => liveCwd } } as unknown as NonNullable<AgentRef["session"]>,
     }];
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: liveCwd });
+    rmSync(tempCwd, { recursive: true });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd no longer exists" });
+    mkdirSync(tempCwd);
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: liveCwd });
+    rmSync(tempCwd, { recursive: true });
+    assert.equal(transcriptReads, 3);
+    const unrelatedLiveCwd = liveWorkspace;
+    restored.registry.refs = [{
+      ...replacementRef,
+      session: { sessionManager: { getCwd: () => unrelatedLiveCwd } } as unknown as NonNullable<AgentRef["session"]>,
+    }];
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: unrelatedLiveCwd });
     assert.equal(transcriptReads, 3);
   } finally {
     fs.readSync = readSync;
@@ -391,7 +411,7 @@ try {
       throw new Error("filesystem enumeration during registry callback");
     };
     assert.equal(live.source.collect(256).inventory.state, "partial");
-    assert.equal(filesystemCalls, 1);
+    assert.equal(filesystemCalls, 2, "one enumeration or tombstone probe plus the live row's cwd stat");
     filesystemCalls = 0;
     let dirtyMarks = 0;
     const markDirty = coordinator.markDirty;
