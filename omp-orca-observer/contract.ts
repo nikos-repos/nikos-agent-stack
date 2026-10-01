@@ -234,7 +234,7 @@ export type ObserverRuntime = {
  * | `reader.ts` | `readPage(request: ReadRequest, parse: ParseSessionContent): Promise<ReadResult>` |
  * | `transport.ts` | `serve(options: ServeOptions): Promise<Endpoint>` |
  * | `outcomes.ts` | `createOutcomeTracker(): OutcomeTracker` |
- * | `stock-source.ts` | `createStockSource(pi: ExtensionAPI, rootSessionFile: string | null, outcomes: OutcomeTracker, viewerConnected: () => boolean): SnapshotSource` — reads transcript headers only once `viewerConnected()` is true (nfr-8). |
+ * | `stock-source.ts` | `createStockSource(pi: ExtensionAPI, rootSessionFile: string | null, outcomes: OutcomeTracker): StockSource` (`SnapshotSource & { resolveHeaders(): void }`) — `collect` never reads transcripts; `resolveHeaders()` reads pending child session headers and is called only inside an authorized `snapshot()` request (nfr-8). |
  * | `auth.ts` | `createGrants(now: () => number, epoch: string): Grants` |
  * | `commands.ts` | `registerCommands(pi: ExtensionAPI, runtime: () => ObserverRuntime | null): void` |
  * | `guidance.ts` | `registerGuidance(pi: ExtensionAPI, active: () => boolean): void` — injects nothing while `active()` is false (host hooks cannot be unregistered, so teardown flips `active`). |

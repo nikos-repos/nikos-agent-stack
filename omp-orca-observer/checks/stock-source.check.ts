@@ -102,7 +102,7 @@ function child(id: string, sessionFile: string | null, changes: Partial<AgentRef
   };
 }
 
-function harness(root: string | null, refs: AgentRef[] = [], viewerConnected: () => boolean = () => false) {
+function harness(root: string | null, refs: AgentRef[] = []) {
   const registry = new FakeRegistry(refs);
   const outcomes = new FakeOutcomes();
   const pi = {
@@ -116,7 +116,7 @@ function harness(root: string | null, refs: AgentRef[] = [], viewerConnected: ()
       },
     },
   } as unknown as ExtensionAPI;
-  const source = createStockSource(pi, root, outcomes, viewerConnected);
+  const source = createStockSource(pi, root, outcomes);
   sources.push(source);
   assert.deepEqual(registry.calls, { global: 1, list: 0, get: 0, onChange: 1, unsubscribe: 0 });
   return { source, registry, outcomes };
@@ -261,8 +261,7 @@ try {
   const titleSlot = JSON.stringify({ type: "title", v: 1, title: "restored", updatedAt: 0, pad: " ".repeat(192) });
   assert.equal(Buffer.byteLength(titleSlot), 256);
   writeFileSync(restoredFile, `${titleSlot}\n{"type":"session","cwd":"/restored/workspace"}\n{"type":"message"}\n`);
-  let viewerConnected = false;
-  const restored = harness(restoredCwd.root, [child("restored", restoredFile, { status: "parked" })], () => viewerConnected);
+  const restored = harness(restoredCwd.root, [child("restored", restoredFile, { status: "parked" })]);
   const readSync = fs.readSync;
   let transcriptReads = 0;
   fs.readSync = new Proxy(readSync, {
@@ -274,26 +273,37 @@ try {
   try {
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
     assert.equal(transcriptReads, 0);
-    viewerConnected = true;
-    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
+    assert.equal(transcriptReads, 0);
+
+    restored.source.resolveHeaders();
     assert.equal(transcriptReads, 1);
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    restored.source.collect(256);
+    restored.source.resolveHeaders();
     assert.equal(transcriptReads, 1);
-    viewerConnected = false;
+
     const offlineReplacement = { ...restored.registry.refs[0]!, createdAt: restored.registry.refs[0]!.createdAt + 1 };
     restored.registry.refs = [offlineReplacement];
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
     assert.equal(transcriptReads, 1);
 
-    viewerConnected = true;
+    restored.source.resolveHeaders();
+    assert.equal(transcriptReads, 2);
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    restored.source.collect(256);
+    restored.source.resolveHeaders();
     assert.equal(transcriptReads, 2);
 
     writeFileSync(restoredFile, '{"type":"session","cwd":"/replacement/workspace"}\n');
-    const replacementRef = { ...restored.registry.refs[0]!, createdAt: restored.registry.refs[0]!.createdAt + 1 };
+    const replacementRef = { ...offlineReplacement, createdAt: offlineReplacement.createdAt + 1 };
     restored.registry.refs = [replacementRef];
-    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/replacement/workspace" });
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
+    assert.equal(transcriptReads, 2);
+    restored.source.resolveHeaders();
     assert.equal(transcriptReads, 3);
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/replacement/workspace" });
 
     const liveCwd = "/live/workspace";
     restored.registry.refs = [{

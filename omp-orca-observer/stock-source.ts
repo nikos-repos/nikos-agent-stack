@@ -68,8 +68,9 @@ function transcriptInventory(artifactRoot: string, admittedFiles: Set<string>): 
  * @cc [label:security] stock-source-native-scope
  * Only native sub refs strictly inside this root's artifact tree, with an entirely admitted
  * ancestry to Main, are readable. Registry callbacks only dirty the process coordinator;
- * inventory and filesystem work belong to collect, never restoration or native mutation.
- * Transcript header reads happen only after a viewer has requested a snapshot, at most once per incarnation.
+ * Inventory walking belongs to collect; it never triggers restoration or native mutation.
+ * Transcript header reads happen only in resolveHeaders(), called by the publisher only while
+ * handling an authorized snapshot request; definite results are cached once per incarnation.
  * @cc [label:ceiling] stock-source-copy-and-walk-floor
  * The row limit does not bound AgentRegistry.list(), which copies every ref. A bounded fake-ref
  * probe (10,000 calls per size) measured mean copy costs of 0.08 / 1.20 / 1.88 / 5.26 microseconds
@@ -77,18 +78,20 @@ function transcriptInventory(artifactRoot: string, admittedFiles: Set<string>): 
  * stops after 8,192 entries and reports partial rather than assuming restoration is complete.
  * until: omp exposes bounded inventory enumeration and an authoritative restoration completion signal.
  */
+export type StockSource = SnapshotSource & { resolveHeaders(): void };
+
 export function createStockSource(
   pi: ExtensionAPI,
   rootSessionFile: string | null,
   outcomes: OutcomeTracker,
-  viewerConnected: () => boolean,
-): SnapshotSource {
+): StockSource {
   const registry = pi.pi.AgentRegistry.global();
   const mainId = pi.pi.MAIN_AGENT_ID;
   const rootPath = rootSessionFile === null ? null : resolve(rootSessionFile);
   const artifactRoot = rootPath === null ? null : rootPath.replace(/\.jsonl$/, "");
   const artifactPrefix = artifactRoot === null ? null : `${artifactRoot}${sep}`;
   const incarnations = new Map<string, { createdAt: number; sessionFile: string; cwd?: Known<string> }>();
+  const pending = new Set<string>();
   function readHeaderCwd(sessionFile: string): Known<string> | undefined {
     let fd: number | undefined;
     try {
@@ -154,7 +157,33 @@ export function createStockSource(
   }
 
   return {
+    resolveHeaders() {
+      if (disposed) return;
+      let changed = false;
+      const memo = new Map<string, boolean>();
+      for (const id of pending) {
+        const incarnation = incarnations.get(id);
+        if (!incarnation || incarnation.cwd !== undefined) continue;
+        const ref = registry.get(id);
+        if (
+          !ref ||
+          ref.kind !== "sub" ||
+          !ref.sessionFile ||
+          ref.createdAt !== incarnation.createdAt ||
+          ref.sessionFile !== incarnation.sessionFile ||
+          !inTree(ref.sessionFile) ||
+          !admitted(ref, memo)
+        ) continue;
+        const cwd = readHeaderCwd(incarnation.sessionFile);
+        if (cwd === undefined) continue;
+        incarnation.cwd = cwd;
+        changed = true;
+      }
+      pending.clear();
+      if (changed) processCoordinator()?.markDirty();
+    },
     collect(limit) {
+      pending.clear();
       if (disposed || rootSessionFile === null || artifactRoot === null) {
         return {
           rootSession: recorded(rootSessionFile ?? undefined, "no root session file"),
@@ -196,14 +225,9 @@ export function createStockSource(
           if (liveCwd === undefined) {
             if (incarnation.cwd !== undefined) {
               cwd = incarnation.cwd;
-            } else if (viewerConnected()) {
-              const headerCwd = readHeaderCwd(ref.sessionFile);
-              if (headerCwd !== undefined) {
-                incarnation.cwd = headerCwd;
-                cwd = headerCwd;
-              } else {
-                cwd = { known: false, reason: "session header unreadable" };
-              }
+            } else {
+              pending.add(ref.id);
+              cwd = { known: false, reason: "cwd not recorded" };
             }
           }
           let tombstoned = false;
@@ -266,6 +290,7 @@ export function createStockSource(
       disposed = true;
       unsubscribe();
       incarnations.clear();
+      pending.clear();
     },
   };
 }

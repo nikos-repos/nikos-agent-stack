@@ -12,9 +12,6 @@ type ActiveRuntime = ObserverRuntime & {
   close(): Promise<void>;
 };
 
-/** A viewer counts as connected while it has requested a snapshot within this window (the viewer polls well inside it). */
-const VIEWER_IDLE_MS = 30_000;
-
 let publisher: symbol | null = null;
 let runtime: ActiveRuntime | null = null;
 let stopping: Promise<void> | null = null;
@@ -23,9 +20,7 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
   if (runtime) return;
   const rootSessionFile = ctx.sessionManager.getSessionFile() ?? null;
   const outcomes = createOutcomeTracker();
-  let lastViewerAt = Number.NEGATIVE_INFINITY;
-  const viewerConnected = () => Date.now() - lastViewerAt < VIEWER_IDLE_MS;
-  const source = createStockSource(api, rootSessionFile, outcomes, viewerConnected);
+  const source = createStockSource(api, rootSessionFile, outcomes);
   const coordinator = startCoordinator({ source, outcomes, limit: 256 });
   let pendingEndpoint: Promise<Endpoint> | null = null;
   const current: ActiveRuntime = {
@@ -41,9 +36,7 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
         pendingEndpoint = serve({
           epoch: coordinator.epoch(),
           snapshot: () => {
-            const reopened = !viewerConnected();
-            lastViewerAt = Date.now();
-            if (reopened) coordinator.markDirty();
+            source.resolveHeaders();
             return coordinator.snapshot();
           },
           state: () => coordinator.state(),
