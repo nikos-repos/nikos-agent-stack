@@ -5139,7 +5139,7 @@ Overall: **PASS for the five requested re-run criteria**, using the binding reso
 | --- | --- | --- |
 | v03 native results/statuses/session data identical across variants | Earlier strict **FAIL**; **PASS normalized re-run** | Earlier child output/status agreed, but native duration/TTFT/task elapsed text and timestamp encodings differed even in absent repeat. With the slice's exact timing/random normalization printed below, absent-repeat passes first, then disabled/enabled/slow/throwCollect/throwBus/incompatible all equal absent. Each normalized full native state has sha256 `bda0ce0bfc35a09854ffb85eb179fe5bc3e4543e0c3187d144520c8f9c6a3354`; all seven native diffs are empty. |
 | v03 one registry listener; nested/restricted child shutdown leaves root epoch unchanged | **PASS** | Real nested/restricted runs, native child extension-runner `session_shutdown` dispatch, unchanged publisher epoch, active/peak listener 1. |
-| v03 no serve means zero observer network/transcript I/O | **PASS re-gated on ae756c9** | `bun <tmp>/gb2-cd7fff0.mjs "$PWD"` exits 0 using committed `ae756c9` and stock-source sha256 `cf18b6a334d12514ae9ac4680e22c3b105c60bfc3469a0bce64d99225613b26b`. Native cold restart/read restores 3 parked, session-less children. No serve: 0 network operations / 0 transcript reads. Serve without any GET: 0 transcript reads. First snapshot request permits exactly 3 header-window reads, each offset 0 / length 4,096 / one per child incarnation; six further HTTP-200 snapshots and a forced reconciliation add 0 reads. Metadata enumeration and logger bookkeeping remain separate. Full sources, diffs and attributable log are appended under “Re-run after cd7fff0”. |
+| v03 no serve means zero observer network/transcript I/O | **PASS re-gated on d9f78a0 (viewer idle window)** | Prior ae756c9 no-serve/cache evidence stands. `bun <tmp>/gb2-d9f78a0-final.mjs "$PWD"` exits 0 on committed `d9f78a0`: initial cold-restored session-less child has 1 header read at first GET +21 ms; no further reads while idle. At +35,003 ms a native task creates `idle-1`; omp's own 2,000-ms TTL parks it, uncached/session-less at +38,220 ms. Five registry callbacks and four collects through +43,302 ms make 0 transcript reads / 0 snapshot requests. Reopening makes exactly 1 read at second GET +72 ms; following HTTP-200 snapshot knows cwd. Both reads: offset 0, buffer offset 0, length 4,096. Closest native alternative is explicitly a natively parked new child, not second cold restoration (settled roster latch prevented reveal/read restoration). Sources, invocations, normalized outputs, phase counts and limits: “Re-run after d9f78a0 (viewer idle window)”. |
 | v03 many-135 callback CPU, heap growth and each collect cost | **PASS** | Enabled run: 540 registry callbacks / 13,535 µs; 270 bus callbacks / 16,769 µs; 38 collects / 105,866 µs; process heap growth 150,981,007 bytes. Every collect's wall/CPU/heap sample is retained. These measure whole collect work, not only registry copying. |
 | v03 exact per-message context roles/lengths/digests | Earlier strict **FAIL**; **PASS normalized re-run** | Earlier initial contexts agreed but raw parent tool-result elapsed text differed, including absent repeat. Re-run applies the same normalization to full request messages before hashing, forwarding original bodies unchanged to the harness stub. All eight variants have four HTTP-200 model requests and ten per-message role/normalized-byte-length/digest records, exactly equal; context sha256 is `06effaec0abf4b9e694fad064aad75c01273073e5cc4121623a0d50d2a66aeee`. Every per-message record is retained. |
 | v03 overflow reason persists, no terminal from partial evidence | Earlier **FAIL**; **PASS re-run** | Earlier many-33: 21 unknown (`fact queue overflow`), 12 unknown (`no lifecycle evidence`); tracker-only next-start seam passed. Re-run queue=2 native many-33 has 33/33 final loss-affected rows with the exact overflow reason; 59 snapshot frames / 1,263 affected-row observations pass the consumed loss/start timeline check. All 33 terminal-only injections preserve the reason; all 33 next-start/terminal pairs then produce completed outcomes, never a terminal before that start. Injection recovery is through the native lifecycle bus on real admitted refs, not a naturally scheduled second assignment. |
@@ -8417,3 +8417,911 @@ bun <tmp>/gb2-evidence-integrity.mjs "$PWD" <tmp>/gb2-cd7fff0-before.md && rm --
 ```
 
 Observed exit 0, stderr empty; stdout is the same `EVIDENCE_INTEGRITY PASS` line above. All throwaway scripts and temporary captured-section files were removed. Each runtime run already removed its profile-owned package copy, control extension, disposable repository and session files through awaited `teardown`, after stopping RPC parents and both local stubs. The copied before-image is retained only as recovery evidence, not as a script or package. The final handoff records the owned unified delta and final evidence checksum; no rollback touches user or sibling changes.
+
+## Re-run after d9f78a0 (viewer idle window) — 2026-09-30
+
+Assigned criterion: nfr-8 after a viewer leaves. Source state: `d9f78a0281b88831fd136c2cff768ad8624ef663`; binding slice snapshot `93CF`; `stock-source-native-scope` governs native admission and per-incarnation header caching. Exclusive write ownership is this evidence file; only the zero-I/O ledger row may change above this appended section.
+
+Exact recovery before-image: `<tmp>/gb2-d9f78a0-before.md`, sha256 `d1f4e182fc84225295d0531f787e9c4a7734e3075131bf7f995c34a3917100f2`. No original evidence is removed. Temporary runners reuse the attributable observer-only fs/network logger from the preceding re-run, adding timestamps; instrumentation touches only a disposable package copy. All omp parents use the harness's disposable startup environment and local stub, in persistent RPC mode. No Orca, formatter, linter, install, project-wide validation, commit or push is run.
+
+### Recorded disposable probe: gb2-d9f78a0.mjs
+
+Exact runner source, sha256 `082c74979ae8a9a22c4a8af9209bd308ea2d7ced282b68d9c0473336ec4580ae`:
+
+```javascript
+import assert from 'node:assert/strict';
+import { cp, readFile, writeFile, rename } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+const repo = process.argv[2], pkg = join(repo, 'omp-orca-observer');
+const { create } = await import(join(pkg, 'checks/harness/profile.ts'));
+const { startStub } = await import(join(pkg, 'checks/harness/stub-provider.ts'));
+const p = await create('cold-restart');
+const normalize = s => s.replaceAll(p.root, '<tmp>/profile').replaceAll(repo, '$PWD').replace(/127\.0\.0\.1:\d+/g, '127.0.0.1:<port>').replace(/\d{4}-\d\d-\d\dT[\d:.]+Z_[a-f0-9-]+/g, '<session>').replace(/--tmp-omp-orca-harness-[A-Za-z0-9]+-workspace--/g, '<workspace-key>');
+const output = (tag, data) => console.log(normalize(tag + ' ' + JSON.stringify(data)));
+const copy = join(p.root, 'observer-copy'), logFile = join(p.root, 'observer-probe.jsonl');
+const instrumentation =`import fs from 'node:fs';
+const root=new URL('../',import.meta.url).pathname;
+const paths=new Map();
+export function log(kind,data={}){fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({atMs:Date.now(),kind,...data})+'\\n');}
+function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
+function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
+export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
+export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
+export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
+export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
+export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+`;
+let rpc, stub, lastGetAt;
+async function launch(extra = []) {
+ const child = p.spawn(['--mode', 'rpc', '--no-title', '--no-lsp', '--extension', join(p.root, 'control.ts'), ...extra]);
+ const events = []; let buffer = '', next = 0, closed = false;
+ const out = (async () => { for await (const bytes of child.stdout) { buffer += new TextDecoder().decode(bytes); let at; while ((at = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, at); buffer = buffer.slice(at + 1); try { events.push(JSON.parse(line)); } catch { events.push({ type: 'nonjson', line }); } } } })();
+ const err = new Response(child.stderr).text();
+ async function wait(pred, from = 0) { const end = Date.now() + 90000; while (Date.now() < end) { const row = events.slice(from).find(pred); if (row) return row; await Bun.sleep(10); } throw Error('RPC timeout ' + JSON.stringify(events.slice(-8))); }
+ async function request(type, data = {}) { const id = 'gb2-idle-' + ++next; child.stdin.write(JSON.stringify({ id, type, ...data }) + '\n'); const response = await wait(e => e.type === 'response' && e.id === id); assert.equal(response.success, true); return response; }
+ async function command(message) { const from = events.length; await request('prompt', { message }); await wait(e => e.type === 'prompt_result', from); return events.slice(from); }
+ await wait(e => e.type === 'ready');
+ return { async report() { const ev = await command('/gb2io'); const note = ev.find(e => e.type === 'extension_ui_request' && e.message?.startsWith('GB2_IO ')); assert(note); return JSON.parse(note.message.slice(7)); }, command, async prompt() { const from = events.length; await request('prompt', { message: 'HARNESS_AGENT=main' }); await wait(e => e.type === 'agent_end', from); return events.slice(from); }, async close() { if (closed) return; closed = true; child.kill(); await child.exited; await out; output('PROCESS_CLOSE', { stderr: await err }); } };
+}
+async function logs() { try { return (await readFile(logFile, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } }
+const reads = rows => rows.filter(r => /^fs\.(readSync|readFileSync|readFile|handle\.read|Bun\.file)$/.test(r.kind) && (r.path?.endsWith('.jsonl') || r.args?.some(a => typeof a === 'string' && a.endsWith('.jsonl'))));
+const refs = report => report.refs.filter(r => r.kind === 'sub');
+const view = report => ({ atSinceLastGetMs: lastGetAt === undefined ? null : Date.now() - lastGetAt, state: report.state, generation: report.snapshot?.generation, inventory: report.snapshot?.inventory, refs: refs(report), cwd: report.snapshot?.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) });
+function capture(phase, rows) { const counts = {}; for (const row of rows) counts[row.kind] = (counts[row.kind] ?? 0) + 1; output('IO_SUMMARY', { phase, transcriptReads: reads(rows).length, counts, collectAtSinceLastGetMs: rows.filter(r => r.kind === 'collect').map(r => r.atMs - lastGetAt), readWindows: reads(rows).map(r => ({ path: r.path, atSinceLastGetMs: r.atMs - lastGetAt, position: r.position, bufferOffset: r.bufferOffset, length: r.length })) }); for (const row of rows.filter(r => r.kind === 'network.request' || reads([r]).length || r.kind === 'registry_callback')) output('ATTRIBUTABLE_IO', { phase, row: { ...row, atMs: undefined, atSinceLastGetMs: row.atMs - lastGetAt } }); }
+const toolEvents = events => events.filter(e => e.type === 'tool_execution_start' || e.type === 'tool_execution_end').map(e => ({ type: e.type, toolName: e.toolName, args: e.args, isError: e.isError, result: e.type === 'tool_execution_end' ? e.result : undefined }));
+function parked(report, count) { assert.equal(refs(report).length, count); for (const ref of refs(report)) { assert.equal(ref.status, 'parked'); assert.equal(ref.hasSession, false); } assert.equal(report.snapshot.children.length, count); }
+try {
+ const revision = Bun.spawn(['git', 'rev-parse', 'HEAD'], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); const head = (await new Response(revision.stdout).text()).trim(); assert.equal(await revision.exited, 0); assert.equal(head, 'd9f78a0281b88831fd136c2cff768ad8624ef663');
+ await cp(pkg, copy, { recursive: true, filter: path => !path.split('/').some(s => ['node_modules', '.git', 'evidence'].includes(s)) });
+ const hashes = {}; for (const file of ['index.ts', 'stock-source.ts', 'coordinator.ts', 'reader.ts', 'transport.ts']) { const text = await readFile(join(copy, file), 'utf8'); assert.equal(text, await readFile(join(pkg, file), 'utf8')); const committed = Bun.spawn(['git', 'show', head + ':omp-orca-observer/' + file], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); assert.equal(text, await new Response(committed.stdout).text()); assert.equal(await committed.exited, 0); hashes[file] = createHash('sha256').update(text).digest('hex'); } output('COPY_SOURCE_STATE', { head, hashes });
+ await writeFile(join(copy, 'gb2-instrument.ts'), instrumentation);
+ const changes = {
+  'stock-source.ts': s => s.replace('import fs from "node:fs";', 'import { observerFs as fs, log } from "./gb2-instrument.ts";').replace('    collect(limit) {', '    collect(limit) {\n      log("collect");').replace('    processCoordinator()?.markDirty();', '    log("registry_callback");\n    processCoordinator()?.markDirty();'),
+  'reader.ts': s => s.replace('import { open } from "node:fs/promises";', 'import { observerOpen as open } from "./gb2-instrument.ts";'),
+  'transport.ts': s => 'import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";\n' + s.replace('Bun.serve(', 'observerServe(').replace('Bun.file(', 'observerFile(').replace('await fetch(', 'await observerFetch(').replace('  async function handle(request: Request): Promise<Response> {', '  async function handle(request: Request): Promise<Response> {\n    log("network.request", { method: request.method, path: new URL(request.url).pathname });'),
+  'coordinator.ts': s => s + '\n// Expose the loaded copy, avoiding duplicate extension-loader module instances.\nglobalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;\n',
+ };
+ for (const [file, change] of Object.entries(changes)) { const before = await readFile(join(copy, file), 'utf8'), after = change(before); assert.notEqual(before, after); await writeFile(join(copy, file), after); }
+ for (const file of [...Object.keys(changes), 'gb2-instrument.ts']) { const diff = Bun.spawn(['diff', '-u', '--label', 'real/' + file, '--label', 'copy/' + file, file === 'gb2-instrument.ts' ? '/dev/null' : join(pkg, file), join(copy, file)], { stdout: 'pipe', stderr: 'pipe' }); console.log(normalize('COPY_DIFF\n' + await new Response(diff.stdout).text())); assert.equal(await diff.exited, 1); assert.equal(await new Response(diff.stderr).text(), ''); }
+ const control = `export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n`;
+ output('CONTROL_SOURCE', control); await writeFile(join(p.root, 'control.ts'), control);
+ const scenario = JSON.parse(await readFile(join(pkg, 'checks/harness/scenarios/cold-restart.json'), 'utf8'));
+ scenario.turns.main.push({ calls: [{ tool: 'read', args: { path: 'agent://restart-1' } }] }, { text: 'first native restoration complete' }, { calls: [{ tool: 'read', args: { path: 'agent://restart-3' } }] }, { text: 'idle native restoration complete' });
+ output('SCENARIO_DELTA', { appendMainTurns: scenario.turns.main.slice(2) });
+ stub = await startStub({ scenario, capture: p.capture }); const models = join(p.home, '.omp/profiles/cold-restart/agent/models.yml'); await writeFile(models, (await readFile(models, 'utf8')).replace(/baseUrl: .*/, 'baseUrl: ' + stub.url));
+ output('VERSION', await p.run(['--version'])); const linked = await p.run(['plugin', 'link', copy]); output('LINK', linked); assert.equal(linked.exitCode, 0);
+ rpc = await launch(); await rpc.prompt(); let before = await rpc.report(); const deadline = Date.now() + 60000; while (refs(before).length !== 3 || refs(before).some(r => r.status === 'running')) { assert(Date.now() < deadline); await Bun.sleep(100); before = await rpc.report(); } output('NATIVE_BEFORE_RESTART', view(before)); await rpc.close();
+ const withheld = refs(before).find(r => r.id === 'restart-3'); assert(withheld); const holding = join(p.root, 'withheld-restart-3.jsonl'); await rename(withheld.sessionFile, holding); output('FIXTURE_WITHHOLD', { from: withheld.sessionFile, to: holding });
+ rpc = await launch(['--resume', before.sessionFile]); const initialEvents = await rpc.prompt(); await Bun.sleep(5500); const a = await rpc.report(); output('INITIAL_NATIVE_RESTORATION', { ...view(a), toolEvents: toolEvents(initialEvents) }); parked(a, 2); assert(initialEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'read' && e.args?.path === 'agent://restart-1'));
+ const phaseA = await logs(); assert.equal(reads(phaseA).length, 0); assert.equal(phaseA.filter(r => r.kind.startsWith('network.')).length, 0); output('PRE_SERVE_COUNTS', { networkOperations: 0, transcriptReads: 0 });
+ const serveEvents = await rpc.command('/observer serve'); const url = serveEvents.find(e => e.type === 'extension_ui_request' && /^http:/.test(e.message ?? ''))?.message; assert(url); await Bun.sleep(5500); const phaseB = await logs(); assert.equal(reads(phaseB).length, 0); assert.equal(phaseB.filter(r => r.kind === 'network.request').length, 0); output('SERVE_WITHOUT_GET_COUNTS', { transcriptReads: 0 });
+ async function get(tag) { const start = Date.now(); const response = await fetch(new URL('/v1/snapshot', url)); assert.equal(response.status, 200); const snapshot = await response.json(); const all = await logs(); lastGetAt = all.findLast(r => r.kind === 'network.request' && r.path === '/v1/snapshot').atMs; output(tag, { requestStartMs: start, responseAtSinceGetMs: Date.now() - lastGetAt, status: response.status, generation: snapshot.generation, cwd: snapshot.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) }); return snapshot; }
+ await get('FIRST_GET'); await Bun.sleep(750); const firstLogs = await logs(); capture('one-GET-header-load', firstLogs.slice(phaseB.length)); const firstReads = reads(firstLogs); assert.equal(firstReads.length, 2); for (const row of firstReads) { assert.equal(row.kind, 'fs.readSync'); assert.equal(row.position, 0); assert.equal(row.bufferOffset, 0); assert.equal(row.length, 4096); assert(refs(a).some(r => r.sessionFile === row.path)); assert.equal(firstReads.filter(r => r.path === row.path).length, 1); }
+ const firstGetAt = lastGetAt; const cached = await rpc.report(); output('CACHED_WITHOUT_ANOTHER_GET', view(cached)); for (const row of cached.snapshot.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace });
+ await Bun.sleep(Math.max(0, 35000 - (Date.now() - lastGetAt))); const preReveal = await logs(); capture('no-poll-wait-through-idle-expiry', preReveal.slice(firstLogs.length)); assert.equal(reads(preReveal.slice(firstLogs.length)).length, 0);
+ output('REVEAL_AT', { atSinceLastGetMs: Date.now() - lastGetAt }); await rename(holding, withheld.sessionFile); const idleEvents = await rpc.prompt(); output('IDLE_NATIVE_READ', { atSinceLastGetMs: Date.now() - lastGetAt, toolEvents: toolEvents(idleEvents) }); assert(idleEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'read' && e.args?.path === 'agent://restart-3'));
+ await Bun.sleep(1250); const idle1 = await rpc.report(); output('IDLE_RECONCILED', view(idle1)); parked(idle1, 3); const uncached = idle1.snapshot.children.find(r => r.childId === 'restart-3'); assert.deepEqual(uncached.lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ await Bun.sleep(5500); const idle2 = await rpc.report(); output('IDLE_FORCED_RECONCILE', view(idle2)); assert(idle2.snapshot.generation > idle1.snapshot.generation); assert.deepEqual(idle2.snapshot.children.find(r => r.childId === 'restart-3').lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ const idleLogs = await logs(), idleDelta = idleLogs.slice(preReveal.length); capture('idle-uncached-native-child', idleDelta); assert.equal(reads(idleDelta).length, 0); assert.equal(idleDelta.filter(r => r.kind === 'network.request').length, 0); assert(idleDelta.filter(r => r.kind === 'registry_callback').length > 0); assert(idleDelta.filter(r => r.kind === 'collect').length >= 2);
+ const reopened = await get('REOPEN_GET'); assert.deepEqual(reopened.children.find(r => r.childId === 'restart-3').lineage.cwd, { known: false, reason: 'cwd not recorded' }); await Bun.sleep(750); const reopenLogs = await logs(); capture('one-reopen-GET-header-load', reopenLogs.slice(idleLogs.length)); const reopenReads = reads(reopenLogs.slice(idleLogs.length)); assert.equal(reopenReads.length, 1); assert.equal(reopenReads[0].path, withheld.sessionFile); assert.equal(reopenReads[0].position, 0); assert.equal(reopenReads[0].bufferOffset, 0); assert.equal(reopenReads[0].length, 4096);
+ const following = await get('FOLLOWING_SNAPSHOT'); for (const row of following.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace }); await Bun.sleep(5500); const finalReport = await rpc.report(); const finalLogs = await logs(); capture('following-snapshot-and-forced-reconcile', finalLogs.slice(reopenLogs.length)); assert.equal(reads(finalLogs).length, 3); assert(finalReport.snapshot.generation > following.generation);
+ output('CRITERION_RESULT', { criterion: 'nfr-8 viewer idle window', result: 'PASS', firstHeaderReads: 2, idleHeaderReads: 0, reopenHeaderReads: 1, totalHeaderReads: 3, idleChild: 'restart-3', firstGetAtMs: firstGetAt, reopenAtSinceFirstGetMs: reopenReads[0].atMs - firstGetAt, snapshotRequests: finalLogs.filter(r => r.kind === 'network.request').length });
+} catch (error) { output('CRITERION_RESULT', { criterion: 'nfr-8 viewer idle window', result: 'FAIL', error: String(error), stack: error instanceof Error ? error.stack : null }); process.exitCode = 1; }
+finally { await rpc?.close(); await stub?.stop(); await p.teardown(); output('CLEANUP', { profileAndCopyRemoved: true, processesAndStubsStopped: true }); }
+```
+
+Exact recorder source:
+
+```javascript
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const [repo, runner, destination] = process.argv.slice(2);
+const source = await readFile(runner, 'utf8'), self = await readFile(process.argv[1], 'utf8');
+const child = Bun.spawn(['bun', runner, repo], { stdout: 'pipe', stderr: 'pipe' });
+const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+const norm = s => s.replaceAll(repo, '$PWD').replaceAll('/tmp/', '<tmp>/');
+const hash = s => createHash('sha256').update(s).digest('hex');
+const text = '\n### Recorded disposable probe: ' + runner.split('/').at(-1) + '\n\nExact runner source, sha256 `' + hash(source) + '`:\n\n```javascript\n' + source + '```\n\nExact recorder source:\n\n```javascript\n' + self + '```\n\nInvocation: `bun ' + norm(process.argv[1]) + ' "$PWD" ' + norm(runner) + ' ' + norm(destination) + '`. It launches `bun ' + norm(runner) + ' "$PWD"`; all writes are temporary. Full normalized output:\n\n```text\n' + norm(stdout) + 'STDERR ' + JSON.stringify(norm(stderr)) + '\nRUNNER_EXIT ' + exitCode + '\n```\n';
+await writeFile(destination, text);
+process.stdout.write(norm(stdout)); console.log('STDERR', JSON.stringify(norm(stderr))); console.log('RUNNER_EXIT', exitCode); console.log('SECTION_SHA256', hash(text)); process.exitCode = exitCode;
+```
+
+Invocation: `bun <tmp>/gb2-d9f78a0-record.mjs "$PWD" <tmp>/gb2-d9f78a0.mjs <tmp>/gb2-d9f78a0-first-section.md`. It launches `bun <tmp>/gb2-d9f78a0.mjs "$PWD"`; all writes are temporary. Full normalized output:
+
+```text
+COPY_SOURCE_STATE {"head":"d9f78a0281b88831fd136c2cff768ad8624ef663","hashes":{"index.ts":"684d001261d2dd2b1e410dc6b8c8c864e9a129b55ba0aecaaff47dd94ca38cfc","stock-source.ts":"cf18b6a334d12514ae9ac4680e22c3b105c60bfc3469a0bce64d99225613b26b","coordinator.ts":"196d7565c21484e2c7747f4b93882b9b3ae2c7f56fe649e02657343be662aec5","reader.ts":"4a8e1f2349f9a2f4a207a1cb520d3ddbcade5cac8dc8d078f20d16ecd22bc0d0","transport.ts":"3f51b670b584ebb9a2ad21b9f587fef616de000c122ec0efd86c161d187f7571"}}
+COPY_DIFF
+--- real/stock-source.ts
++++ copy/stock-source.ts
+@@ -1,4 +1,4 @@
+-import fs from "node:fs";
++import { observerFs as fs, log } from "./gb2-instrument.ts";
+ import { join, relative, resolve, sep } from "node:path";
+ import type { AgentRef, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+ import type { ChildRow, Completeness, Known, OutcomeTracker, SnapshotSource } from "./contract.ts";
+@@ -118,6 +118,7 @@
+     }
+   }
+   const unsubscribe = registry.onChange(() => {
++    log("registry_callback");
+     processCoordinator()?.markDirty();
+   });
+   let disposed = false;
+@@ -155,6 +156,7 @@
+ 
+   return {
+     collect(limit) {
++      log("collect");
+       if (disposed || rootSessionFile === null || artifactRoot === null) {
+         return {
+           rootSession: recorded(rootSessionFile ?? undefined, "no root session file"),
+
+COPY_DIFF
+--- real/reader.ts
++++ copy/reader.ts
+@@ -1,5 +1,5 @@
+ import { createHash } from "node:crypto";
+-import { open } from "node:fs/promises";
++import { observerOpen as open } from "./gb2-instrument.ts";
+ import type { FileHandle } from "node:fs/promises";
+ import { PAGE_MAX_BYTES } from "./contract.ts";
+ import type { ParseSessionContent, ReadRequest, ReadResult } from "./contract.ts";
+
+COPY_DIFF
+--- real/transport.ts
++++ copy/transport.ts
+@@ -1,3 +1,4 @@
++import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";
+ import {
+   PAGE_MAX_BYTES,
+   ROUTES,
+@@ -15,13 +16,14 @@
+     [SCHEMA_HEADER]: String(SNAPSHOT_SCHEMA_VERSION),
+   };
+   const viewerHeaders = { ...headers, "Content-Type": "text/html; charset=utf-8" };
+-  const viewer = Bun.file(new URL("./viewer/index.html", import.meta.url));
++  const viewer = observerFile(new URL("./viewer/index.html", import.meta.url));
+   const marker = ":childId";
+   const markerAt = ROUTES.page.indexOf(marker);
+   const pagePrefix = ROUTES.page.slice(0, markerAt);
+   const pageSuffix = ROUTES.page.slice(markerAt + marker.length);
+ 
+   async function handle(request: Request): Promise<Response> {
++    log("network.request", { method: request.method, path: new URL(request.url).pathname });
+     try {
+       const host = request.headers.get("host");
+       if (host !== numericHost && host !== localHost) {
+@@ -80,7 +82,7 @@
+     }
+   }
+ 
+-  const server = Bun.serve({ hostname: "127.0.0.1", port: options.port, fetch: handle });
++  const server = observerServe({ hostname: "127.0.0.1", port: options.port, fetch: handle });
+   const port = server.port;
+   if (port === undefined) {
+     await server.stop(true);
+
+COPY_DIFF
+--- real/coordinator.ts
++++ copy/coordinator.ts
+@@ -162,3 +162,6 @@
+   active = coordinator;
+   return coordinator;
+ }
++
++// Expose the loaded copy, avoiding duplicate extension-loader module instances.
++globalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;
+
+COPY_DIFF
+--- real/gb2-instrument.ts
++++ copy/gb2-instrument.ts
+@@ -0,0 +1,11 @@
++import fs from 'node:fs';
++const root=new URL('../',import.meta.url).pathname;
++const paths=new Map();
++export function log(kind,data={}){fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({atMs:Date.now(),kind,...data})+'\n');}
++function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
++function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
++export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
++export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
++export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
++export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
++export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+
+CONTROL_SOURCE "export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n"
+SCENARIO_DELTA {"appendMainTurns":[{"calls":[{"tool":"read","args":{"path":"agent://restart-1"}}]},{"text":"first native restoration complete"},{"calls":[{"tool":"read","args":{"path":"agent://restart-3"}}]},{"text":"idle native restoration complete"}]}
+VERSION {"exitCode":0,"stdout":"omp/18.4.4\n","stderr":""}
+LINK {"exitCode":0,"stdout":"✔ Linked omp-orca-observer from <tmp>/profile/observer-copy\n","stderr":""}
+NATIVE_BEFORE_RESTART {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"idle","createdAt":1790820902076,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.jsonl","hasSession":true},{"id":"restart-2","kind":"sub","status":"idle","createdAt":1790820902143,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-2.jsonl","hasSession":true},{"id":"restart-3","kind":"sub","status":"idle","createdAt":1790820902176,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-3.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"restart-2","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"restart-3","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+PROCESS_CLOSE {"stderr":""}
+FIXTURE_WITHHOLD {"from":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-3.jsonl","to":"<tmp>/profile/withheld-restart-3.jsonl"}
+INITIAL_NATIVE_RESTORATION {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790820902063,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.jsonl","hasSession":false},{"id":"restart-2","kind":"sub","status":"parked","createdAt":1790820902132,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-2.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}},{"childId":"restart-2","cwd":{"known":false,"reason":"cwd not recorded"}}],"toolEvents":[{"type":"tool_execution_start","toolName":"read","args":{"path":"agent://restart-1"}},{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"\"persisted child\""}],"details":{"totalLines":1,"displayContent":{"text":"\"persisted child\"","startLine":1,"lineNumbers":[1]},"fileSize":17,"meta":{"source":{"type":"internal","value":"agent://restart-1"}},"resolvedPath":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.md","contentType":"text/markdown"}}}]}
+PRE_SERVE_COUNTS {"networkOperations":0,"transcriptReads":0}
+SERVE_WITHOUT_GET_COUNTS {"transcriptReads":0}
+FIRST_GET {"requestStartMs":1790820915033,"responseAtSinceGetMs":1,"status":200,"generation":3,"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}},{"childId":"restart-2","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-GET-header-load","transcriptReads":2,"counts":{"network.request":1,"collect":1,"fs.openSync":2,"fs.readSync":2,"fs.closeSync":2,"fs.statSync":2,"fs.opendirSync":1,"fs.dir.readSync":6,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[21],"readWindows":[{"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.jsonl","atSinceLastGetMs":22,"position":0,"bufferOffset":0,"length":4096},{"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-2.jsonl","atSinceLastGetMs":22,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":22}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-2.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":22}}
+CACHED_WITHOUT_ANOTHER_GET {"atSinceLastGetMs":765,"state":{"state":"ready"},"generation":4,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790820902063,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.jsonl","hasSession":false},{"id":"restart-2","kind":"sub","status":"parked","createdAt":1790820902132,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-2.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"restart-2","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"no-poll-wait-through-idle-expiry","transcriptReads":0,"counts":{"collect":6,"fs.statSync":12,"fs.opendirSync":6,"fs.dir.readSync":36,"fs.dir.closeSync":6},"collectAtSinceLastGetMs":[5093,10279,15512,20626,25808,30950],"readWindows":[]}
+REVEAL_AT {"atSinceLastGetMs":32685}
+IDLE_NATIVE_READ {"atSinceLastGetMs":32739,"toolEvents":[{"type":"tool_execution_start","toolName":"read","args":{"path":"agent://restart-3"}},{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"\"persisted child\""}],"details":{"totalLines":1,"displayContent":{"text":"\"persisted child\"","startLine":1,"lineNumbers":[1]},"fileSize":17,"meta":{"source":{"type":"internal","value":"agent://restart-3"}},"resolvedPath":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-3.md","contentType":"text/markdown"}}}]}
+IDLE_RECONCILED {"atSinceLastGetMs":34006,"state":{"state":"ready"},"generation":10,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790820902063,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-1.jsonl","hasSession":false},{"id":"restart-2","kind":"sub","status":"parked","createdAt":1790820902132,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-15-01-467Z_01a0f53e-625b-77ea-8465-5d93f82c5322/restart-2.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"restart-2","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+CRITERION_RESULT {"criterion":"nfr-8 viewer idle window","result":"FAIL","error":"AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n2 !== 3\n","stack":"AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n2 !== 3\n\n    at parked (<tmp>/gb2-d9f78a0.mjs:42:41)\n    at <tmp>/gb2-d9f78a0.mjs:73:99\n    at processTicksAndRejections (native:7:39)"}
+PROCESS_CLOSE {"stderr":""}
+CLEANUP {"profileAndCopyRemoved":true,"processesAndStubsStopped":true}
+STDERR ""
+RUNNER_EXIT 1
+```
+
+### Native mechanism and failed reveal probe
+
+The first probe is **not accepted proof** of the idle-child criterion: moving the native `restart-3.jsonl` aside before cold restoration and revealing it after the first GET did not create a third registry ref. The subsequent native `read agent://restart-3` successfully served its persisted output, but the registry still contained only the two originally restored refs (`2 !== 3`, exit 1). No ref was fabricated.
+
+Main granted bounded native-source reads for this question. Inspected dev dependency: `registry/persisted-agents.ts:503-560` latches restoration per root, returning the settled roster while its owned refs remain valid; `internal-urls/agent-protocol.ts:232-236` and `history-protocol.ts:317-329` call that latched restoration. Revealing another transcript alone does not invalidate the owned-ref latch. `registry/persisted-agents.ts:778-815` shows that a fresh scan, when eligible, uses omp's own metadata and `session: null` to register native parked refs. This gate does not force a scan, mutate a latch or synthesize registry inputs.
+
+The closest native alternative, authorized by Main, is a **new task-created child which omp itself parks**, not a second cold-restored child. The initial child remains genuinely cold-restored. Inspected native `task/settings.ts:298-301` registers `task.agentIdleTtlMs` (default 420,000 ms); `registry/agent-lifecycle.ts:168-190,576-585` adopts a finished child and arms the timer which invokes native `park(id)`. The accepted runner sets this existing setting to 2,000 ms only in the disposable profile config, waits more than 35,000 ms since the sole GET, then lets the stub request a real native task. No lifecycle/registry mutation is performed by the control extension. Actual `parked`/session-less refs and uncached cwd are observed before reopening.
+
+All relative timestamps below use the observer logger's `Date.now()` and the attributable snapshot request time, matching `VIEWER_IDLE_MS`'s clock. The first probe's one-shot nominal 35-second sleep observed only 32,685 ms on that clock (still over 30 s); the accepted runner waits until the measured clock itself exceeds 35,000 ms. It reports exact counts, read offset/length, registry callbacks and actual collect times. Control `/gb2io` reports do not call the HTTP snapshot route or reset the viewer window.
+
+### Recorded disposable probe: gb2-d9f78a0-park.mjs
+
+Exact runner source, sha256 `5801f42ba0f9440d58d1c5b2b8c44a32bda85bdf0288048ed47ff879d4705fc7`:
+
+```javascript
+import assert from 'node:assert/strict';
+import { cp, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+const repo = process.argv[2], pkg = join(repo, 'omp-orca-observer');
+const { create } = await import(join(pkg, 'checks/harness/profile.ts'));
+const { startStub } = await import(join(pkg, 'checks/harness/stub-provider.ts'));
+const p = await create('cold-restart');
+const normalize = s => s.replaceAll(p.root, '<tmp>/profile').replaceAll(repo, '$PWD').replace(/127\.0\.0\.1:\d+/g, '127.0.0.1:<port>').replace(/\d{4}-\d\d-\d\dT[\d:.]+Z_[a-f0-9-]+/g, '<session>').replace(/--tmp-omp-orca-harness-[A-Za-z0-9]+-workspace--/g, '<workspace-key>');
+const output = (tag, data) => console.log(normalize(tag + ' ' + JSON.stringify(data)));
+const copy = join(p.root, 'observer-copy'), logFile = join(p.root, 'observer-probe.jsonl');
+const instrumentation =`import fs from 'node:fs';
+const root=new URL('../',import.meta.url).pathname;
+const paths=new Map();
+export function log(kind,data={}){fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({atMs:Date.now(),kind,...data})+'\\n');}
+function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
+function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
+export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
+export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
+export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
+export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
+export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+`;
+let rpc, stub, lastGetAt;
+async function launch(extra = []) {
+ const child = p.spawn(['--mode', 'rpc', '--no-title', '--no-lsp', '--extension', join(p.root, 'control.ts'), ...extra]);
+ const events = []; let buffer = '', next = 0, closed = false;
+ const out = (async () => { for await (const bytes of child.stdout) { buffer += new TextDecoder().decode(bytes); let at; while ((at = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, at); buffer = buffer.slice(at + 1); try { events.push(JSON.parse(line)); } catch { events.push({ type: 'nonjson', line }); } } } })();
+ const err = new Response(child.stderr).text();
+ async function wait(pred, from = 0) { const end = Date.now() + 90000; while (Date.now() < end) { const row = events.slice(from).find(pred); if (row) return row; await Bun.sleep(10); } throw Error('RPC timeout ' + JSON.stringify(events.slice(-8))); }
+ async function request(type, data = {}) { const id = 'gb2-idle-' + ++next; child.stdin.write(JSON.stringify({ id, type, ...data }) + '\n'); const response = await wait(e => e.type === 'response' && e.id === id); assert.equal(response.success, true); return response; }
+ async function command(message) { const from = events.length; await request('prompt', { message }); await wait(e => e.type === 'prompt_result', from); return events.slice(from); }
+ await wait(e => e.type === 'ready');
+ return { async report() { const ev = await command('/gb2io'); const note = ev.find(e => e.type === 'extension_ui_request' && e.message?.startsWith('GB2_IO ')); assert(note); return JSON.parse(note.message.slice(7)); }, command, async prompt() { const from = events.length; await request('prompt', { message: 'HARNESS_AGENT=main' }); await wait(e => e.type === 'agent_end', from); return events.slice(from); }, async close() { if (closed) return; closed = true; child.kill(); await child.exited; await out; output('PROCESS_CLOSE', { stderr: await err }); } };
+}
+async function logs() { try { return (await readFile(logFile, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } }
+const reads = rows => rows.filter(r => /^fs\.(readSync|readFileSync|readFile|handle\.read|Bun\.file)$/.test(r.kind) && (r.path?.endsWith('.jsonl') || r.args?.some(a => typeof a === 'string' && a.endsWith('.jsonl'))));
+const refs = report => report.refs.filter(r => r.kind === 'sub');
+const view = report => ({ atSinceLastGetMs: lastGetAt === undefined ? null : Date.now() - lastGetAt, state: report.state, generation: report.snapshot?.generation, inventory: report.snapshot?.inventory, refs: refs(report), cwd: report.snapshot?.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) });
+function capture(phase, rows) { const counts = {}; for (const row of rows) counts[row.kind] = (counts[row.kind] ?? 0) + 1; output('IO_SUMMARY', { phase, transcriptReads: reads(rows).length, counts, collectAtSinceLastGetMs: rows.filter(r => r.kind === 'collect').map(r => r.atMs - lastGetAt), readWindows: reads(rows).map(r => ({ path: r.path, atSinceLastGetMs: r.atMs - lastGetAt, position: r.position, bufferOffset: r.bufferOffset, length: r.length })) }); for (const row of rows.filter(r => r.kind === 'network.request' || reads([r]).length || r.kind === 'registry_callback')) output('ATTRIBUTABLE_IO', { phase, row: { ...row, atMs: undefined, atSinceLastGetMs: row.atMs - lastGetAt } }); }
+const toolEvents = events => events.filter(e => e.type === 'tool_execution_start' || e.type === 'tool_execution_end').map(e => ({ type: e.type, toolName: e.toolName, args: e.args, isError: e.isError, result: e.type === 'tool_execution_end' ? e.result : undefined }));
+function parked(report, count) { assert.equal(refs(report).length, count); for (const ref of refs(report)) { assert.equal(ref.status, 'parked'); assert.equal(ref.hasSession, false); } assert.equal(report.snapshot.children.length, count); }
+try {
+ const revision = Bun.spawn(['git', 'rev-parse', 'HEAD'], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); const head = (await new Response(revision.stdout).text()).trim(); assert.equal(await revision.exited, 0); assert.equal(head, 'd9f78a0281b88831fd136c2cff768ad8624ef663');
+ await cp(pkg, copy, { recursive: true, filter: path => !path.split('/').some(s => ['node_modules', '.git', 'evidence'].includes(s)) });
+ const hashes = {}; for (const file of ['index.ts', 'stock-source.ts', 'coordinator.ts', 'reader.ts', 'transport.ts']) { const text = await readFile(join(copy, file), 'utf8'); assert.equal(text, await readFile(join(pkg, file), 'utf8')); const committed = Bun.spawn(['git', 'show', head + ':omp-orca-observer/' + file], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); assert.equal(text, await new Response(committed.stdout).text()); assert.equal(await committed.exited, 0); hashes[file] = createHash('sha256').update(text).digest('hex'); } output('COPY_SOURCE_STATE', { head, hashes });
+ await writeFile(join(copy, 'gb2-instrument.ts'), instrumentation);
+ const changes = {
+  'stock-source.ts': s => s.replace('import fs from "node:fs";', 'import { observerFs as fs, log } from "./gb2-instrument.ts";').replace('    collect(limit) {', '    collect(limit) {\n      log("collect");').replace('    processCoordinator()?.markDirty();', '    log("registry_callback");\n    processCoordinator()?.markDirty();'),
+  'reader.ts': s => s.replace('import { open } from "node:fs/promises";', 'import { observerOpen as open } from "./gb2-instrument.ts";'),
+  'transport.ts': s => 'import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";\n' + s.replace('Bun.serve(', 'observerServe(').replace('Bun.file(', 'observerFile(').replace('await fetch(', 'await observerFetch(').replace('  async function handle(request: Request): Promise<Response> {', '  async function handle(request: Request): Promise<Response> {\n    log("network.request", { method: request.method, path: new URL(request.url).pathname });'),
+  'coordinator.ts': s => s + '\n// Expose the loaded copy, avoiding duplicate extension-loader module instances.\nglobalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;\n',
+ };
+ for (const [file, change] of Object.entries(changes)) { const before = await readFile(join(copy, file), 'utf8'), after = change(before); assert.notEqual(before, after); await writeFile(join(copy, file), after); }
+ for (const file of [...Object.keys(changes), 'gb2-instrument.ts']) { const diff = Bun.spawn(['diff', '-u', '--label', 'real/' + file, '--label', 'copy/' + file, file === 'gb2-instrument.ts' ? '/dev/null' : join(pkg, file), join(copy, file)], { stdout: 'pipe', stderr: 'pipe' }); console.log(normalize('COPY_DIFF\n' + await new Response(diff.stdout).text())); assert.equal(await diff.exited, 1); assert.equal(await new Response(diff.stderr).text(), ''); }
+ const control = `export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n`;
+ output('CONTROL_SOURCE', control); await writeFile(join(p.root, 'control.ts'), control);
+ const scenario = JSON.parse(await readFile(join(pkg, 'checks/harness/scenarios/cold-restart.json'), 'utf8'));
+ scenario.turns.main[0].fanout.count = 1;
+ scenario.turns.main.push({ calls: [{ tool: 'read', args: { path: 'agent://restart-1' } }] }, { text: 'first native restoration complete' }, { fanout: { count: 1, prefix: 'idle-', agent: 'task' } }, { text: 'idle child spawned natively' });
+ output('SCENARIO_DELTA', { firstFanoutCount: 1, appendMainTurns: scenario.turns.main.slice(2) });
+ const configPath = join(p.home, '.omp/profiles/cold-restart/agent/config.yml');
+ const config = JSON.parse(await readFile(configPath, 'utf8'));
+ config.task.agentIdleTtlMs = 2000;
+ await writeFile(configPath, JSON.stringify(config));
+ output('DISPOSABLE_NATIVE_SETTING', { key: 'task.agentIdleTtlMs', value: 2000 });
+ stub = await startStub({ scenario, capture: p.capture }); const models = join(p.home, '.omp/profiles/cold-restart/agent/models.yml'); await writeFile(models, (await readFile(models, 'utf8')).replace(/baseUrl: .*/, 'baseUrl: ' + stub.url));
+ output('VERSION', await p.run(['--version'])); const linked = await p.run(['plugin', 'link', copy]); output('LINK', linked); assert.equal(linked.exitCode, 0);
+ rpc = await launch(); await rpc.prompt(); let before = await rpc.report(); const deadline = Date.now() + 60000; while (refs(before).length !== 1 || refs(before).some(r => r.status === 'running')) { assert(Date.now() < deadline); await Bun.sleep(100); before = await rpc.report(); } output('NATIVE_BEFORE_RESTART', view(before)); await rpc.close();
+ rpc = await launch(['--resume', before.sessionFile]); const initialEvents = await rpc.prompt(); await Bun.sleep(5500); const a = await rpc.report(); output('INITIAL_NATIVE_RESTORATION', { ...view(a), toolEvents: toolEvents(initialEvents) }); parked(a, 1); assert(initialEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'read' && e.args?.path === 'agent://restart-1'));
+ const phaseA = await logs(); assert.equal(reads(phaseA).length, 0); assert.equal(phaseA.filter(r => r.kind.startsWith('network.')).length, 0); output('PRE_SERVE_COUNTS', { networkOperations: 0, transcriptReads: 0 });
+ const serveEvents = await rpc.command('/observer serve'); const url = serveEvents.find(e => e.type === 'extension_ui_request' && /^http:/.test(e.message ?? ''))?.message; assert(url); await Bun.sleep(5500); const phaseB = await logs(); assert.equal(reads(phaseB).length, 0); assert.equal(phaseB.filter(r => r.kind === 'network.request').length, 0); output('SERVE_WITHOUT_GET_COUNTS', { transcriptReads: 0 });
+ async function get(tag) { const start = Date.now(); const response = await fetch(new URL('/v1/snapshot', url)); assert.equal(response.status, 200); const snapshot = await response.json(); const all = await logs(); lastGetAt = all.findLast(r => r.kind === 'network.request' && r.path === '/v1/snapshot').atMs; output(tag, { requestStartMs: start, responseAtSinceGetMs: Date.now() - lastGetAt, status: response.status, generation: snapshot.generation, cwd: snapshot.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) }); return snapshot; }
+ await get('FIRST_GET'); await Bun.sleep(750); const firstLogs = await logs(); capture('one-GET-header-load', firstLogs.slice(phaseB.length)); const firstReads = reads(firstLogs); assert.equal(firstReads.length, 1); for (const row of firstReads) { assert.equal(row.kind, 'fs.readSync'); assert.equal(row.position, 0); assert.equal(row.bufferOffset, 0); assert.equal(row.length, 4096); assert(refs(a).some(r => r.sessionFile === row.path)); assert.equal(firstReads.filter(r => r.path === row.path).length, 1); }
+ const firstGetAt = lastGetAt; const cached = await rpc.report(); output('CACHED_WITHOUT_ANOTHER_GET', view(cached)); for (const row of cached.snapshot.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace });
+ while (Date.now() - lastGetAt < 35000) await Bun.sleep(Math.max(10, 35000 - (Date.now() - lastGetAt)));
+ const preSpawn = await logs(); capture('no-poll-wait-through-idle-expiry', preSpawn.slice(firstLogs.length)); assert.equal(reads(preSpawn.slice(firstLogs.length)).length, 0);
+ output('NATIVE_SPAWN_AT', { atSinceLastGetMs: Date.now() - lastGetAt }); const idleEvents = await rpc.prompt(); output('IDLE_NATIVE_TASK', { atSinceLastGetMs: Date.now() - lastGetAt, toolEvents: toolEvents(idleEvents) }); assert(idleEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'task'));
+ let idle1 = await rpc.report(); const parkedDeadline = Date.now() + 30000;
+ while (!refs(idle1).some(r => r.id === 'idle-1' && r.status === 'parked' && !r.hasSession) || idle1.snapshot.children.find(r => r.childId === 'idle-1')?.lineage.cwd.known !== false) { assert(Date.now() < parkedDeadline, 'native idle TTL parks child'); output('NATIVE_PARK_SAMPLE', view(idle1)); await Bun.sleep(300); idle1 = await rpc.report(); }
+ output('IDLE_RECONCILED', view(idle1)); parked(idle1, 2); const newChild = refs(idle1).find(r => r.id === 'idle-1'); const uncached = idle1.snapshot.children.find(r => r.childId === 'idle-1'); assert.deepEqual(uncached.lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ await Bun.sleep(5500); const idle2 = await rpc.report(); output('IDLE_FORCED_RECONCILE', view(idle2)); assert(idle2.snapshot.generation > idle1.snapshot.generation); assert.deepEqual(idle2.snapshot.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ const idleLogs = await logs(), idleDelta = idleLogs.slice(preSpawn.length); capture('idle-uncached-native-child', idleDelta); assert.equal(reads(idleDelta).length, 0); assert.equal(idleDelta.filter(r => r.kind === 'network.request').length, 0); assert(idleDelta.filter(r => r.kind === 'registry_callback').length > 0); assert(idleDelta.filter(r => r.kind === 'collect').length >= 2);
+ const reopened = await get('REOPEN_GET'); assert.deepEqual(reopened.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' }); await Bun.sleep(750); const reopenLogs = await logs(); capture('one-reopen-GET-header-load', reopenLogs.slice(idleLogs.length)); const reopenReads = reads(reopenLogs.slice(idleLogs.length)); assert.equal(reopenReads.length, 1); assert.equal(reopenReads[0].path, newChild.sessionFile); assert.equal(reopenReads[0].position, 0); assert.equal(reopenReads[0].bufferOffset, 0); assert.equal(reopenReads[0].length, 4096);
+ const following = await get('FOLLOWING_SNAPSHOT'); for (const row of following.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace }); await Bun.sleep(5500); const finalReport = await rpc.report(); const finalLogs = await logs(); capture('following-snapshot-and-forced-reconcile', finalLogs.slice(reopenLogs.length)); assert.equal(reads(finalLogs).length, 2); assert(finalReport.snapshot.generation > following.generation);
+ output('CRITERION_RESULT', { criterion: 'nfr-8 viewer idle window', result: 'PASS', firstHeaderReads: 1, idleHeaderReads: 0, reopenHeaderReads: 1, totalHeaderReads: 2, idleChild: 'idle-1', idleChildMechanism: 'native task followed by native TTL parking, not cold restoration', firstGetAtMs: firstGetAt, reopenAtSinceFirstGetMs: reopenReads[0].atMs - firstGetAt, snapshotRequests: finalLogs.filter(r => r.kind === 'network.request').length });
+} catch (error) { output('CRITERION_RESULT', { criterion: 'nfr-8 viewer idle window', result: 'FAIL', error: String(error), stack: error instanceof Error ? error.stack : null }); process.exitCode = 1; }
+finally { await rpc?.close(); await stub?.stop(); await p.teardown(); output('CLEANUP', { profileAndCopyRemoved: true, processesAndStubsStopped: true }); }
+```
+
+Exact recorder source:
+
+```javascript
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const [repo, runner, destination] = process.argv.slice(2);
+const source = await readFile(runner, 'utf8'), self = await readFile(process.argv[1], 'utf8');
+const child = Bun.spawn(['bun', runner, repo], { stdout: 'pipe', stderr: 'pipe' });
+const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+const norm = s => s.replaceAll(repo, '$PWD').replaceAll('/tmp/', '<tmp>/');
+const hash = s => createHash('sha256').update(s).digest('hex');
+const text = '\n### Recorded disposable probe: ' + runner.split('/').at(-1) + '\n\nExact runner source, sha256 `' + hash(source) + '`:\n\n```javascript\n' + source + '```\n\nExact recorder source:\n\n```javascript\n' + self + '```\n\nInvocation: `bun ' + norm(process.argv[1]) + ' "$PWD" ' + norm(runner) + ' ' + norm(destination) + '`. It launches `bun ' + norm(runner) + ' "$PWD"`; all writes are temporary. Full normalized output:\n\n```text\n' + norm(stdout) + 'STDERR ' + JSON.stringify(norm(stderr)) + '\nRUNNER_EXIT ' + exitCode + '\n```\n';
+await writeFile(destination, text);
+process.stdout.write(norm(stdout)); console.log('STDERR', JSON.stringify(norm(stderr))); console.log('RUNNER_EXIT', exitCode); console.log('SECTION_SHA256', hash(text)); process.exitCode = exitCode;
+```
+
+Invocation: `bun <tmp>/gb2-d9f78a0-record.mjs "$PWD" <tmp>/gb2-d9f78a0-park.mjs <tmp>/gb2-d9f78a0-park-section.md`. It launches `bun <tmp>/gb2-d9f78a0-park.mjs "$PWD"`; all writes are temporary. Full normalized output:
+
+```text
+COPY_SOURCE_STATE {"head":"d9f78a0281b88831fd136c2cff768ad8624ef663","hashes":{"index.ts":"684d001261d2dd2b1e410dc6b8c8c864e9a129b55ba0aecaaff47dd94ca38cfc","stock-source.ts":"cf18b6a334d12514ae9ac4680e22c3b105c60bfc3469a0bce64d99225613b26b","coordinator.ts":"196d7565c21484e2c7747f4b93882b9b3ae2c7f56fe649e02657343be662aec5","reader.ts":"4a8e1f2349f9a2f4a207a1cb520d3ddbcade5cac8dc8d078f20d16ecd22bc0d0","transport.ts":"3f51b670b584ebb9a2ad21b9f587fef616de000c122ec0efd86c161d187f7571"}}
+COPY_DIFF
+--- real/stock-source.ts
++++ copy/stock-source.ts
+@@ -1,4 +1,4 @@
+-import fs from "node:fs";
++import { observerFs as fs, log } from "./gb2-instrument.ts";
+ import { join, relative, resolve, sep } from "node:path";
+ import type { AgentRef, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+ import type { ChildRow, Completeness, Known, OutcomeTracker, SnapshotSource } from "./contract.ts";
+@@ -118,6 +118,7 @@
+     }
+   }
+   const unsubscribe = registry.onChange(() => {
++    log("registry_callback");
+     processCoordinator()?.markDirty();
+   });
+   let disposed = false;
+@@ -155,6 +156,7 @@
+ 
+   return {
+     collect(limit) {
++      log("collect");
+       if (disposed || rootSessionFile === null || artifactRoot === null) {
+         return {
+           rootSession: recorded(rootSessionFile ?? undefined, "no root session file"),
+
+COPY_DIFF
+--- real/reader.ts
++++ copy/reader.ts
+@@ -1,5 +1,5 @@
+ import { createHash } from "node:crypto";
+-import { open } from "node:fs/promises";
++import { observerOpen as open } from "./gb2-instrument.ts";
+ import type { FileHandle } from "node:fs/promises";
+ import { PAGE_MAX_BYTES } from "./contract.ts";
+ import type { ParseSessionContent, ReadRequest, ReadResult } from "./contract.ts";
+
+COPY_DIFF
+--- real/transport.ts
++++ copy/transport.ts
+@@ -1,3 +1,4 @@
++import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";
+ import {
+   PAGE_MAX_BYTES,
+   ROUTES,
+@@ -15,13 +16,14 @@
+     [SCHEMA_HEADER]: String(SNAPSHOT_SCHEMA_VERSION),
+   };
+   const viewerHeaders = { ...headers, "Content-Type": "text/html; charset=utf-8" };
+-  const viewer = Bun.file(new URL("./viewer/index.html", import.meta.url));
++  const viewer = observerFile(new URL("./viewer/index.html", import.meta.url));
+   const marker = ":childId";
+   const markerAt = ROUTES.page.indexOf(marker);
+   const pagePrefix = ROUTES.page.slice(0, markerAt);
+   const pageSuffix = ROUTES.page.slice(markerAt + marker.length);
+ 
+   async function handle(request: Request): Promise<Response> {
++    log("network.request", { method: request.method, path: new URL(request.url).pathname });
+     try {
+       const host = request.headers.get("host");
+       if (host !== numericHost && host !== localHost) {
+@@ -80,7 +82,7 @@
+     }
+   }
+ 
+-  const server = Bun.serve({ hostname: "127.0.0.1", port: options.port, fetch: handle });
++  const server = observerServe({ hostname: "127.0.0.1", port: options.port, fetch: handle });
+   const port = server.port;
+   if (port === undefined) {
+     await server.stop(true);
+
+COPY_DIFF
+--- real/coordinator.ts
++++ copy/coordinator.ts
+@@ -162,3 +162,6 @@
+   active = coordinator;
+   return coordinator;
+ }
++
++// Expose the loaded copy, avoiding duplicate extension-loader module instances.
++globalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;
+
+COPY_DIFF
+--- real/gb2-instrument.ts
++++ copy/gb2-instrument.ts
+@@ -0,0 +1,11 @@
++import fs from 'node:fs';
++const root=new URL('../',import.meta.url).pathname;
++const paths=new Map();
++export function log(kind,data={}){fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({atMs:Date.now(),kind,...data})+'\n');}
++function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
++function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
++export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
++export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
++export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
++export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
++export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+
+CONTROL_SOURCE "export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n"
+SCENARIO_DELTA {"firstFanoutCount":1,"appendMainTurns":[{"calls":[{"tool":"read","args":{"path":"agent://restart-1"}}]},{"text":"first native restoration complete"},{"fanout":{"count":1,"prefix":"idle-","agent":"task"}},{"text":"idle child spawned natively"}]}
+DISPOSABLE_NATIVE_SETTING {"key":"task.agentIdleTtlMs","value":2000}
+VERSION {"exitCode":0,"stdout":"omp/18.4.4\n","stderr":""}
+LINK {"exitCode":0,"stdout":"✔ Linked omp-orca-observer from <tmp>/profile/observer-copy\n","stderr":""}
+NATIVE_BEFORE_RESTART {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"idle","createdAt":1790821053661,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+PROCESS_CLOSE {"stderr":""}
+INITIAL_NATIVE_RESTORATION {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}}],"toolEvents":[{"type":"tool_execution_start","toolName":"read","args":{"path":"agent://restart-1"}},{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"\"persisted child\""}],"details":{"totalLines":1,"displayContent":{"text":"\"persisted child\"","startLine":1,"lineNumbers":[1]},"fileSize":17,"meta":{"source":{"type":"internal","value":"agent://restart-1"}},"resolvedPath":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.md","contentType":"text/markdown"}}}]}
+PRE_SERVE_COUNTS {"networkOperations":0,"transcriptReads":0}
+SERVE_WITHOUT_GET_COUNTS {"transcriptReads":0}
+FIRST_GET {"requestStartMs":1790821066561,"responseAtSinceGetMs":1,"status":200,"generation":3,"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-GET-header-load","transcriptReads":1,"counts":{"network.request":1,"collect":1,"fs.openSync":1,"fs.readSync":1,"fs.closeSync":1,"fs.statSync":1,"fs.opendirSync":1,"fs.dir.readSync":3,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[180],"readWindows":[{"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","atSinceLastGetMs":180,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":180}}
+CACHED_WITHOUT_ANOTHER_GET {"atSinceLastGetMs":779,"state":{"state":"ready"},"generation":4,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"no-poll-wait-through-idle-expiry","transcriptReads":0,"counts":{"collect":6,"fs.statSync":6,"fs.opendirSync":6,"fs.dir.readSync":18,"fs.dir.closeSync":6},"collectAtSinceLastGetMs":[5259,10340,15370,20440,25477,30547],"readWindows":[]}
+NATIVE_SPAWN_AT {"atSinceLastGetMs":35004}
+IDLE_NATIVE_TASK {"atSinceLastGetMs":35069,"toolEvents":[{"type":"tool_execution_start","toolName":"task","args":{"context":"Run each assigned harness child independently.","tasks":[{"name":"idle-1","agent":"task","task":"HARNESS_AGENT=child/idle-1 complete the harness assignment.","solutionSpace":"Reply with the assigned child's result."}]}},{"type":"tool_execution_end","toolName":"task","isError":false,"result":{"content":[{"type":"text","text":"Spawned agent `idle-1` (job `idle-1`).\n\nResults auto-deliver; NEVER poll. Completely blocked? Call `wait` to receive the first settled job or peer message.\nCoordinate while peers run via `write agent://<id>` (or `agent://all` to broadcast).\n\n`read proc://` lists jobs/services; `read proc://<id>` inspects status/output without consuming delivery. `write proc://<id>/kill` cancels/stops; omit `content`.\n\nJob IDs are process-local; delivered results expire shortly (~30s), unconsumed results within ~5min. Agent output/transcripts remain readable at `agent://<id>` / `history://<id>`. `write agent://<id>` messages a live agent.\n\n`completed`: subagent yielded successfully; claimed artifacts unverified."}],"details":{"projectAgentsDir":null,"results":[],"totalDurationMs":0,"progress":[{"index":0,"id":"idle-1","agent":"task","agentSource":"bundled","modelRole":"task","status":"pending","task":"Complete assignment thoroughly:\n\nHARNESS_AGENT=child/idle-1 complete the harness assignment.","assignment":"HARNESS_AGENT=child/idle-1 complete the harness assignment.","recentTools":[],"recentOutput":[],"toolCount":0,"requests":0,"tokens":0,"cost":0,"durationMs":0}],"async":{"state":"running","jobId":"idle-1","type":"task"}}}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":35080,"state":{"state":"ready"},"generation":10,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":35391,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":35704,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36028,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36340,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36653,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36966,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":37282,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":37600,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":37917,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IDLE_RECONCILED {"atSinceLastGetMs":38236,"state":{"state":"ready"},"generation":13,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IDLE_FORCED_RECONCILE {"atSinceLastGetMs":43749,"state":{"state":"ready"},"generation":14,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821053647,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790821101646,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"idle-uncached-native-child","transcriptReads":0,"counts":{"registry_callback":5,"collect":4,"fs.statSync":8,"fs.opendirSync":4,"fs.dir.readSync":19,"fs.dir.closeSync":4},"collectAtSinceLastGetMs":[35154,36161,38185,43218],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":35082}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":36151}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":36152}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":36154}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":38154}}
+REOPEN_GET {"requestStartMs":1790821110314,"responseAtSinceGetMs":1,"status":200,"generation":14,"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-reopen-GET-header-load","transcriptReads":1,"counts":{"network.request":1,"collect":1,"fs.statSync":2,"fs.openSync":1,"fs.readSync":1,"fs.closeSync":1,"fs.opendirSync":1,"fs.dir.readSync":5,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[224],"readWindows":[{"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","atSinceLastGetMs":224,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-17-33-392Z_01a0f540-b3d0-7658-9732-9ee10fd25014/idle-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":224}}
+FOLLOWING_SNAPSHOT {"requestStartMs":1790821111067,"responseAtSinceGetMs":0,"status":200,"generation":15,"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"following-snapshot-and-forced-reconcile","transcriptReads":0,"counts":{"network.request":1},"collectAtSinceLastGetMs":[],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"following-snapshot-and-forced-reconcile","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+CRITERION_RESULT {"criterion":"nfr-8 viewer idle window","result":"FAIL","error":"AssertionError [ERR_ASSERTION]: false == true","stack":"AssertionError [ERR_ASSERTION]: false == true\n    at <tmp>/gb2-d9f78a0-park.mjs:85:388\n    at processTicksAndRejections (native:7:39)"}
+PROCESS_CLOSE {"stderr":""}
+CLEANUP {"profileAndCopyRemoved":true,"processesAndStubsStopped":true}
+STDERR ""
+RUNNER_EXIT 1
+```
+
+The preceding parking probe exercised all three requested read phases and following-snapshot cwd successfully, but still exited 1: a separate final cache-check assumed that one 5,500-ms sleep guaranteed an additional reconcile generation. It observed none. The final runner below preserves that assertion and every read-count/cwd assertion, replacing that incidental sleep with a bounded wait for an actually observed newer generation. No production behavior or expected output is changed.
+
+### Recorded disposable probe: gb2-d9f78a0-final.mjs
+
+Exact runner source, sha256 `5ea66f50327e869de211f3bb7984eb223fa54266bfd3d88d271a2e4ecd9c1c57`:
+
+```javascript
+import assert from 'node:assert/strict';
+import { cp, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+const repo = process.argv[2], pkg = join(repo, 'omp-orca-observer');
+const { create } = await import(join(pkg, 'checks/harness/profile.ts'));
+const { startStub } = await import(join(pkg, 'checks/harness/stub-provider.ts'));
+const p = await create('cold-restart');
+const normalize = s => s.replaceAll(p.root, '<tmp>/profile').replaceAll(repo, '$PWD').replace(/127\.0\.0\.1:\d+/g, '127.0.0.1:<port>').replace(/\d{4}-\d\d-\d\dT[\d:.]+Z_[a-f0-9-]+/g, '<session>').replace(/--tmp-omp-orca-harness-[A-Za-z0-9]+-workspace--/g, '<workspace-key>');
+const output = (tag, data) => console.log(normalize(tag + ' ' + JSON.stringify(data)));
+const copy = join(p.root, 'observer-copy'), logFile = join(p.root, 'observer-probe.jsonl');
+const instrumentation =`import fs from 'node:fs';
+const root=new URL('../',import.meta.url).pathname;
+const paths=new Map();
+export function log(kind,data={}){fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({atMs:Date.now(),kind,...data})+'\\n');}
+function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
+function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
+export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
+export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
+export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
+export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
+export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+`;
+let rpc, stub, lastGetAt;
+async function launch(extra = []) {
+ const child = p.spawn(['--mode', 'rpc', '--no-title', '--no-lsp', '--extension', join(p.root, 'control.ts'), ...extra]);
+ const events = []; let buffer = '', next = 0, closed = false;
+ const out = (async () => { for await (const bytes of child.stdout) { buffer += new TextDecoder().decode(bytes); let at; while ((at = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, at); buffer = buffer.slice(at + 1); try { events.push(JSON.parse(line)); } catch { events.push({ type: 'nonjson', line }); } } } })();
+ const err = new Response(child.stderr).text();
+ async function wait(pred, from = 0) { const end = Date.now() + 90000; while (Date.now() < end) { const row = events.slice(from).find(pred); if (row) return row; await Bun.sleep(10); } throw Error('RPC timeout ' + JSON.stringify(events.slice(-8))); }
+ async function request(type, data = {}) { const id = 'gb2-idle-' + ++next; child.stdin.write(JSON.stringify({ id, type, ...data }) + '\n'); const response = await wait(e => e.type === 'response' && e.id === id); assert.equal(response.success, true); return response; }
+ async function command(message) { const from = events.length; await request('prompt', { message }); await wait(e => e.type === 'prompt_result', from); return events.slice(from); }
+ await wait(e => e.type === 'ready');
+ return { async report() { const ev = await command('/gb2io'); const note = ev.find(e => e.type === 'extension_ui_request' && e.message?.startsWith('GB2_IO ')); assert(note); return JSON.parse(note.message.slice(7)); }, command, async prompt() { const from = events.length; await request('prompt', { message: 'HARNESS_AGENT=main' }); await wait(e => e.type === 'agent_end', from); return events.slice(from); }, async close() { if (closed) return; closed = true; child.kill(); await child.exited; await out; output('PROCESS_CLOSE', { stderr: await err }); } };
+}
+async function logs() { try { return (await readFile(logFile, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse); } catch (e) { if (e.code === 'ENOENT') return []; throw e; } }
+const reads = rows => rows.filter(r => /^fs\.(readSync|readFileSync|readFile|handle\.read|Bun\.file)$/.test(r.kind) && (r.path?.endsWith('.jsonl') || r.args?.some(a => typeof a === 'string' && a.endsWith('.jsonl'))));
+const refs = report => report.refs.filter(r => r.kind === 'sub');
+const view = report => ({ atSinceLastGetMs: lastGetAt === undefined ? null : Date.now() - lastGetAt, state: report.state, generation: report.snapshot?.generation, inventory: report.snapshot?.inventory, refs: refs(report), cwd: report.snapshot?.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) });
+function capture(phase, rows) { const counts = {}; for (const row of rows) counts[row.kind] = (counts[row.kind] ?? 0) + 1; output('IO_SUMMARY', { phase, transcriptReads: reads(rows).length, counts, collectAtSinceLastGetMs: rows.filter(r => r.kind === 'collect').map(r => r.atMs - lastGetAt), readWindows: reads(rows).map(r => ({ path: r.path, atSinceLastGetMs: r.atMs - lastGetAt, position: r.position, bufferOffset: r.bufferOffset, length: r.length })) }); for (const row of rows.filter(r => r.kind === 'network.request' || reads([r]).length || r.kind === 'registry_callback')) output('ATTRIBUTABLE_IO', { phase, row: { ...row, atMs: undefined, atSinceLastGetMs: row.atMs - lastGetAt } }); }
+const toolEvents = events => events.filter(e => e.type === 'tool_execution_start' || e.type === 'tool_execution_end').map(e => ({ type: e.type, toolName: e.toolName, args: e.args, isError: e.isError, result: e.type === 'tool_execution_end' ? e.result : undefined }));
+function parked(report, count) { assert.equal(refs(report).length, count); for (const ref of refs(report)) { assert.equal(ref.status, 'parked'); assert.equal(ref.hasSession, false); } assert.equal(report.snapshot.children.length, count); }
+try {
+ const revision = Bun.spawn(['git', 'rev-parse', 'HEAD'], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); const head = (await new Response(revision.stdout).text()).trim(); assert.equal(await revision.exited, 0); assert.equal(head, 'd9f78a0281b88831fd136c2cff768ad8624ef663');
+ await cp(pkg, copy, { recursive: true, filter: path => !path.split('/').some(s => ['node_modules', '.git', 'evidence'].includes(s)) });
+ const hashes = {}; for (const file of ['index.ts', 'stock-source.ts', 'coordinator.ts', 'reader.ts', 'transport.ts']) { const text = await readFile(join(copy, file), 'utf8'); assert.equal(text, await readFile(join(pkg, file), 'utf8')); const committed = Bun.spawn(['git', 'show', head + ':omp-orca-observer/' + file], { cwd: repo, stdout: 'pipe', stderr: 'pipe' }); assert.equal(text, await new Response(committed.stdout).text()); assert.equal(await committed.exited, 0); hashes[file] = createHash('sha256').update(text).digest('hex'); } output('COPY_SOURCE_STATE', { head, hashes });
+ await writeFile(join(copy, 'gb2-instrument.ts'), instrumentation);
+ const changes = {
+  'stock-source.ts': s => s.replace('import fs from "node:fs";', 'import { observerFs as fs, log } from "./gb2-instrument.ts";').replace('    collect(limit) {', '    collect(limit) {\n      log("collect");').replace('    processCoordinator()?.markDirty();', '    log("registry_callback");\n    processCoordinator()?.markDirty();'),
+  'reader.ts': s => s.replace('import { open } from "node:fs/promises";', 'import { observerOpen as open } from "./gb2-instrument.ts";'),
+  'transport.ts': s => 'import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";\n' + s.replace('Bun.serve(', 'observerServe(').replace('Bun.file(', 'observerFile(').replace('await fetch(', 'await observerFetch(').replace('  async function handle(request: Request): Promise<Response> {', '  async function handle(request: Request): Promise<Response> {\n    log("network.request", { method: request.method, path: new URL(request.url).pathname });'),
+  'coordinator.ts': s => s + '\n// Expose the loaded copy, avoiding duplicate extension-loader module instances.\nglobalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;\n',
+ };
+ for (const [file, change] of Object.entries(changes)) { const before = await readFile(join(copy, file), 'utf8'), after = change(before); assert.notEqual(before, after); await writeFile(join(copy, file), after); }
+ for (const file of [...Object.keys(changes), 'gb2-instrument.ts']) { const diff = Bun.spawn(['diff', '-u', '--label', 'real/' + file, '--label', 'copy/' + file, file === 'gb2-instrument.ts' ? '/dev/null' : join(pkg, file), join(copy, file)], { stdout: 'pipe', stderr: 'pipe' }); console.log(normalize('COPY_DIFF\n' + await new Response(diff.stdout).text())); assert.equal(await diff.exited, 1); assert.equal(await new Response(diff.stderr).text(), ''); }
+ const control = `export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n`;
+ output('CONTROL_SOURCE', control); await writeFile(join(p.root, 'control.ts'), control);
+ const scenario = JSON.parse(await readFile(join(pkg, 'checks/harness/scenarios/cold-restart.json'), 'utf8'));
+ scenario.turns.main[0].fanout.count = 1;
+ scenario.turns.main.push({ calls: [{ tool: 'read', args: { path: 'agent://restart-1' } }] }, { text: 'first native restoration complete' }, { fanout: { count: 1, prefix: 'idle-', agent: 'task' } }, { text: 'idle child spawned natively' });
+ output('SCENARIO_DELTA', { firstFanoutCount: 1, appendMainTurns: scenario.turns.main.slice(2) });
+ const configPath = join(p.home, '.omp/profiles/cold-restart/agent/config.yml');
+ const config = JSON.parse(await readFile(configPath, 'utf8'));
+ config.task.agentIdleTtlMs = 2000;
+ await writeFile(configPath, JSON.stringify(config));
+ output('DISPOSABLE_NATIVE_SETTING', { key: 'task.agentIdleTtlMs', value: 2000 });
+ stub = await startStub({ scenario, capture: p.capture }); const models = join(p.home, '.omp/profiles/cold-restart/agent/models.yml'); await writeFile(models, (await readFile(models, 'utf8')).replace(/baseUrl: .*/, 'baseUrl: ' + stub.url));
+ output('VERSION', await p.run(['--version'])); const linked = await p.run(['plugin', 'link', copy]); output('LINK', linked); assert.equal(linked.exitCode, 0);
+ rpc = await launch(); await rpc.prompt(); let before = await rpc.report(); const deadline = Date.now() + 60000; while (refs(before).length !== 1 || refs(before).some(r => r.status === 'running')) { assert(Date.now() < deadline); await Bun.sleep(100); before = await rpc.report(); } output('NATIVE_BEFORE_RESTART', view(before)); await rpc.close();
+ rpc = await launch(['--resume', before.sessionFile]); const initialEvents = await rpc.prompt(); await Bun.sleep(5500); const a = await rpc.report(); output('INITIAL_NATIVE_RESTORATION', { ...view(a), toolEvents: toolEvents(initialEvents) }); parked(a, 1); assert(initialEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'read' && e.args?.path === 'agent://restart-1'));
+ const phaseA = await logs(); assert.equal(reads(phaseA).length, 0); assert.equal(phaseA.filter(r => r.kind.startsWith('network.')).length, 0); output('PRE_SERVE_COUNTS', { networkOperations: 0, transcriptReads: 0 });
+ const serveEvents = await rpc.command('/observer serve'); const url = serveEvents.find(e => e.type === 'extension_ui_request' && /^http:/.test(e.message ?? ''))?.message; assert(url); await Bun.sleep(5500); const phaseB = await logs(); assert.equal(reads(phaseB).length, 0); assert.equal(phaseB.filter(r => r.kind === 'network.request').length, 0); output('SERVE_WITHOUT_GET_COUNTS', { transcriptReads: 0 });
+ async function get(tag) { const start = Date.now(); const response = await fetch(new URL('/v1/snapshot', url)); assert.equal(response.status, 200); const snapshot = await response.json(); const all = await logs(); lastGetAt = all.findLast(r => r.kind === 'network.request' && r.path === '/v1/snapshot').atMs; output(tag, { requestStartMs: start, responseAtSinceGetMs: Date.now() - lastGetAt, status: response.status, generation: snapshot.generation, cwd: snapshot.children.map(r => ({ childId: r.childId, cwd: r.lineage.cwd })) }); return snapshot; }
+ await get('FIRST_GET'); await Bun.sleep(750); const firstLogs = await logs(); capture('one-GET-header-load', firstLogs.slice(phaseB.length)); const firstReads = reads(firstLogs); assert.equal(firstReads.length, 1); for (const row of firstReads) { assert.equal(row.kind, 'fs.readSync'); assert.equal(row.position, 0); assert.equal(row.bufferOffset, 0); assert.equal(row.length, 4096); assert(refs(a).some(r => r.sessionFile === row.path)); assert.equal(firstReads.filter(r => r.path === row.path).length, 1); }
+ const firstGetAt = lastGetAt; const cached = await rpc.report(); output('CACHED_WITHOUT_ANOTHER_GET', view(cached)); for (const row of cached.snapshot.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace });
+ while (Date.now() - lastGetAt < 35000) await Bun.sleep(Math.max(10, 35000 - (Date.now() - lastGetAt)));
+ const preSpawn = await logs(); capture('no-poll-wait-through-idle-expiry', preSpawn.slice(firstLogs.length)); assert.equal(reads(preSpawn.slice(firstLogs.length)).length, 0);
+ output('NATIVE_SPAWN_AT', { atSinceLastGetMs: Date.now() - lastGetAt }); const idleEvents = await rpc.prompt(); output('IDLE_NATIVE_TASK', { atSinceLastGetMs: Date.now() - lastGetAt, toolEvents: toolEvents(idleEvents) }); assert(idleEvents.some(e => e.type === 'tool_execution_start' && e.toolName === 'task'));
+ let idle1 = await rpc.report(); const parkedDeadline = Date.now() + 30000;
+ while (!refs(idle1).some(r => r.id === 'idle-1' && r.status === 'parked' && !r.hasSession) || idle1.snapshot.children.find(r => r.childId === 'idle-1')?.lineage.cwd.known !== false) { assert(Date.now() < parkedDeadline, 'native idle TTL parks child'); output('NATIVE_PARK_SAMPLE', view(idle1)); await Bun.sleep(300); idle1 = await rpc.report(); }
+ output('IDLE_RECONCILED', view(idle1)); parked(idle1, 2); const newChild = refs(idle1).find(r => r.id === 'idle-1'); const uncached = idle1.snapshot.children.find(r => r.childId === 'idle-1'); assert.deepEqual(uncached.lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ await Bun.sleep(5500); const idle2 = await rpc.report(); output('IDLE_FORCED_RECONCILE', view(idle2)); assert(idle2.snapshot.generation > idle1.snapshot.generation); assert.deepEqual(idle2.snapshot.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' });
+ const idleLogs = await logs(), idleDelta = idleLogs.slice(preSpawn.length); capture('idle-uncached-native-child', idleDelta); assert.equal(reads(idleDelta).length, 0); assert.equal(idleDelta.filter(r => r.kind === 'network.request').length, 0); assert(idleDelta.filter(r => r.kind === 'registry_callback').length > 0); assert(idleDelta.filter(r => r.kind === 'collect').length >= 2);
+ const reopened = await get('REOPEN_GET'); assert.deepEqual(reopened.children.find(r => r.childId === 'idle-1').lineage.cwd, { known: false, reason: 'cwd not recorded' }); await Bun.sleep(750); const reopenLogs = await logs(); capture('one-reopen-GET-header-load', reopenLogs.slice(idleLogs.length)); const reopenReads = reads(reopenLogs.slice(idleLogs.length)); assert.equal(reopenReads.length, 1); assert.equal(reopenReads[0].path, newChild.sessionFile); assert.equal(reopenReads[0].position, 0); assert.equal(reopenReads[0].bufferOffset, 0); assert.equal(reopenReads[0].length, 4096);
+ const following = await get('FOLLOWING_SNAPSHOT'); for (const row of following.children) assert.deepEqual(row.lineage.cwd, { known: true, value: p.workspace });
+ let finalReport = await rpc.report(); const reconcileDeadline = Date.now() + 30000;
+ while (finalReport.snapshot.generation <= following.generation) { assert(Date.now() < reconcileDeadline, 'forced reconcile observed'); await Bun.sleep(300); finalReport = await rpc.report(); }
+ output('FINAL_FORCED_RECONCILE', view(finalReport)); const finalLogs = await logs(); capture('following-snapshot-and-forced-reconcile', finalLogs.slice(reopenLogs.length)); assert.equal(reads(finalLogs).length, 2); assert(finalReport.snapshot.generation > following.generation);
+ output('CRITERION_RESULT', { criterion: 'nfr-8 viewer idle window', result: 'PASS', firstHeaderReads: 1, idleHeaderReads: 0, reopenHeaderReads: 1, totalHeaderReads: 2, idleChild: 'idle-1', idleChildMechanism: 'native task followed by native TTL parking, not cold restoration', firstGetAtMs: firstGetAt, reopenAtSinceFirstGetMs: reopenReads[0].atMs - firstGetAt, snapshotRequests: finalLogs.filter(r => r.kind === 'network.request').length });
+} catch (error) { output('CRITERION_RESULT', { criterion: 'nfr-8 viewer idle window', result: 'FAIL', error: String(error), stack: error instanceof Error ? error.stack : null }); process.exitCode = 1; }
+finally { await rpc?.close(); await stub?.stop(); await p.teardown(); output('CLEANUP', { profileAndCopyRemoved: true, processesAndStubsStopped: true }); }
+```
+
+Exact recorder source:
+
+```javascript
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+const [repo, runner, destination] = process.argv.slice(2);
+const source = await readFile(runner, 'utf8'), self = await readFile(process.argv[1], 'utf8');
+const child = Bun.spawn(['bun', runner, repo], { stdout: 'pipe', stderr: 'pipe' });
+const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+const norm = s => s.replaceAll(repo, '$PWD').replaceAll('/tmp/', '<tmp>/');
+const hash = s => createHash('sha256').update(s).digest('hex');
+const text = '\n### Recorded disposable probe: ' + runner.split('/').at(-1) + '\n\nExact runner source, sha256 `' + hash(source) + '`:\n\n```javascript\n' + source + '```\n\nExact recorder source:\n\n```javascript\n' + self + '```\n\nInvocation: `bun ' + norm(process.argv[1]) + ' "$PWD" ' + norm(runner) + ' ' + norm(destination) + '`. It launches `bun ' + norm(runner) + ' "$PWD"`; all writes are temporary. Full normalized output:\n\n```text\n' + norm(stdout) + 'STDERR ' + JSON.stringify(norm(stderr)) + '\nRUNNER_EXIT ' + exitCode + '\n```\n';
+await writeFile(destination, text);
+process.stdout.write(norm(stdout)); console.log('STDERR', JSON.stringify(norm(stderr))); console.log('RUNNER_EXIT', exitCode); console.log('SECTION_SHA256', hash(text)); process.exitCode = exitCode;
+```
+
+Invocation: `bun <tmp>/gb2-d9f78a0-record.mjs "$PWD" <tmp>/gb2-d9f78a0-final.mjs <tmp>/gb2-d9f78a0-final-section.md`. It launches `bun <tmp>/gb2-d9f78a0-final.mjs "$PWD"`; all writes are temporary. Full normalized output:
+
+```text
+COPY_SOURCE_STATE {"head":"d9f78a0281b88831fd136c2cff768ad8624ef663","hashes":{"index.ts":"684d001261d2dd2b1e410dc6b8c8c864e9a129b55ba0aecaaff47dd94ca38cfc","stock-source.ts":"cf18b6a334d12514ae9ac4680e22c3b105c60bfc3469a0bce64d99225613b26b","coordinator.ts":"196d7565c21484e2c7747f4b93882b9b3ae2c7f56fe649e02657343be662aec5","reader.ts":"4a8e1f2349f9a2f4a207a1cb520d3ddbcade5cac8dc8d078f20d16ecd22bc0d0","transport.ts":"3f51b670b584ebb9a2ad21b9f587fef616de000c122ec0efd86c161d187f7571"}}
+COPY_DIFF
+--- real/stock-source.ts
++++ copy/stock-source.ts
+@@ -1,4 +1,4 @@
+-import fs from "node:fs";
++import { observerFs as fs, log } from "./gb2-instrument.ts";
+ import { join, relative, resolve, sep } from "node:path";
+ import type { AgentRef, ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+ import type { ChildRow, Completeness, Known, OutcomeTracker, SnapshotSource } from "./contract.ts";
+@@ -118,6 +118,7 @@
+     }
+   }
+   const unsubscribe = registry.onChange(() => {
++    log("registry_callback");
+     processCoordinator()?.markDirty();
+   });
+   let disposed = false;
+@@ -155,6 +156,7 @@
+ 
+   return {
+     collect(limit) {
++      log("collect");
+       if (disposed || rootSessionFile === null || artifactRoot === null) {
+         return {
+           rootSession: recorded(rootSessionFile ?? undefined, "no root session file"),
+
+COPY_DIFF
+--- real/reader.ts
++++ copy/reader.ts
+@@ -1,5 +1,5 @@
+ import { createHash } from "node:crypto";
+-import { open } from "node:fs/promises";
++import { observerOpen as open } from "./gb2-instrument.ts";
+ import type { FileHandle } from "node:fs/promises";
+ import { PAGE_MAX_BYTES } from "./contract.ts";
+ import type { ParseSessionContent, ReadRequest, ReadResult } from "./contract.ts";
+
+COPY_DIFF
+--- real/transport.ts
++++ copy/transport.ts
+@@ -1,3 +1,4 @@
++import { observerServe, observerFile, observerFetch, log } from "./gb2-instrument.ts";
+ import {
+   PAGE_MAX_BYTES,
+   ROUTES,
+@@ -15,13 +16,14 @@
+     [SCHEMA_HEADER]: String(SNAPSHOT_SCHEMA_VERSION),
+   };
+   const viewerHeaders = { ...headers, "Content-Type": "text/html; charset=utf-8" };
+-  const viewer = Bun.file(new URL("./viewer/index.html", import.meta.url));
++  const viewer = observerFile(new URL("./viewer/index.html", import.meta.url));
+   const marker = ":childId";
+   const markerAt = ROUTES.page.indexOf(marker);
+   const pagePrefix = ROUTES.page.slice(0, markerAt);
+   const pageSuffix = ROUTES.page.slice(markerAt + marker.length);
+ 
+   async function handle(request: Request): Promise<Response> {
++    log("network.request", { method: request.method, path: new URL(request.url).pathname });
+     try {
+       const host = request.headers.get("host");
+       if (host !== numericHost && host !== localHost) {
+@@ -80,7 +82,7 @@
+     }
+   }
+ 
+-  const server = Bun.serve({ hostname: "127.0.0.1", port: options.port, fetch: handle });
++  const server = observerServe({ hostname: "127.0.0.1", port: options.port, fetch: handle });
+   const port = server.port;
+   if (port === undefined) {
+     await server.stop(true);
+
+COPY_DIFF
+--- real/coordinator.ts
++++ copy/coordinator.ts
+@@ -162,3 +162,6 @@
+   active = coordinator;
+   return coordinator;
+ }
++
++// Expose the loaded copy, avoiding duplicate extension-loader module instances.
++globalThis[Symbol.for("gb2.io.coordinator")] = processCoordinator;
+
+COPY_DIFF
+--- real/gb2-instrument.ts
++++ copy/gb2-instrument.ts
+@@ -0,0 +1,11 @@
++import fs from 'node:fs';
++const root=new URL('../',import.meta.url).pathname;
++const paths=new Map();
++export function log(kind,data={}){fs.appendFileSync(root+'observer-probe.jsonl',JSON.stringify({atMs:Date.now(),kind,...data})+'\n');}
++function argsView(args){return args.map(a=>typeof a==='string'||typeof a==='number'?a:typeof a);}
++function wrapped(value,kind,path){if(!value||typeof value!=='object')return value;return new Proxy(value,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log(kind+'.'+String(k),{path,args:argsView(args),...(k==='read'?{bufferOffset:args[1],length:args[2],position:args[3]}:{})});return v.apply(t,args);};}});}
++export const observerFs=new Proxy(fs,{get(t,k){const v=Reflect.get(t,k);if(typeof v!=='function')return v;return (...args)=>{log('fs.'+String(k),{args:argsView(args),...(k==='readSync'?{path:paths.get(args[0]),bufferOffset:args[2],length:args[3],position:args[4]}:{})});const result=v.apply(t,args);if(k==='openSync')paths.set(result,String(args[0]));if(k==='closeSync')paths.delete(args[0]);return k==='opendirSync'?wrapped(result,'fs.dir',String(args[0])):result;};}});
++export async function observerOpen(...args){log('fs.open',{args:argsView(args)});return wrapped(await fs.promises.open(...args),'fs.handle',String(args[0]));}
++export function observerServe(...args){log('network.serve');return Bun.serve(...args);}
++export function observerFile(...args){log('fs.Bun.file',{args:args.map(String)});return Bun.file(...args);}
++export function observerFetch(...args){log('network.fetch',{args:args.map(String)});return fetch(...args);}
+
+CONTROL_SOURCE "export default function(api){api.registerCommand('gb2io',{description:'Disposable I/O observation',handler:(_,ctx)=>{const c=globalThis[Symbol.for('gb2.io.coordinator')]?.();const refs=api.pi.AgentRegistry.global().list().map(r=>({id:r.id,kind:r.kind,status:r.status,createdAt:r.createdAt,sessionFile:r.sessionFile,hasSession:!!r.session}));ctx.ui.notify('GB2_IO '+JSON.stringify({state:c?.state(),snapshot:c?.snapshot(),refs,sessionFile:ctx.sessionManager.getSessionFile()}),'info');}});}\n"
+SCENARIO_DELTA {"firstFanoutCount":1,"appendMainTurns":[{"calls":[{"tool":"read","args":{"path":"agent://restart-1"}}]},{"text":"first native restoration complete"},{"fanout":{"count":1,"prefix":"idle-","agent":"task"}},{"text":"idle child spawned natively"}]}
+DISPOSABLE_NATIVE_SETTING {"key":"task.agentIdleTtlMs","value":2000}
+VERSION {"exitCode":0,"stdout":"omp/18.4.4\n","stderr":""}
+LINK {"exitCode":0,"stdout":"✔ Linked omp-orca-observer from <tmp>/profile/observer-copy\n","stderr":""}
+NATIVE_BEFORE_RESTART {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":1,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"idle","createdAt":1790821215664,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+PROCESS_CLOSE {"stderr":""}
+INITIAL_NATIVE_RESTORATION {"atSinceLastGetMs":null,"state":{"state":"ready"},"generation":2,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}}],"toolEvents":[{"type":"tool_execution_start","toolName":"read","args":{"path":"agent://restart-1"}},{"type":"tool_execution_end","toolName":"read","isError":false,"result":{"content":[{"type":"text","text":"\"persisted child\""}],"details":{"totalLines":1,"displayContent":{"text":"\"persisted child\"","startLine":1,"lineNumbers":[1]},"fileSize":17,"meta":{"source":{"type":"internal","value":"agent://restart-1"}},"resolvedPath":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.md","contentType":"text/markdown"}}}]}
+PRE_SERVE_COUNTS {"networkOperations":0,"transcriptReads":0}
+SERVE_WITHOUT_GET_COUNTS {"transcriptReads":0}
+FIRST_GET {"requestStartMs":1790821228409,"responseAtSinceGetMs":1,"status":200,"generation":3,"cwd":[{"childId":"restart-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-GET-header-load","transcriptReads":1,"counts":{"network.request":1,"collect":1,"fs.openSync":1,"fs.readSync":1,"fs.closeSync":1,"fs.statSync":1,"fs.opendirSync":1,"fs.dir.readSync":3,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[20],"readWindows":[{"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","atSinceLastGetMs":21,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-GET-header-load","row":{"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":21}}
+CACHED_WITHOUT_ANOTHER_GET {"atSinceLastGetMs":776,"state":{"state":"ready"},"generation":4,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"no-poll-wait-through-idle-expiry","transcriptReads":0,"counts":{"collect":6,"fs.statSync":6,"fs.opendirSync":6,"fs.dir.readSync":18,"fs.dir.closeSync":6},"collectAtSinceLastGetMs":[5082,10125,15253,20328,25554,30624],"readWindows":[]}
+NATIVE_SPAWN_AT {"atSinceLastGetMs":35003}
+IDLE_NATIVE_TASK {"atSinceLastGetMs":35066,"toolEvents":[{"type":"tool_execution_start","toolName":"task","args":{"context":"Run each assigned harness child independently.","tasks":[{"name":"idle-1","agent":"task","task":"HARNESS_AGENT=child/idle-1 complete the harness assignment.","solutionSpace":"Reply with the assigned child's result."}]}},{"type":"tool_execution_end","toolName":"task","isError":false,"result":{"content":[{"type":"text","text":"Spawned agent `idle-1` (job `idle-1`).\n\nResults auto-deliver; NEVER poll. Completely blocked? Call `wait` to receive the first settled job or peer message.\nCoordinate while peers run via `write agent://<id>` (or `agent://all` to broadcast).\n\n`read proc://` lists jobs/services; `read proc://<id>` inspects status/output without consuming delivery. `write proc://<id>/kill` cancels/stops; omit `content`.\n\nJob IDs are process-local; delivered results expire shortly (~30s), unconsumed results within ~5min. Agent output/transcripts remain readable at `agent://<id>` / `history://<id>`. `write agent://<id>` messages a live agent.\n\n`completed`: subagent yielded successfully; claimed artifacts unverified."}],"details":{"projectAgentsDir":null,"results":[],"totalDurationMs":0,"progress":[{"index":0,"id":"idle-1","agent":"task","agentSource":"bundled","modelRole":"task","status":"pending","task":"Complete assignment thoroughly:\n\nHARNESS_AGENT=child/idle-1 complete the harness assignment.","assignment":"HARNESS_AGENT=child/idle-1 complete the harness assignment.","recentTools":[],"recentOutput":[],"toolCount":0,"requests":0,"tokens":0,"cost":0,"durationMs":0}],"async":{"state":"running","jobId":"idle-1","type":"task"}}}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":35077,"state":{"state":"ready"},"generation":10,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":35395,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":35707,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36022,"state":{"state":"ready"},"generation":11,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"running","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36334,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36657,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":36970,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":37282,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":37595,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+NATIVE_PARK_SAMPLE {"atSinceLastGetMs":37908,"state":{"state":"ready"},"generation":12,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"idle","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":true}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IDLE_RECONCILED {"atSinceLastGetMs":38220,"state":{"state":"ready"},"generation":13,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IDLE_FORCED_RECONCILE {"atSinceLastGetMs":43732,"state":{"state":"ready"},"generation":14,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"idle-uncached-native-child","transcriptReads":0,"counts":{"registry_callback":5,"collect":4,"fs.statSync":8,"fs.opendirSync":4,"fs.dir.readSync":19,"fs.dir.closeSync":4},"collectAtSinceLastGetMs":[35139,36168,38195,43302],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":35082}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":36148}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":36149}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":36150}}
+ATTRIBUTABLE_IO {"phase":"idle-uncached-native-child","row":{"kind":"registry_callback","atSinceLastGetMs":38156}}
+REOPEN_GET {"requestStartMs":1790821272155,"responseAtSinceGetMs":1,"status":200,"generation":14,"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":false,"reason":"cwd not recorded"}}]}
+IO_SUMMARY {"phase":"one-reopen-GET-header-load","transcriptReads":1,"counts":{"network.request":1,"collect":1,"fs.statSync":2,"fs.openSync":1,"fs.readSync":1,"fs.closeSync":1,"fs.opendirSync":1,"fs.dir.readSync":5,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[72],"readWindows":[{"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","atSinceLastGetMs":72,"position":0,"bufferOffset":0,"length":4096}]}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+ATTRIBUTABLE_IO {"phase":"one-reopen-GET-header-load","row":{"kind":"fs.readSync","args":[40,"object",0,4096,0],"path":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","bufferOffset":0,"length":4096,"position":0,"atSinceLastGetMs":72}}
+FOLLOWING_SNAPSHOT {"requestStartMs":1790821272909,"responseAtSinceGetMs":0,"status":200,"generation":15,"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+FINAL_FORCED_RECONCILE {"atSinceLastGetMs":4739,"state":{"state":"ready"},"generation":16,"inventory":{"state":"complete"},"refs":[{"id":"restart-1","kind":"sub","status":"parked","createdAt":1790821215652,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/restart-1.jsonl","hasSession":false},{"id":"idle-1","kind":"sub","status":"parked","createdAt":1790821263504,"sessionFile":"<tmp>/profile/home/.omp/profiles/cold-restart/agent/sessions/<workspace-key>/2026-10-01T02-20-15-452Z_01a0f543-2cdc-75eb-a7c5-a83ab00521d1/idle-1.jsonl","hasSession":false}],"cwd":[{"childId":"restart-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}},{"childId":"idle-1","cwd":{"known":true,"value":"<tmp>/profile/workspace"}}]}
+IO_SUMMARY {"phase":"following-snapshot-and-forced-reconcile","transcriptReads":0,"counts":{"network.request":1,"collect":1,"fs.statSync":2,"fs.opendirSync":1,"fs.dir.readSync":5,"fs.dir.closeSync":1},"collectAtSinceLastGetMs":[4418],"readWindows":[]}
+ATTRIBUTABLE_IO {"phase":"following-snapshot-and-forced-reconcile","row":{"kind":"network.request","method":"GET","path":"/v1/snapshot","atSinceLastGetMs":0}}
+CRITERION_RESULT {"criterion":"nfr-8 viewer idle window","result":"PASS","firstHeaderReads":1,"idleHeaderReads":0,"reopenHeaderReads":1,"totalHeaderReads":2,"idleChild":"idle-1","idleChildMechanism":"native task followed by native TTL parking, not cold restoration","firstGetAtMs":1790821228422,"reopenAtSinceFirstGetMs":43805,"snapshotRequests":3}
+PROCESS_CLOSE {"stderr":""}
+CLEANUP {"profileAndCopyRemoved":true,"processesAndStubsStopped":true}
+STDERR ""
+RUNNER_EXIT 0
+```
+
+### Verdict and exact phase counts
+
+**PASS on committed d9f78a0 for the authorized native-parking alternative.** The initial ref is cold-restored; the newly uncached ref is native task-created and then parked by omp, not a fabricated or cold-restored replacement. Native reveal/read could not admit another child because the settled roster remained valid; that failed attempt is retained above. No claim is made for forced roster invalidation, same-id replacement, or a second cold-restoration within this unchanged publisher.
+
+| Phase | Observer transcript reads | Window / relative timing |
+| --- | ---: | --- |
+| Before serve; serve with no snapshot GET | 0 / 0 | No header reads; initial native restoration verified parked/session-less. |
+| First and only initial GET | 1 | `restart-1.jsonl`, offset 0, buffer offset 0, requested length 4,096, at GET +21 ms. |
+| No polling through viewer expiry | 0 | Six collects at first GET +5,082 / 10,125 / 15,253 / 20,328 / 25,554 / 30,624 ms. |
+| Uncached native child while idle | 0 | Spawn requested +35,003 ms; parked/session-less with unknown cwd +38,220 ms; five dirtying registry callbacks; four collects +35,139 / 36,168 / 38,195 / 43,302 ms; no HTTP requests. |
+| One reopening GET | 1 | `idle-1.jsonl`, offset 0, buffer offset 0, requested length 4,096, second GET +72 ms (first GET +43,805 ms). |
+| Following snapshot and observed forced reconcile | 0 | HTTP 200, generation 15 knows both cwds; generation 16 adds no reads. |
+
+Total: exactly two header reads, one per uncached session-less child; exactly three snapshot requests, none between the first and reopening GET. Requested read lengths, not inferred returned-byte counts, are recorded. Directory enumeration, tombstone stats and logger bookkeeping are not transcript reads; native task/history/provider I/O is outside the observer-only wrappers. The gate proves the backend snapshot/cwd surface, not an Orca or browser UI.
+
+### Bootstrap runtime discovery (not a gate run)
+
+Invocation: `bun <tmp>/gb2-native-shape.mjs "$PWD"`, exit 0. Exact source:
+
+```javascript
+import assert from 'node:assert/strict';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+const repo = process.argv[2], pkg = join(repo, 'omp-orca-observer');
+const { create } = await import(join(pkg, 'checks/harness/profile.ts'));
+const p = await create('cold-restart');
+let child;
+try {
+ const extension = `export default function(api){api.registerCommand('native-shape',{description:'Disposable runtime inspection',handler:(_,ctx)=>{const registry=api.pi.AgentRegistry.global();ctx.ui.notify('NATIVE_SHAPE '+JSON.stringify({registryMethods:Object.getOwnPropertyNames(Object.getPrototypeOf(registry)),registryStatic:Object.getOwnPropertyNames(api.pi.AgentRegistry),registryKeys:Object.keys(registry),ctxKeys:Object.keys(ctx),apiPiKeys:Object.keys(api.pi)}),'info');}});}\n`;
+ console.log('CONTROL_SOURCE', JSON.stringify(extension));
+ await writeFile(join(p.root, 'control.ts'), extension);
+ child = p.spawn(['--mode', 'rpc', '--no-title', '--no-lsp', '--extension', join(p.root, 'control.ts')]);
+ const events = []; let buffer = '';
+ const out = (async () => { for await (const bytes of child.stdout) { buffer += new TextDecoder().decode(bytes); let at; while ((at = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, at); buffer = buffer.slice(at + 1); events.push(JSON.parse(line)); } } })();
+ const err = new Response(child.stderr).text();
+ async function wait(pred) { const end = Date.now() + 30000; while (Date.now() < end) { const row = events.find(pred); if (row) return row; await Bun.sleep(20); } throw Error('RPC timeout'); }
+ await wait(e => e.type === 'ready');
+ child.stdin.write(JSON.stringify({ id: 'shape', type: 'prompt', message: '/native-shape' }) + '\n');
+ console.log(JSON.stringify(await wait(e => e.type === 'extension_ui_request' && e.message?.startsWith('NATIVE_SHAPE '))));
+ child.kill(); await child.exited; await out; console.log('STDERR', JSON.stringify(await err));
+} finally { child?.kill(); await child?.exited; await p.teardown(); console.log('CLEANUP profile removed'); }
+```
+
+Complete output (no machine paths or ports present):
+
+```text
+CONTROL_SOURCE "export default function(api){api.registerCommand('native-shape',{description:'Disposable runtime inspection',handler:(_,ctx)=>{const registry=api.pi.AgentRegistry.global();ctx.ui.notify('NATIVE_SHAPE '+JSON.stringify({registryMethods:Object.getOwnPropertyNames(Object.getPrototypeOf(registry)),registryStatic:Object.getOwnPropertyNames(api.pi.AgentRegistry),registryKeys:Object.keys(registry),ctxKeys:Object.keys(ctx),apiPiKeys:Object.keys(api.pi)}),'info');}});}\n"
+{"type":"extension_ui_request","id":"15949cbde6ed1975","method":"notify","message":"NATIVE_SHAPE {\"registryMethods\":[\"constructor\",\"register\",\"registerIfAvailable\",\"setHistory\",\"setStatus\",\"markResultAccepted\",\"staleAcceptedRuns\",\"setActivity\",\"attachSession\",\"detachSession\",\"unregister\",\"get\",\"list\",\"listVisibleTo\",\"isRunning\",\"syncSessionStatus\",\"onChange\"],\"registryStatic\":[\"length\",\"name\",\"prototype\",\"global\",\"resetGlobalForTests\"],\"registryKeys\":[],\"ctxKeys\":[\"ui\",\"mode\",\"getContextUsage\",\"compact\",\"getAsyncJobSnapshot\",\"hasUI\",\"cwd\",\"sessionManager\",\"modelRegistry\",\"isProjectTrusted\",\"agent\",\"model\",\"models\",\"isIdle\",\"abort\",\"hasPendingMessages\",\"shutdown\",\"getSystemPrompt\",\"runEphemeralTurn\",\"localProtocolOptions\",\"memory\",\"setInterval\",\"setTimeout\",\"clearTimer\",\"addAdditionalContext\",\"invokeTool\",\"waitForIdle\",\"newSession\",\"branch\",\"navigateTree\",\"switchSession\",\"reload\"],\"apiPiKeys\":[\"ALL_SEGMENT_IDS\",\"ARTIFACT_DEFAULT_HEAD_BYTES\",\"ARTIFACT_DEFAULT_MAX_BYTES\",\"AdvisorConfigOverlayComponent\",\"AgentOutputManager\",\"AgentRegistry\",\"AgentSession\",\"AskTool\",\"AssistantMessageComponent\",\"AstEditTool\",\"AstGrepTool\",\"AuthStorage\",\"BACKGROUND_TAN_DISPATCH_MESSAGE_TYPE\",\"BROWSER_FRAME_ROWS\",\"BUDGET_STOP_GRACE_REQUESTS\",\"BUILTIN_TOOLS\",\"BUNDLED_AGENTS\",\"BashExecutionComponent\",\"BashTool\",\"BorderedLoader\",\"BranchSummaryMessageComponent\",\"CHAT_MODEL_ROLE_IDS\",\"CHECKPOINT_ACTIVE_REMINDER_TYPE\",\"COMPOSER_DEFAULTS\",\"CRITICAL_BASH_PATTERNS\",\"CURRENT_SESSION_VERSION\",\"CheckpointTool\",\"CmuxSocketClient\",\"CollapsedSyntheticMessageComponent\",\"CompactionSummaryMessageComponent\",\"Composer\",\"ComputerSupervisor\",\"Container\",\"ContextNotesTool\",\"CountdownTimer\",\"CustomEditor\",\"CustomMessageComponent\",\"CustomToolAdapter\",\"CustomToolLoader\",\"DEBUG_READONLY_ACTIONS\",\"DEFAULT_CUSTOM_MESSAGE_TYPE\",\"DEFAULT_FILE_LIMIT\",\"DEFAULT_MAX_BYTES\",\"DEFAULT_MAX_COLUMN\",\"DEFAULT_MAX_LINES\",\"DEFAULT_RELAY_URL\",\"DEFAULT_SHIMMER_PALETTE\",\"DebugTool\",\"DynamicBorder\",\"EPHEMERAL_MODEL_CHANGE_ROLE\",\"ESSENTIAL_BUILTIN_TOOL_NAMES\",\"EXTENSION_HANDLER_TIMEOUT_MS\",\"EditTool\",\"EvalTool\",\"ExtensionEditorComponent\",\"ExtensionInputComponent\",\"ExtensionRunner\",\"ExtensionRuntimeNotInitializedError\",\"ExtensionSelectorComponent\",\"ExtensionToolWrapper\",\"FileFormatResult\",\"FileSessionStorage\",\"FindTool\",\"FooterComponent\",\"ForkSourceNotFoundError\",\"GENERIC_ABORT_SENTINEL\",\"GH_COMMAND_TIMEOUT_MS\",\"GithubTool\",\"GlobTool\",\"GoalRuntime\",\"GoalTool\",\"GrepTool\",\"HIDDEN_TOOLS\",\"HandoffSummaryMessageComponent\",\"HookEditorComponent\",\"HookInputComponent\",\"HookMessageComponent\",\"HookSelectorComponent\",\"INTERNAL_DETAILS_FIELDS\",\"INTERRUPTED_THINKING_MESSAGE_TYPE\",\"IdaTool\",\"IndexedSessionStorage\",\"InteractiveMode\",\"KEYBINDINGS\",\"KIND_ROLE_IDS\",\"KeybindingsManager\",\"LIVE_DELEGATION_MESSAGE_TYPE\",\"LSP_LATE_DIAGNOSTIC_MESSAGE_TYPE\",\"LSP_READONLY_ACTIONS\",\"LearnTool\",\"LoginDialogComponent\",\"LogoutAccountSelectorComponent\",\"LspTool\",\"MAIN_AGENT_ID\",\"MODEL_PICKER_COLUMNS\",\"MODEL_ROLE_IDS\",\"MULTI_FILE_PER_FILE_MATCHES\",\"ManageSkillTool\",\"Markdown\",\"MemoryEditTool\",\"MemoryRecallTool\",\"MemoryReflectTool\",\"MemoryRetainTool\",\"MemorySessionStorage\",\"ModelBrowser\",\"ModelHubComponent\",\"ModelPickerComponent\",\"ModelRegistry\",\"NewContextTool\",\"OAuthSelectorComponent\",\"OTHER_OPTION\",\"OutputSink\",\"PINNED_HUD_TOGGLE_ID\",\"PI_LOGO\",\"PREVIEW_PENDING_NOTICE\",\"PREWALK_PLAN_MESSAGE_TYPE\",\"PROPOSE_DEVICE_PATH\",\"PromptDroppedError\",\"QueueModeSelectorComponent\",\"READ_ONLY_TOOL_NAMES\",\"REJECT_DEVICE_PATH\",\"REMOTE_REFRESH_SENTINEL\",\"RESOLVE_DEVICE_PATH\",\"ReadTool\",\"ReadToolGroupComponent\",\"RedisSessionStorage\",\"RegisteredToolAdapter\",\"RewindSelectorComponent\",\"RewindTool\",\"RpcClient\",\"RpcCommandError\",\"SEGMENTS\",\"SESSION_SHUTDOWN_HANDLER_TIMEOUT_MS\",\"SESSION_TITLE_SLOT_BYTES\",\"SESSION_TITLE_SLOT_ENTRY_TYPE\",\"SETTINGS_GATED_BUILTIN_TOOL_NAMES\",\"SHUTDOWN_CONSOLIDATE_BUDGET_MS\",\"SILENT_ABORT_MARKER\",\"SINGLE_FILE_MATCHES\",\"SKILL_PROMPT_MESSAGE_TYPE\",\"SKILL_TOKEN_RE\",\"SNAPSHOT_MAX_BYTES\",\"SOFT_REQUEST_BUDGET\",\"STATUS_LINE_PRESETS\",\"SUBAGENT_WARNING_MISSING_YIELD\",\"SUBAGENT_WARNING_NULL_YIELD\",\"SUBAGENT_WARNING_SCHEMA_OVERRIDDEN\",\"SecurityScanTool\",\"SessionLockError\",\"SessionManager\",\"SessionModelScopeCache\",\"SessionPersistenceIndeterminateError\",\"SessionResolutionError\",\"SessionSelectorComponent\",\"SessionWriteConflictError\",\"Settings\",\"SettingsSelectorComponent\",\"ShowImagesSelectorComponent\",\"Spacer\",\"SqlSessionStorage\",\"SqliteAuthCredentialStore\",\"StatusLineComponent\",\"SubagentHudComponent\",\"TASK_SUBAGENT_EVENT_CHANNEL\",\"TASK_SUBAGENT_LIFECYCLE_CHANNEL\",\"TASK_SUBAGENT_PROGRESS_CHANNEL\",\"TITLE_CHANGE_ENTRY_TYPE\",\"TODO_COMPACT_TERMINAL_ROWS_THRESHOLD\",\"TODO_HUD_STATE_CUSTOM_TYPE\",\"TOP_LEVEL_AGENT\",\"TREE_FILTER_MODES\",\"TailBuffer\",\"TaskTool\",\"Text\",\"Theme\",\"ThemeSelectorComponent\",\"ThinkTool\",\"ThinkingSelectorComponent\",\"TodoReminderComponent\",\"TodoTool\",\"ToolExecutionComponent\",\"TreeSelectorComponent\",\"TtsrNotificationComponent\",\"USER_INTERRUPT_LABEL\",\"USER_TODO_EDIT_CUSTOM_TYPE\",\"UserMessageComponent\",\"VERSION\",\"VIBE_MODE_CONTEXT_MESSAGE_TYPE\",\"VIBE_TOOL_NAMES\",\"VibeKillTool\",\"VibeListTool\",\"VibeSendTool\",\"VibeSpawnTool\",\"VibeWaitTool\",\"WELCOME_LSP_SLOTS\",\"WELCOME_SESSION_SLOTS\",\"WaitTool\",\"WebSearchTool\",\"WelcomeComponent\",\"WriteTool\",\"XDEV_DOCS_PER_DEVICE_CAP\",\"XDEV_DOCS_TOTAL_BUDGET\",\"XDEV_EXTERNAL_DESCRIPTION_CAP\",\"XDEV_KEEP_TOP_LEVEL\",\"XDEV_TRANSPORT_TOOLS\",\"YieldTool\",\"__awaitAutoQaRecordPipelineForTests\",\"__resetAutoQaConsentForTests\",\"__resetAutoQaFlushStateForTests\",\"addFileDeleteFallback\",\"addFileWriteFallback\",\"allowsSkillTokens\",\"appKey\",\"appKeyHint\",\"appendInlineArgsFallback\",\"applyOpsToPhases\",\"applyPatchSchema\",\"applyResolvedSystemPromptInputs\",\"ariaSnapshotBaselineKey\",\"askToolRenderer\",\"assistantTurnDelivered\",\"assistantTurnProducedOutput\",\"attachIrcWakeTurnMonitor\",\"bashExecutionToText\",\"bashPtyViewport\",\"bindPreparedExtensions\",\"bindTheme\",\"boundKeys\",\"buildAriaSnapshotScript\",\"buildBrowserItems\",\"buildBudgetNotice\",\"buildCoordinationAdvisory\",\"buildDirectoryTree\",\"buildGoalToolResponse\",\"buildModelScopeNotification\",\"buildReplanTitleContext\",\"buildResolveReminderMessage\",\"buildSearchAffinity\",\"buildSearchDateQualifier\",\"buildSessionContext\",\"buildSessionModelScope\",\"buildSessionOptions\",\"buildSkillPromptMessage\",\"buildSpecializationAdvisory\",\"buildSystemPrompt\",\"buildWakeRelayBody\",\"buildWorkspaceTree\",\"cleanupEmptyMoveSession\",\"cmuxSnapshotToObservation\",\"collectAriaSnapshotRefs\",\"collectIrcPeerRoster\",\"committedTodoPhases\",\"compactionThresholdSettings\",\"completionBudgetReport\",\"composeSpawnAdvisory\",\"computeEditorMaxHeight\",\"computerApproval\",\"convertToLlm\",\"copySessionArtifacts\",\"createAcpSessionFactory\",\"createAgentSession\",\"createAutoLearnCaptureRunner\",\"createBranchSummaryMessage\",\"createBrowserPrelude\",\"createCompactionSummaryMessage\",\"createComputerPrelude\",\"createCustomMessage\",\"createHandoffSummaryMessageComponent\",\"createHighlightStream\",\"createLspWritethrough\",\"createMCPProxyTools\",\"createSessionManager\",\"createSubagentSettings\",\"createTodoHudStateData\",\"createTools\",\"createVibeTools\",\"createXdevState\",\"customToolToDefinition\",\"dedupeEphemeralReply\",\"defaultLoadModeForToolName\",\"defineRpcClientTool\",\"deleteFileWithFallback\",\"demoteInterruptedThinking\",\"describeSegment\",\"describeSegmentTrack\",\"describeShimmer\",\"describeSubagentHud\",\"detectLanguageId\",\"didSessionMessagesChange\",\"diffAriaSnapshot\",\"discoverAgents\",\"discoverAndLoadCustomTools\",\"discoverAndLoadExtensions\",\"discoverAuthStorage\",\"discoverCommands\",\"discoverContextFiles\",\"discoverCustomTSCommands\",\"discoverCustomToolPaths\",\"discoverExtensionPaths\",\"discoverExtensions\",\"discoverMCPServers\",\"discoverPromptTemplates\",\"discoverSessionExtensionPaths\",\"discoverSkills\",\"discoverSlashCommands\",\"discoverStartupLspServers\",\"dispatchReportIssueDevice\",\"dispatchResolutionDevice\",\"dispatchXdevTool\",\"disposeSessionQuietly\",\"editDescriptionCompact\",\"editorKey\",\"editorKeys\",\"emitSessionShutdownEvent\",\"enableAutoTheme\",\"enforceInlineByteCap\",\"ensureTheme\",\"ensureThemeSync\",\"evalSchema\",\"expandCommand\",\"expandPromptTemplate\",\"extensionToolSourceInfo\",\"extractBracketedImagePastePath\",\"extractBracketedImagePastePaths\",\"extractBracketedPastePaths\",\"extractImagePastePathsFromText\",\"extractImagePathFromText\",\"extractMarkdownOutline\",\"extractPastePathsFromText\",\"extractReadableFromHtml\",\"extractSessionInit\",\"fgOrPlain\",\"filterMarkdownSections\",\"filterSessionsForPicker\",\"finalizeSubagentLifecycle\",\"finalizeSubprocessOutput\",\"findMostRecentNonEmptySession\",\"findMostRecentSession\",\"flushGrievances\",\"flushLspWritethroughBatch\",\"formatBillingSummary\",\"formatDoubleTap\",\"formatHeadTruncationNotice\",\"formatKeyHint\",\"formatKeyHints\",\"formatMiddleElisionMarker\",\"formatRepoRef\",\"formatResultOutputFallback\",\"formatRoleChip\",\"formatSessionDumpText\",\"formatTailTruncationNotice\",\"formatTaskResultSummary\",\"generateId\",\"getActiveSkills\",\"getAgent\",\"getAgentDir\",\"getAvailableSymbolPresets\",\"getAvailableThemes\",\"getAvailableThemesWithPaths\",\"getColorBlindMode\",\"getCommand\",\"getCurrentThemeName\",\"getDefaultPasteImageKeys\",\"getEditStore\",\"getEditorTheme\",\"getEvalDocTopics\",\"getEvalToolDescription\",\"getExperimentalContextSession\",\"getExtensionUISelectOptionLabel\",\"getImageGenTools\",\"getImageGenToolsWithRegistry\",\"getLanguageFromPath\",\"getLatestCompactionEntry\",\"getLatestTodoPhasesFromEntries\",\"getLatestTodoSnapshotIdentity\",\"getLspStatus\",\"getMarkdownTheme\",\"getNativeThemePalette\",\"getNativeThemePaletteKey\",\"getOpenAiRemoteCompactionPayload\",\"getOrFetchIssue\",\"getOrFetchPr\",\"getOrFetchPrDiff\",\"getPreset\",\"getRecentSessions\",\"getResolvedThemeColors\",\"getRestorableSessionModels\",\"getSearchProvider\",\"getSearchTools\",\"getSelectListTheme\",\"getSeparator\",\"getSessionAccentAnsi\",\"getSessionAccentHex\",\"getSettingsListTheme\",\"getSkillSlashCommandName\",\"getSymbolPresetOverride\",\"getSymbolTheme\",\"getThemeByName\",\"getThemeEpoch\",\"getThemeExportColors\",\"getTodoHudVisibility\",\"github\",\"githubIssueJsonWithStateReasonFallback\",\"goalTokenDelta\",\"gradientEscape\",\"gradientLogo\",\"groupedReadUsageCallIds\",\"hasConversationalHistory\",\"hasFileDeleteFallback\",\"hasFileWriteFallback\",\"hasWaitTool\",\"hashlineEditParamsSchema\",\"highlightCode\",\"imageGenSchema\",\"imageGenTool\",\"initTheme\",\"initThemeSync\",\"interruptKey\",\"invalidateConvertToLlmArrayCache\",\"isAssistantMessageLine\",\"isAuthenticated\",\"isAutoQaEnabled\",\"isCustomMessageContent\",\"isEmptyAssistantStop\",\"isEmptyErrorTurn\",\"isEmptySession\",\"isFindEnabled\",\"isLightTheme\",\"isMarkdownPath\",\"isMountableUnderXdev\",\"isNameClaimedByAuthoredSkill\",\"isPermissionDeniedError\",\"isPreviewResolutionToolCall\",\"isProposeToolCall\",\"isReadOnlyAgent\",\"isReportIssueToolCall\",\"isSilentAbort\",\"isTitleContextReply\",\"isTodoPhase\",\"isToolCallEventType\",\"isTranscriptEntry\",\"isUserInterruptAbort\",\"isUserInvokedSkillPrompt\",\"isUserTurnInitiator\",\"isValidSymbolPreset\",\"isValidThemeColor\",\"kNoAuth\",\"keyHint\",\"keyHintPlatform\",\"layoutPinnedHud\",\"listAllSessions\",\"listSessions\",\"listSessionsReadOnly\",\"listXdevTools\",\"loadCliExtensionProviders\",\"loadCustomTools\",\"loadEntriesFromFile\",\"loadEntriesFromFileStream\",\"loadExtensionFromFactory\",\"loadExtensions\",\"loadPromptTemplates\",\"loadSessionExtensions\",\"loadSessionFile\",\"loadSessionMessagesReadOnly\",\"loadSkills\",\"loadSkillsFromDir\",\"logProviderTurnError\",\"logger\",\"logoNode\",\"main\",\"mapWaitUntil\",\"markdownToPhases\",\"mergeDiscoveredModel\",\"mergeSessionRanking\",\"migrateKeybindingsConfigFile\",\"migrateSessionEntries\",\"migrateToCurrentVersion\",\"modelSearchText\",\"nativeDiff\",\"nextActionableTask\",\"noTruncResult\",\"normalizeContinueSessionArgs\",\"normalizeCustomMessagePayload\",\"normalizePremiumRequests\",\"onTerminalAppearanceChange\",\"onThemeChange\",\"openAutoQaDb\",\"parseAriaRefSelector\",\"parsePositiveDecimalInt\",\"parsePrUnifiedDiff\",\"parseSearchDateBound\",\"parseSessionContent\",\"parseSessionEntries\",\"parseSkillInvocation\",\"patchEditEntrySchema\",\"patchEditSchema\",\"phasesToMarkdown\",\"pickWeightedTip\",\"planSaveFileName\",\"planXdevPromptDocs\",\"postProcessAriaSnapshot\",\"powerAssertionOptions\",\"previewTheme\",\"pythonExecutionToText\",\"queueResolveHandler\",\"rankModelItems\",\"rankSessionSearchMatches\",\"rawKeyHint\",\"readArgsCollapseIntoGroup\",\"readArgsHaveTarget\",\"readPipedInput\",\"readQueueChipText\",\"rebuildScopedModelsAfterDiscovery\",\"recoverAskQuestions\",\"recoverOrphanedBackups\",\"refreshAgentDiscovery\",\"registerComputerController\",\"releaseComputerSessionsForOwner\",\"remainingTokens\",\"renderDiff\",\"renderGoalPrompt\",\"renderSegment\",\"renderSegmentTrack\",\"renderSubagentHudLines\",\"renderTrustedObjective\",\"renderWelcomeTip\",\"renderXdevPromptDocs\",\"replaceEditSchema\",\"replaceLlmImagesWithText\",\"reportIssueDeviceUsage\",\"resetActiveSkillsForTests\",\"resetProviderAutoRefreshGuard\",\"resetThinkingSpeedTracker\",\"resetYieldTurnState\",\"resolutionDeviceUsage\",\"resolveAbortLabel\",\"resolveAutoQaConsent\",\"resolveBlobRefsInEntries\",\"resolveBrowserKind\",\"resolveBuiltinToolPlan\",\"resolveCmuxKind\",\"resolveDefaultRepoMemoized\",\"resolveDialect\",\"resolveDispatchDetails\",\"resolveEditToolDescription\",\"resolveEvalBackends\",\"resolveLocalWavPath\",\"resolveMountedXdevExecutable\",\"resolveMountedXdevTool\",\"resolvePrewalkTarget\",\"resolveRelayKind\",\"resolveResumableSession\",\"resolveRoleAssignments\",\"resolveScopedModels\",\"resolveSegmentPalette\",\"resolveSoftRequestBudget\",\"resolveSpeculativeReadTarget\",\"resolveSpeechCandidates\",\"resolveTernKind\",\"resolveTodoMarkdownPath\",\"resolveXdevTool\",\"resolveYieldReportText\",\"restartBrowserForModeChange\",\"routeViewportClick\",\"runRootCommand\",\"runSearchQuery\",\"runSubagentFollowUpTurn\",\"runSubprocess\",\"sanitizeAssistantForReparentedHistory\",\"sanitizeRehydratedOpenAIResponsesAssistantMessage\",\"serializeEval\",\"setActiveSkills\",\"setAutoQaConsentHandler\",\"setAutoThemeMapping\",\"setColorBlindMode\",\"setKeyHintPlatform\",\"setMarkdownMermaidRendering\",\"setNativeSymbolPreset\",\"setShimmerMode\",\"setSymbolPreset\",\"setTheme\",\"setThemeInstance\",\"settings\",\"sharedSpinnerFrame\",\"shimmerEnabled\",\"shimmerSegments\",\"shimmerText\",\"shouldEnterPlanModeOnStartup\",\"shouldRenderAbortReason\",\"sloppyEditSchema\",\"smokeTestComputerWorker\",\"sortModelItems\",\"spawnComputerWorker\",\"splitImageQuestionTarget\",\"startMacOSAppearanceReprobeFallback\",\"statusSegmentPriority\",\"stopSharedSpinnerTicker\",\"stopThemeWatcher\",\"streamTailUpdates\",\"stripImagesFromMessage\",\"stripInternalDetailsFields\",\"submitInteractiveInput\",\"supportsExternalThinking\",\"taskSchema\",\"templateUsesInlineArgPlaceholders\",\"testSetExtensionHandlerTimeoutMs\",\"testSetSessionShutdownHandlerTimeoutMs\",\"theme\",\"themePickerOptions\",\"thinkingDotToken\",\"thinkingLevelWord\",\"toSessionScopedModels\",\"toolRenderName\",\"truncateHead\",\"truncateHeadBytes\",\"truncateLine\",\"truncateLineBytes\",\"truncateMiddle\",\"truncateTail\",\"truncateTailBytes\",\"truncateToVisualLines\",\"ttsTool\",\"userBubbleColor\",\"visitEntriesFromFile\",\"visitEntriesFromFileStream\",\"warmHighlighter\",\"warmupLspServers\",\"watchScopedModelSettings\",\"webSearchCustomTool\",\"webSearchSchema\",\"withFileMutationSession\",\"wrapRegisteredTool\",\"wrapRegisteredTools\",\"wrapShellLineForClientTerminal\",\"wrapSteeringForModel\",\"writeDeviceDispatch\",\"writeFileWithFallback\",\"writeStartupNotice\",\"writethroughNoop\",\"xdevDocs\",\"xdevDocsAll\",\"xdevDocsFor\",\"xdevEntries\",\"xdevListing\",\"z\",\"zod\"]}","notifyType":"info"}
+STDERR ""
+CLEANUP profile removed
+```
+
+This read-only inspection supports no criterion. Its APIs were not used to mutate native refs; native parking was chosen instead.
+
+### Evidence integrity and cleanup
+
+Exact read-only integrity checker source:
+
+```javascript
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { join } from 'node:path';
+const [repo, baseline] = process.argv.slice(2);
+const before = await readFile(baseline, 'utf8'), after = await readFile(join(repo, 'omp-orca-observer/checks/evidence/gb2.md'), 'utf8');
+const prefix = '| v03 no serve means zero observer network/transcript I/O |';
+const oldRow = before.split('\n').find(r => r.startsWith(prefix)), newRow = after.split('\n').find(r => r.startsWith(prefix));
+assert(oldRow && newRow && newRow.includes('d9f78a0'));
+assert(after.startsWith(before.replace(oldRow, newRow)), 'all earlier bytes preserved except zero-I/O ledger');
+const section = after.slice(before.replace(oldRow, newRow).length);
+assert(section.includes('## Re-run after d9f78a0 (viewer idle window) — 2026-09-30'));
+const hash = s => createHash('sha256').update(s).digest('hex');
+const sourceBlocks = [...section.matchAll(/Exact runner source, sha256 `([a-f0-9]{64})`:\n\n```javascript\n([\s\S]*?)```/g)];
+assert.equal(sourceBlocks.length, 3);
+for (const match of sourceBlocks) assert.equal(hash(match[2]), match[1]);
+const last = section.slice(section.lastIndexOf('\n### Recorded disposable probe: gb2-d9f78a0-final.mjs'));
+const parsed = last.split('\n').filter(r => /^(IO_SUMMARY|CRITERION_RESULT|FIRST_GET|NATIVE_SPAWN_AT|IDLE_RECONCILED|IDLE_FORCED_RECONCILE|FOLLOWING_SNAPSHOT) /.test(r)).map(r => ({ tag: r.slice(0, r.indexOf(' ')), value: JSON.parse(r.slice(r.indexOf(' ') + 1)) }));
+const result = parsed.find(r => r.tag === 'CRITERION_RESULT').value;
+assert.equal(result.result, 'PASS'); assert.equal(result.firstHeaderReads, 1); assert.equal(result.idleHeaderReads, 0); assert.equal(result.reopenHeaderReads, 1); assert.equal(result.snapshotRequests, 3);
+assert(parsed.find(r => r.tag === 'NATIVE_SPAWN_AT').value.atSinceLastGetMs >= 35000);
+const summaries = parsed.filter(r => r.tag === 'IO_SUMMARY').map(r => r.value);
+assert.deepEqual(summaries.map(r => r.transcriptReads), [1, 0, 0, 1, 0]);
+for (const row of summaries.flatMap(r => r.readWindows)) { assert.equal(row.position, 0); assert.equal(row.bufferOffset, 0); assert.equal(row.length, 4096); }
+const idle = summaries.find(r => r.phase === 'idle-uncached-native-child'); assert(idle.counts.registry_callback > 0); assert(idle.counts.collect >= 2); assert(!idle.counts['network.request']);
+assert(parsed.find(r => r.tag === 'IDLE_RECONCILED').value.refs.some(r => r.id === 'idle-1' && r.status === 'parked' && !r.hasSession));
+assert(parsed.find(r => r.tag === 'FOLLOWING_SNAPSHOT').value.cwd.every(r => r.cwd.known === true));
+assert(last.includes('RUNNER_EXIT 0'));
+assert(!/TODO:\x20implement|FIX\x4dE:|NotImplemented\x45rror|["' ]\/home\/[^ ]+|["' ]\/Users\//.test(section));
+console.log('EVIDENCE_INTEGRITY PASS: earlier bytes except zero-I/O ledger preserved; three exact runner sources verified; native idle parking, zero idle reads, bounded resumed header and known cwd verified');
+console.log('AFTER_SHA256', hash(after));
+```
+
+Invocation: `bun <tmp>/gb2-d9f78a0-integrity.mjs "$PWD" <tmp>/gb2-d9f78a0-before.md`.
+
+Exact support-section assembler source (temporary writes only):
+
+```javascript
+import { readFile, writeFile } from 'node:fs/promises';
+const [bootstrap, output, integrity, destination] = process.argv.slice(2);
+const bootstrapSource = await readFile(bootstrap, 'utf8'), bootstrapOutput = await readFile(output, 'utf8'), integritySource = await readFile(integrity, 'utf8'), self = await readFile(process.argv[1], 'utf8');
+const text = '\n### Bootstrap runtime discovery (not a gate run)\n\nInvocation: `bun <tmp>/gb2-native-shape.mjs "$PWD"`, exit 0. Exact source:\n\n```javascript\n' + bootstrapSource + '```\n\nComplete output (no machine paths or ports present):\n\n```text\n' + bootstrapOutput + '```\n\nThis read-only inspection supports no criterion. Its APIs were not used to mutate native refs; native parking was chosen instead.\n\n### Evidence integrity and cleanup\n\nExact read-only integrity checker source:\n\n```javascript\n' + integritySource + '```\n\nInvocation: `bun <tmp>/gb2-d9f78a0-integrity.mjs "$PWD" <tmp>/gb2-d9f78a0-before.md`.\n\nExact support-section assembler source (temporary writes only):\n\n```javascript\n' + self + '```\n\nAssembler invocation: `bun <tmp>/gb2-d9f78a0-support.mjs <tmp>/gb2-native-shape.mjs <tmp>/gb2-native-shape-output.txt <tmp>/gb2-d9f78a0-integrity.mjs <tmp>/gb2-d9f78a0-support-section.md`. It does not run omp or write repository files. Sections are moved into the evidence with guarded hashline edits.\n';
+await writeFile(destination, text);
+console.log('SUPPORT_SECTION_WRITTEN');
+```
+
+Assembler invocation: `bun <tmp>/gb2-d9f78a0-support.mjs <tmp>/gb2-native-shape.mjs <tmp>/gb2-native-shape-output.txt <tmp>/gb2-d9f78a0-integrity.mjs <tmp>/gb2-d9f78a0-support-section.md`. It does not run omp or write repository files. Sections are moved into the evidence with guarded hashline edits.
+
+Assembler stdout: `SUPPORT_SECTION_WRITTEN`, exit 0, stderr empty.
+
+No product files, harness files or permanent tests changed. No earlier evidence was deleted. Temporary native API introspection did not invoke any mutating API. All runtime attempts stopped their RPC parents and stubs and awaited harness teardown, which removed the disposable homes, repositories, native session artifacts and instrumented packages. Remaining standalone runners, captures and the recovery before-image are deleted after the integrity check and owned-diff capture, not reset against HEAD.
+
+Observed integrity-check output, exit 0, stderr empty:
+
+```text
+EVIDENCE_INTEGRITY PASS: earlier bytes except zero-I/O ledger preserved; three exact runner sources verified; native idle parking, zero idle reads, bounded resumed header and known cwd verified
+AFTER_SHA256 64703b402ad864037b69aa3767a9d416d778404e24b1692d9478d45d9534ba52
+```
+
+The checksum above identifies the checked evidence before this receipt was appended; the handoff identifies the final evidence and owned diff. Recovery is the exact owned diff against the captured before-image, not a reset or overwrite of unrelated work.
+
+Cleanup invocation:
+
+```sh
+rm -- <tmp>/gb2-d9f78a0-before.md <tmp>/gb2-d9f78a0.mjs <tmp>/gb2-d9f78a0-park.mjs <tmp>/gb2-d9f78a0-final.mjs <tmp>/gb2-d9f78a0-record.mjs <tmp>/gb2-d9f78a0-integrity.mjs <tmp>/gb2-d9f78a0-support.mjs <tmp>/gb2-d9f78a0-first-section.md <tmp>/gb2-d9f78a0-park-section.md <tmp>/gb2-d9f78a0-final-section.md <tmp>/gb2-d9f78a0-support-section.md <tmp>/gb2-native-shape.mjs <tmp>/gb2-native-shape-output.txt
+```
+
+Observed cleanup exit 0, stdout/stderr empty. All standalone temporary files from this re-gate, including the before-image, were removed. The complete owned diff was captured and inspected before this cleanup receipt; it contains only the named ledger replacement and this appended re-run section.
