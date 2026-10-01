@@ -279,12 +279,21 @@ try {
     assert.equal(transcriptReads, 1);
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
     assert.equal(transcriptReads, 1);
+    viewerConnected = false;
+    const offlineReplacement = { ...restored.registry.refs[0]!, createdAt: restored.registry.refs[0]!.createdAt + 1 };
+    restored.registry.refs = [offlineReplacement];
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
+    assert.equal(transcriptReads, 1);
+
+    viewerConnected = true;
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    assert.equal(transcriptReads, 2);
 
     writeFileSync(restoredFile, '{"type":"session","cwd":"/replacement/workspace"}\n');
     const replacementRef = { ...restored.registry.refs[0]!, createdAt: restored.registry.refs[0]!.createdAt + 1 };
     restored.registry.refs = [replacementRef];
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/replacement/workspace" });
-    assert.equal(transcriptReads, 2);
+    assert.equal(transcriptReads, 3);
 
     const liveCwd = "/live/workspace";
     restored.registry.refs = [{
@@ -292,7 +301,7 @@ try {
       session: { sessionManager: { getCwd: () => liveCwd } } as unknown as NonNullable<AgentRef["session"]>,
     }];
     assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: liveCwd });
-    assert.equal(transcriptReads, 2);
+    assert.equal(transcriptReads, 3);
   } finally {
     fs.readSync = readSync;
   }
