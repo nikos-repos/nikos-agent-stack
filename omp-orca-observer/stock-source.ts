@@ -69,6 +69,7 @@ function transcriptInventory(artifactRoot: string, admittedFiles: Set<string>): 
  * Only native sub refs strictly inside this root's artifact tree, with an entirely admitted
  * ancestry to Main, are readable. Registry callbacks only dirty the process coordinator;
  * inventory and filesystem work belong to collect, never restoration or native mutation.
+ * Transcript header reads happen only after a viewer has requested a snapshot, at most once per incarnation.
  * @cc [label:ceiling] stock-source-copy-and-walk-floor
  * The row limit does not bound AgentRegistry.list(), which copies every ref. A bounded fake-ref
  * probe (10,000 calls per size) measured mean copy costs of 0.08 / 1.20 / 1.88 / 5.26 microseconds
@@ -76,13 +77,42 @@ function transcriptInventory(artifactRoot: string, admittedFiles: Set<string>): 
  * stops after 8,192 entries and reports partial rather than assuming restoration is complete.
  * until: omp exposes bounded inventory enumeration and an authoritative restoration completion signal.
  */
-export function createStockSource(pi: ExtensionAPI, rootSessionFile: string | null, outcomes: OutcomeTracker): SnapshotSource {
+export function createStockSource(
+  pi: ExtensionAPI,
+  rootSessionFile: string | null,
+  outcomes: OutcomeTracker,
+  viewerConnected: () => boolean,
+): SnapshotSource {
   const registry = pi.pi.AgentRegistry.global();
   const mainId = pi.pi.MAIN_AGENT_ID;
   const rootPath = rootSessionFile === null ? null : resolve(rootSessionFile);
   const artifactRoot = rootPath === null ? null : rootPath.replace(/\.jsonl$/, "");
   const artifactPrefix = artifactRoot === null ? null : `${artifactRoot}${sep}`;
-  const incarnations = new Map<string, { createdAt: number; sessionFile: string }>();
+  const incarnations = new Map<string, { createdAt: number; sessionFile: string; cwd?: Known<string> }>();
+  function readHeaderCwd(sessionFile: string): Known<string> | undefined {
+    let fd: number | undefined;
+    try {
+      fd = fs.openSync(sessionFile, "r");
+      const buffer = Buffer.alloc(4096);
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      const newline = buffer.indexOf(10, 0);
+      if (newline < 0 && bytesRead === buffer.length) {
+        return { known: false, reason: "session header too large" };
+      }
+      const header = JSON.parse(buffer.toString("utf8", 0, newline < 0 ? bytesRead : newline));
+      return header?.type === "session" && typeof header.cwd === "string" && header.cwd.length > 0
+        ? { known: true, value: header.cwd }
+        : { known: false, reason: "cwd not recorded" };
+    } catch {
+      return undefined;
+    } finally {
+      if (fd !== undefined) {
+        try {
+          fs.closeSync(fd);
+        } catch { }
+      }
+    }
+  }
   const unsubscribe = registry.onChange(() => {
     processCoordinator()?.markDirty();
   });
@@ -156,6 +186,22 @@ export function createStockSource(pi: ExtensionAPI, rootSessionFile: string | nu
             incarnations.set(ref.id, { createdAt: ref.createdAt, sessionFile: ref.sessionFile });
           }
           if (rows.length >= limit) continue;
+          const incarnation = incarnations.get(ref.id)!;
+          const liveCwd = ref.session?.sessionManager.getCwd();
+          let cwd = recorded(liveCwd, "cwd not recorded");
+          if (liveCwd === undefined) {
+            if (incarnation.cwd !== undefined) {
+              cwd = incarnation.cwd;
+            } else if (viewerConnected()) {
+              const headerCwd = readHeaderCwd(ref.sessionFile);
+              if (headerCwd !== undefined) {
+                incarnation.cwd = headerCwd;
+                cwd = headerCwd;
+              } else {
+                cwd = { known: false, reason: "session header unreadable" };
+              }
+            }
+          }
           let tombstoned = false;
           try {
             fs.statSync(`${ref.sessionFile}.tombstone`);
@@ -186,7 +232,7 @@ export function createStockSource(pi: ExtensionAPI, rootSessionFile: string | nu
             activity: { sampled: true, lastActivityAt: timestamp(ref.lastActivity) },
             lineage: {
               repoRoot: { known: false, reason: "repository root not recorded" },
-              cwd: recorded(ref.session?.sessionManager.getCwd(), "cwd not recorded"),
+              cwd,
               parentWorktree: { known: false, reason: "parent worktree not recorded" },
               childWorktree: { known: false, reason: "child worktree not recorded" },
               isolation: { known: false, reason: "isolation not recorded" },

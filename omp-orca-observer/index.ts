@@ -20,7 +20,8 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
   if (runtime) return;
   const rootSessionFile = ctx.sessionManager.getSessionFile() ?? null;
   const outcomes = createOutcomeTracker();
-  const source = createStockSource(api, rootSessionFile, outcomes);
+  let viewerSeen = false;
+  const source = createStockSource(api, rootSessionFile, outcomes, () => viewerSeen);
   const coordinator = startCoordinator({ source, outcomes, limit: 256 });
   let pendingEndpoint: Promise<Endpoint> | null = null;
   const current: ActiveRuntime = {
@@ -35,7 +36,13 @@ function startRuntime(ctx: ExtensionContext, api: ExtensionAPI): void {
       if (!pendingEndpoint) {
         pendingEndpoint = serve({
           epoch: coordinator.epoch(),
-          snapshot: () => coordinator.snapshot(),
+          snapshot: () => {
+            if (!viewerSeen) {
+              viewerSeen = true;
+              coordinator.markDirty();
+            }
+            return coordinator.snapshot();
+          },
           state: () => coordinator.state(),
           admittedSessionFile: source.admittedSessionFile,
           read: request => readPage(request, api.pi.parseSessionContent),

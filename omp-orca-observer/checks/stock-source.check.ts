@@ -102,7 +102,7 @@ function child(id: string, sessionFile: string | null, changes: Partial<AgentRef
   };
 }
 
-function harness(root: string | null, refs: AgentRef[] = []) {
+function harness(root: string | null, refs: AgentRef[] = [], viewerConnected: () => boolean = () => false) {
   const registry = new FakeRegistry(refs);
   const outcomes = new FakeOutcomes();
   const pi = {
@@ -116,7 +116,7 @@ function harness(root: string | null, refs: AgentRef[] = []) {
       },
     },
   } as unknown as ExtensionAPI;
-  const source = createStockSource(pi, root, outcomes);
+  const source = createStockSource(pi, root, outcomes, viewerConnected);
   sources.push(source);
   assert.deepEqual(registry.calls, { global: 1, list: 0, get: 0, onChange: 1, unsubscribe: 0 });
   return { source, registry, outcomes };
@@ -255,6 +255,45 @@ try {
   const liveOnly = live.source.collect(256).rows[0]!;
   assert.deepEqual(liveOnly.resolvedModel, { known: true, value: "live/served" });
   assert.deepEqual(liveOnly.modelRole, { known: false, reason: "model role not recorded" });
+
+  const restoredCwd = fixture("restored-cwd");
+  const restoredFile = restoredCwd.transcript("restored.jsonl");
+  writeFileSync(restoredFile, '{"type":"session","cwd":"/restored/workspace"}\n{"type":"message"}\n');
+  let viewerConnected = false;
+  const restored = harness(restoredCwd.root, [child("restored", restoredFile, { status: "parked" })], () => viewerConnected);
+  const readSync = fs.readSync;
+  let transcriptReads = 0;
+  fs.readSync = new Proxy(readSync, {
+    apply(target, thisArg, args) {
+      transcriptReads++;
+      return Reflect.apply(target, thisArg, args);
+    },
+  });
+  try {
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: false, reason: "cwd not recorded" });
+    assert.equal(transcriptReads, 0);
+    viewerConnected = true;
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    assert.equal(transcriptReads, 1);
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/restored/workspace" });
+    assert.equal(transcriptReads, 1);
+
+    writeFileSync(restoredFile, '{"type":"session","cwd":"/replacement/workspace"}\n');
+    const replacementRef = { ...restored.registry.refs[0]!, createdAt: restored.registry.refs[0]!.createdAt + 1 };
+    restored.registry.refs = [replacementRef];
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: "/replacement/workspace" });
+    assert.equal(transcriptReads, 2);
+
+    const liveCwd = "/live/workspace";
+    restored.registry.refs = [{
+      ...replacementRef,
+      session: { sessionManager: { getCwd: () => liveCwd } } as unknown as NonNullable<AgentRef["session"]>,
+    }];
+    assert.deepEqual(restored.source.collect(256).rows[0]!.lineage.cwd, { known: true, value: liveCwd });
+    assert.equal(transcriptReads, 2);
+  } finally {
+    fs.readSync = readSync;
+  }
 
   const conflict = fixture("conflict");
   const conflictRef = child("conflict", conflict.transcript("conflict.jsonl"));
